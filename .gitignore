@@ -1,0 +1,23 @@
+# Rust
+/target
+**/target/
+**/*.rs.bk
+
+# Java / barback
+*.class
+barback/dependency-reduced-pom.xml
+
+# Editors / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local environment
+.env
+*.env.local
+
+# Generated docs
+/docs/api/
