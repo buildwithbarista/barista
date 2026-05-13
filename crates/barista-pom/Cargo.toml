@@ -7,3 +7,9 @@ description = "POM parser, effective-POM construction, and CBOR blob serializati
 publish = false
 
 [lib]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+quick-xml = { version = "0.40", features = ["serialize"] }
+thiserror = "2.0"
+indexmap = { version = "2.14", features = ["serde"] }

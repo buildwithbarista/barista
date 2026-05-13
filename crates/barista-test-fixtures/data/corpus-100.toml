@@ -1,0 +1,42 @@
+# Test corpus index. Each [[entry]] describes one materialized corpus
+# project. The full lockfile (git_url, ref, build_cmd, etc.) lives at
+# test-corpus/<id>/corpus.lock.toml; this index is the lightweight
+# consumer-facing view used by Rust test code.
+#
+# Paths are relative to the monorepo root (the directory containing
+# Cargo.toml at the top of the workspace), NOT to this crate.
+# Consumers canonicalize against a known project-root anchor.
+#
+# The file is named "corpus-100" because the eventual target is ~100
+# projects; the current count is smaller and grows incrementally as
+# new projects are vetted and added.
+
+[[entry]]
+id = "commons-lang"
+description = "Apache Commons Lang — small JDK utilities library; single-module."
+relative_path = "test-corpus/commons-lang/checkout"
+pom_relative_path = "test-corpus/commons-lang/checkout/pom.xml"
+
+[[entry]]
+id = "commons-io"
+description = "Apache Commons IO — stream/file/filesystem utilities; single-module."
+relative_path = "test-corpus/commons-io/checkout"
+pom_relative_path = "test-corpus/commons-io/checkout/pom.xml"
+
+[[entry]]
+id = "jackson-core"
+description = "FasterXML Jackson core streaming JSON parser/generator; single-module with a non-trivial plugin set."
+relative_path = "test-corpus/jackson-core/checkout"
+pom_relative_path = "test-corpus/jackson-core/checkout/pom.xml"
+
+[[entry]]
+id = "assertj-core"
+description = "AssertJ fluent assertions; multi-module aggregator, targets the assertj-core submodule."
+relative_path = "test-corpus/assertj-core/checkout"
+pom_relative_path = "test-corpus/assertj-core/checkout/pom.xml"
+
+[[entry]]
+id = "slf4j"
+description = "SLF4J logging facade; multi-module under an slf4j-parent aggregator."
+relative_path = "test-corpus/slf4j/checkout"
+pom_relative_path = "test-corpus/slf4j/checkout/pom.xml"
