@@ -1,0 +1,9 @@
+[package]
+name = "barista-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Worker-protocol IPC transport between the CLI and the barback daemon."
+publish = false
+
+[lib]

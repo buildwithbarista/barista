@@ -1,0 +1,9 @@
+[package]
+name = "barista-roastery-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Client library for talking to a roastery cache server."
+publish = false
+
+[lib]

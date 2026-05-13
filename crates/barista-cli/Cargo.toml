@@ -1,0 +1,11 @@
+[package]
+name = "barista-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The barista CLI binary."
+publish = false
+
+[[bin]]
+name = "barista"
+path = "src/main.rs"

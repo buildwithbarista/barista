@@ -1,0 +1,9 @@
+[package]
+name = "barista-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Layered configuration loader (defaults, files, env, flags)."
+publish = false
+
+[lib]

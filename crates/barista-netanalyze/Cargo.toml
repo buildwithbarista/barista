@@ -1,0 +1,9 @@
+[package]
+name = "barista-netanalyze"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Network-capture analysis pipeline for the resource-efficiency program."
+publish = false
+
+[lib]

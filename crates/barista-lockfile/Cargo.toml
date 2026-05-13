@@ -1,0 +1,9 @@
+[package]
+name = "barista-lockfile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "barista.lock parser, serializer, and diff renderer."
+publish = false
+
+[lib]

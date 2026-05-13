@@ -1,0 +1,9 @@
+[package]
+name = "barista-tap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tap (remote-worker) registration and lifecycle management."
+publish = false
+
+[lib]

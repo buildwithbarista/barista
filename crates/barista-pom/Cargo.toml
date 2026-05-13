@@ -1,0 +1,9 @@
+[package]
+name = "barista-pom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "POM parser, effective-POM construction, and CBOR blob serialization."
+publish = false
+
+[lib]

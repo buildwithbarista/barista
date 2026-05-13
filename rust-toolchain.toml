@@ -1,0 +1,11 @@
+# Rust toolchain pin for the Barista workspace.
+#
+# The workspace targets stable Rust. Per-crate `fuzz/` subdirectories
+# (added in a subsequent milestone) carry their own
+# `rust-toolchain.toml` override pinning nightly so `cargo-fuzz` can
+# build. CI installs both stable and nightly so both surfaces work.
+
+[toolchain]
+channel = "1.86.0"
+components = ["rustfmt", "clippy"]
+profile = "default"

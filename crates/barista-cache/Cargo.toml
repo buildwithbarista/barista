@@ -1,0 +1,9 @@
+[package]
+name = "barista-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Content-addressed local artifact cache and metadata index."
+publish = false
+
+[lib]

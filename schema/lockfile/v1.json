@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/lockfile/v1.json",
+  "title": "barista.lock (v1)",
+  "description": "Placeholder schema. The concrete lockfile schema is finalized in a subsequent release.",
+  "type": "object"
+}

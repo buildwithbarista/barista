@@ -1,0 +1,9 @@
+[package]
+name = "barista-netcap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Network-traffic capture harness for the resource-efficiency program."
+publish = false
+
+[lib]

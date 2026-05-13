@@ -1,0 +1,9 @@
+[package]
+name = "barista-resolver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parallel dependency resolver (BFS+Skipper) for Maven artifacts."
+publish = false
+
+[lib]

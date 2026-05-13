@@ -1,0 +1,9 @@
+[package]
+name = "barista-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Benchmark harness for Barista."
+publish = false
+
+[lib]

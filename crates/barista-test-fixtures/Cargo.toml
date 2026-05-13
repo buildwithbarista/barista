@@ -1,0 +1,9 @@
+[package]
+name = "barista-test-fixtures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared test fixtures and corpus indexing helpers."
+publish = false
+
+[lib]
