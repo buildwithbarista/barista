@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-parent</artifactId>
+    <version>69</version>
+  </parent>
+  <groupId>org.apache.commons</groupId>
+  <artifactId>commons-lang3</artifactId>
+  <version>3.14.0</version>
+  <packaging>jar</packaging>
+  <name>Apache Commons Lang</name>
+  <description>Helper utilities for the java.lang API.</description>
+  <url>https://commons.apache.org/proper/commons-lang/</url>
+  <properties>
+    <commons.componentid>lang3</commons.componentid>
+    <commons.module.name>org.apache.commons.lang3</commons.module.name>
+    <commons.jira.id>LANG</commons.jira.id>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.1</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.easymock</groupId>
+      <artifactId>easymock</artifactId>
+      <version>5.2.0</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

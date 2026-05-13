@@ -8,9 +8,13 @@
 
 pub mod source;
 pub mod version_spec;
+pub mod walker;
 
 pub use source::{
     FetchOrigin, GaMetadata, MetadataError, MetadataSource, NullMetadataSource, ResolveKey,
     VersionString,
 };
 pub use version_spec::{Bound, Interval, ParseError, SpecWarning, VersionSpec};
+pub use walker::{
+    AuditEntry, FixtureSource, ResolvedDep, ResolvedGraph, Scope, WalkError, WalkOptions, walk,
+};
