@@ -1,0 +1,59 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running `target/debug/examples/spike-bfs`
+=== Diamond conflict test ===
+Corpus (diamond):
+  ex:A:1.0  -->  [ex:B:1.0, ex:D:1.0]
+  ex:B:1.0  -->  [ex:C:1.0]
+  ex:C:1.0  (leaf)
+  ex:C:2.0  (leaf)
+  ex:D:1.0  -->  [ex:C:2.0]
+Resolved order:
+  0. ex:A:1.0
+  1. ex:B:1.0
+  2. ex:D:1.0
+  3. ex:C:1.0
+Trace:
+  EMIT      ex:A:1.0 @ depth 0
+  EMIT      ex:B:1.0 @ depth 1
+  EMIT      ex:D:1.0 @ depth 1
+  EMIT      ex:C:1.0 @ depth 2
+  SKIP      ex:C @ depth 2  (already won at depth 2)
+PASS: diamond resolved with C 1.0 winning (4 nodes; nearest-wins + declaration-order tiebreak)
+
+=== Cycle termination test ===
+Corpus (cycle):
+  ex:A:1.0  -->  [ex:B:1.0]
+  ex:B:1.0  -->  [ex:C:1.0]
+  ex:C:1.0  -->  [ex:A:1.0]
+Resolved order:
+  0. ex:A:1.0
+  1. ex:B:1.0
+  2. ex:C:1.0
+Trace:
+  EMIT      ex:A:1.0 @ depth 0
+  EMIT      ex:B:1.0 @ depth 1
+  EMIT      ex:C:1.0 @ depth 2
+  SKIP      ex:A @ depth 3  (already won at depth 0)
+PASS: cycle terminated; each of A, B, C emitted exactly once
+
+=== Skipper pruning test ===
+Corpus (skipper):
+  ex:A:1.0  -->  [ex:X:1.0, ex:Y:1.0]
+  ex:M:1.0  -->  [ex:N:1.0]
+  ex:N:1.0  -->  [ex:Y:1.0]
+  ex:X:1.0  -->  [ex:M:1.0]
+  ex:Y:1.0  (leaf)
+Resolved order:
+  0. ex:A:1.0
+  1. ex:X:1.0
+  2. ex:Y:1.0
+  3. ex:M:1.0
+  4. ex:N:1.0
+Trace:
+  EMIT      ex:A:1.0 @ depth 0
+  EMIT      ex:X:1.0 @ depth 1
+  EMIT      ex:Y:1.0 @ depth 1
+  EMIT      ex:M:1.0 @ depth 2
+  EMIT      ex:N:1.0 @ depth 3
+  SKIP      ex:Y @ depth 4  (already won at depth 1)
+PASS: skipper pruned Y's re-entry from N's subtree (Y emitted once at depth 1)
