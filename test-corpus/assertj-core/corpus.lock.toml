@@ -1,0 +1,19 @@
+id = "assertj-core"
+description = "AssertJ — fluent assertions library for Java tests."
+git_url = "https://github.com/assertj/assertj.git"
+ref = "assertj-build-3.26.3"
+ref_kind = "tag"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+build_cmd = "mvn -B -DskipTests=false -pl assertj-core -am verify"
+
+build_time_minutes = 8
+
+notes = """
+Note: as of 2024 the upstream `assertj-core` repo was consolidated into
+`assertj/assertj` as a multi-module aggregator. The corpus targets the
+`assertj-core` module within that aggregator, hence the `-pl assertj-core
+-am` selector in build_cmd. Bump the tag as needed.
+"""

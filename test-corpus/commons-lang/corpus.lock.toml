@@ -1,0 +1,19 @@
+id = "commons-lang"
+description = "Apache Commons Lang — small JDK utilities library."
+git_url = "https://github.com/apache/commons-lang.git"
+ref = "rel/commons-lang-3.14.0"
+ref_kind = "tag"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+build_cmd = "mvn -B -DskipTests=false verify"
+
+build_time_minutes = 3
+
+notes = """
+Small, classic single-module Maven project. Useful as a Hello-World
+end-to-end baseline. Builds clean on JDK 17 + 21 and Maven 3.9 + 4.0
+as of the pinned tag. Bump the tag as needed when a newer 3.x release
+ships.
+"""

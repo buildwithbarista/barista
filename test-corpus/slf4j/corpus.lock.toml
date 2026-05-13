@@ -1,0 +1,19 @@
+id = "slf4j"
+description = "SLF4J — Simple Logging Facade for Java (multi-module)."
+git_url = "https://github.com/qos-ch/slf4j.git"
+ref = "v_2.0.16"
+ref_kind = "tag"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+build_cmd = "mvn -B -DskipTests=false verify"
+
+build_time_minutes = 6
+
+notes = """
+Multi-module Maven project under an `slf4j-parent` aggregator. Included
+to exercise reactor ordering and inter-module dependency resolution in
+addition to the single-module shape covered by the other seeds. Bump the
+tag as needed.
+"""

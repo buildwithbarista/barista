@@ -1,0 +1,19 @@
+id = "commons-io"
+description = "Apache Commons IO — utility classes for stream, file, and filesystem work."
+git_url = "https://github.com/apache/commons-io.git"
+ref = "rel/commons-io-2.16.1"
+ref_kind = "tag"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+build_cmd = "mvn -B -DskipTests=false verify"
+
+build_time_minutes = 3
+
+notes = """
+Substituted for junit5 in the initial seed set: JUnit 5 has migrated to
+Gradle and so does not exercise the Maven build path. commons-io is a
+small, single-module, well-maintained Maven project that fills the same
+role as a fast, representative baseline. Bump the tag as needed.
+"""

@@ -1,0 +1,113 @@
+# Maven-compat corpus baseline.
+#
+# For each project in test-corpus/, materializes the pinned upstream
+# source, installs the lockfile's JDK + Maven, and runs the lockfile's
+# build_cmd. This is the upstream-Maven baseline that Barista must match.
+#
+# Runs on PRs that touch the corpus or its tooling, plus weekly to catch
+# upstream-tag churn (deleted tags, transitive-dep drift, etc.).
+
+name: corpus-baseline
+
+on:
+  pull_request:
+    paths:
+      - 'test-corpus/**'
+      - 'scripts/materialize-corpus.sh'
+      - '.github/workflows/corpus-baseline.yml'
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  matrix-build:
+    name: ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - commons-lang
+          - jackson-core
+          - commons-io
+          - assertj-core
+          - slf4j
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read corpus.lock.toml
+        id: lock
+        run: |
+          set -euo pipefail
+          LOCK="test-corpus/${{ matrix.project }}/corpus.lock.toml"
+          read_key() {
+            awk -v k="$1" '
+              BEGIN { FS="="; in_multi=0 }
+              {
+                if (in_multi) { if ($0 ~ /"""[[:space:]]*$/) in_multi=0; next }
+                if ($0 ~ /=[[:space:]]*"""/ && $0 !~ /""".*"""/) { in_multi=1; next }
+                if ($0 ~ /^[[:space:]]*#/) next
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
+                if ($1 != k) next
+                $1=""; v=$0; sub(/^=/, "", v)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+                if (v ~ /^".*"$/) { v=substr(v, 2, length(v)-2) }
+                print v; exit
+              }' "$LOCK"
+          }
+          JDK="$(read_key jdk)"
+          MV="$(read_key maven_version)"
+          CMD="$(read_key build_cmd)"
+          if [[ -z "$JDK" || -z "$MV" || -z "$CMD" ]]; then
+            echo "error: lockfile missing required key" >&2
+            exit 1
+          fi
+          {
+            echo "jdk=$JDK"
+            echo "maven_version=$MV"
+            echo "build_cmd=$CMD"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK ${{ steps.lock.outputs.jdk }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ steps.lock.outputs.jdk }}
+
+      - name: Install Maven ${{ steps.lock.outputs.maven_version }}
+        run: |
+          set -euo pipefail
+          MV="${{ steps.lock.outputs.maven_version }}"
+          if [[ "$MV" == 4.* ]]; then
+            SERIES=4
+          else
+            SERIES=3
+          fi
+          URL="https://archive.apache.org/dist/maven/maven-${SERIES}/${MV}/binaries/apache-maven-${MV}-bin.tar.gz"
+          curl -fsSL "$URL" -o /tmp/maven.tar.gz
+          mkdir -p "$HOME/.local/maven"
+          tar -xzf /tmp/maven.tar.gz -C "$HOME/.local/maven"
+          echo "$HOME/.local/maven/apache-maven-${MV}/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain versions
+        run: |
+          mvn -v
+          java -version
+
+      - name: Materialize project source
+        run: scripts/materialize-corpus.sh --filter ${{ matrix.project }}
+
+      - name: Build
+        working-directory: test-corpus/${{ matrix.project }}/checkout
+        run: ${{ steps.lock.outputs.build_cmd }}
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-${{ matrix.project }}-logs
+          path: test-corpus/${{ matrix.project }}/checkout/**/target/*.log
+          retention-days: 7

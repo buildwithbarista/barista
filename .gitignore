@@ -21,3 +21,6 @@
 
 # Generated docs
 /docs/api/
+
+# corpus checkouts are materialized on-demand and not tracked
+test-corpus/*/checkout/
