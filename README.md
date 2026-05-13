@@ -2,15 +2,27 @@
 
 A fast, fully Maven-compatible build tool for the JVM ecosystem.
 
-Barista is a drop-in replacement for `mvn`. It runs the same lifecycle phases, reads the
-same `pom.xml` and `~/.m2/settings.xml`, talks to the same repositories, and works with the
-same plugins, IDEs, and CI — but it resolves dependencies faster, caches build artifacts in a
-content-addressed store, and is deliberately frugal with the shared infrastructure (Maven
-Central, mirrors, corporate repository managers) that the ecosystem depends on.
-
 ## Status
 
-Pre-release. **v0.1 is in active development.** Interfaces and on-disk formats may change.
+Pre-release. **v0.1 is in active development.** Interfaces, command surfaces, and on-disk
+formats may change without notice until the first tagged release.
+
+## Why Barista
+
+Barista is a drop-in replacement for `mvn`. It runs the same lifecycle phases, reads the same
+`pom.xml` and `~/.m2/settings.xml`, talks to the same repositories, and works with the same
+plugins, IDEs, and CI systems.
+
+What's different is underneath. Barista resolves dependencies with a parallel, lock-aware
+resolver, caches build artifacts in a content-addressed store, and keeps plugin JVMs warm
+through a background daemon so plugin execution doesn't pay startup cost on every invocation.
+
+It is deliberately frugal with the shared infrastructure the ecosystem depends on — Maven
+Central, public mirrors, and corporate repository managers. Cached artifacts are fetched once
+and reused; an optional remote cache lets teams share results across machines and CI.
+
+The goal is that an existing Maven project works the day you switch, with no migration step,
+no new build file, and no lock-in.
 
 ## What's in this repository
 
@@ -19,8 +31,11 @@ Pre-release. **v0.1 is in active development.** Interfaces and on-disk formats m
 | `crates/` | The Rust workspace: `barista` CLI, dependency resolver, content-addressed cache, lockfile, POM parser, and supporting crates |
 | `barback/` | The Java daemon that executes Maven mojos in long-lived JVMs |
 | `roastery/` | The remote artifact cache server (REAPI CAS + native HTTP/2) |
-| `proto/`, `schema/` | IPC protocol definitions and published JSON schemas |
+| `proto/` | IPC protocol definitions shared between the CLI, daemon, and cache |
+| `schema/` | Published JSON schemas for lockfiles and on-disk formats |
 | `docs/` | Architecture notes, Maven compatibility notes, CI integration guides |
+| `bench/` | Benchmark harnesses and fixtures (added as the workspace fills out) |
+| `test-corpus/` | Real-world Maven projects used for compatibility and regression testing |
 
 ## Key concepts
 
@@ -34,17 +49,67 @@ Pre-release. **v0.1 is in active development.** Interfaces and on-disk formats m
 - **`~/.m2/repository`** — still populated (as hardlinks into the CAS where possible) so that
   `mvn` and `barista` coexist cleanly.
 
+## Installation
+
+Binary releases are not yet published. Once v0.1 ships, the primary installation path will be
+Homebrew:
+
+```sh
+brew install buildwithbarista/tap/barista
+```
+
+Until then, see [Building from source](#building-from-source).
+
+## Hello world
+
+Once installed, a Barista build of an existing Maven project looks like this:
+
+```sh
+cd path/to/your-maven-project
+barista pull        # resolve dependencies and warm the cache
+barista compile     # compile sources
+barista test        # run unit tests
+barista package     # produce the jar/war/etc.
+```
+
+No `pom.xml` edits, no migration step. If the project builds with `mvn`, it builds with
+`barista`.
+
 ## Building from source
 
 Requires a recent stable Rust toolchain (and Cargo), plus JDK 17 or 21 and Maven for the
 `barback` daemon.
 
 ```sh
-cargo build --release                 # builds the CLI, resolver, roastery, etc.
+cargo build --release                  # builds the CLI, resolver, roastery, etc.
 mvn -f barback/pom.xml package         # builds the barback uberjar
 ```
 
-(Detailed build and contribution instructions land alongside the first crates.)
+The resulting `barista` binary is at `target/release/barista`.
+
+## Documentation
+
+Project documentation lives under [`docs/`](docs/):
+
+- [`docs/arch/`](docs/arch/) — architecture: the resolver, the cache, the daemon protocol,
+  on-disk formats.
+- [`docs/compat/`](docs/compat/) — Maven compatibility: which behaviors are honored exactly,
+  where Barista deviates, and how to detect each case.
+- [`docs/ci/`](docs/ci/) — integration recipes for GitHub Actions, GitLab CI, Jenkins, and
+  other common CI systems.
+- [`docs/perf/`](docs/perf/) — benchmarking methodology and current numbers against `mvn`.
+
+Some of these directories are still being populated as the corresponding components land.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, the commit and review process,
+and how to propose changes.
+
+## Security
+
+If you believe you've found a security issue, please follow the disclosure process in
+[SECURITY.md](SECURITY.md) rather than opening a public issue.
 
 ## License
 

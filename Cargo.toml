@@ -1,0 +1,38 @@
+# Barista monorepo — Cargo workspace root.
+#
+# `crates/` holds the Rust workspace crates that make up the Barista CLI and its
+# supporting libraries. `roastery` is the standalone cache-server binary.
+# Per-crate `fuzz/` sub-crates (e.g. `crates/<name>/fuzz/`) are intentionally
+# excluded from workspace members — they ship their own `Cargo.toml` and are
+# built independently via `cargo fuzz`.
+#
+# License: dual-licensed under MIT OR Apache-2.0.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/barista-bench",
+    "crates/barista-cache",
+    "crates/barista-cli",
+    "crates/barista-config",
+    "crates/barista-coords",
+    "crates/barista-ipc",
+    "crates/barista-lockfile",
+    "crates/barista-netanalyze",
+    "crates/barista-netcap",
+    "crates/barista-pom",
+    "crates/barista-resolver",
+    "crates/barista-roastery-client",
+    "crates/barista-tap",
+    "crates/barista-telemetry",
+    "crates/barista-test-fixtures",
+    "crates/barista-version",
+    "roastery",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
