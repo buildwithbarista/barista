@@ -31,12 +31,32 @@ you agree to uphold it.
 - **JDK 17 and JDK 21.** The `barback` daemon runs on both via a runtime-detected branch, and
   CI exercises both. Install both if you intend to work on `barback`.
 - **Maven 3.9.x and Maven 4.0.x**, plus **mvnd 2.x**. These are the embedder targets Barista
-  must remain compatible with. An `.tool-versions` file for `asdf` will be added in a later
-  milestone.
+  must remain compatible with.
 - Standard build commands:
   - `cargo build --release` for the Rust workspace (`barista` CLI, resolver, cache, lockfile,
     `roastery`).
   - `mvn -f barback/pom.xml package` for the Java daemon.
+
+### Using asdf (recommended)
+
+The `.tool-versions` file at the repo root pins Rust, JDK, and Maven:
+
+    asdf plugin add rust   # if you haven't already
+    asdf plugin add java
+    asdf plugin add maven
+    asdf install
+
+This gives you the default versions used by the project. CI additionally
+exercises Maven 4.0.x and JDK 17 — install those manually if you want to
+reproduce CI cells locally:
+
+    asdf install java temurin-17.0.12+7
+    # (Maven 4 is not yet broadly available via asdf; install from
+    # https://maven.apache.org/download.cgi and place on PATH.)
+
+For `mvnd`, download the latest 2.x release from
+<https://github.com/apache/maven-mvnd/releases> and put the `mvnd` binary
+on your PATH.
 
 ## Running tests
 

@@ -1,9 +1,21 @@
-# CI workflow skeleton.
+# CI workflow for Barista.
 #
-# The toolchain matrix (Maven 3.9.x and 4.0.x, mvnd 2.x, JDK 17 + 21,
-# a Windows runner, barback's dual-JDK test matrix) is filled in by a
-# subsequent commit. This file currently exists so the workflow runs
-# at all; the matrix expansion is intentional follow-up work.
+# Jobs:
+#   rust-check    Fast feedback on every PR: cargo check + fmt + clippy.
+#   rust-test     cargo test --workspace; split out so the slow tests don't
+#                 gate the fast lint feedback.
+#   rust-windows  cargo check on windows-latest. Reserves a slot for the
+#                 named-pipe conformance suite and the end-to-end smoke
+#                 build, which land in later milestones.
+#   barback       2x2 matrix over JDK (17, 21) and Maven (3.9.x, 4.0.x).
+#                 Verifies the embedder works across every supported
+#                 toolchain combination — a v0.1 release-gate requirement.
+#   mvnd          Smoke test that `mvnd` 2.x can drive the barback build.
+#   actionlint    Self-check the workflow files in this directory.
+#
+# The toolchain matrix encoded here is the contract: any change to the
+# supported Maven / JDK / mvnd versions must be reflected in both this
+# file and `.tool-versions` at the repo root.
 
 name: CI
 
@@ -16,8 +28,8 @@ permissions:
   contents: read
 
 jobs:
-  rust:
-    name: Rust workspace (cargo check + test)
+  rust-check:
+    name: Rust check + fmt + clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,24 +37,114 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: cargo check
         run: cargo check --workspace --all-targets
-      - name: cargo test
-        run: cargo test --workspace
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-  barback:
-    name: barback (Maven, placeholder JDK — pinned in a follow-up)
+  rust-test:
+    name: Rust test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up JDK (placeholder — expanded to JDK 17 + 21 matrix in a follow-up)
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo test
+        run: cargo test --workspace
+
+  rust-windows:
+    name: Rust check (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo check
+        run: cargo check --workspace --all-targets
+      # TODO: enable named-pipe conformance tests once the Windows IPC
+      # transport lands. Placeholder; intentionally not run yet.
+      # - name: cargo test (named-pipe conformance)
+      #   run: cargo test -p barista-ipc --features windows-named-pipe
+      # TODO: enable the end-to-end smoke build once the CLI is wired up.
+      # - name: smoke build
+      #   run: cargo run -p barista -- build --dry-run
+
+  barback:
+    name: barback (JDK ${{ matrix.java-version }}, Maven ${{ matrix.maven-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ['17', '21']
+        # The Maven 4.0.0-rc-3 pin should be re-confirmed against
+        # https://maven.apache.org/download.cgi when the workflow is
+        # next touched — Maven 4 is still pre-GA and release cadence is
+        # not predictable.
+        maven-version: ['3.9.9', '4.0.0-rc-3']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK ${{ matrix.java-version }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: ${{ matrix.java-version }}
+      - name: Install Maven ${{ matrix.maven-version }}
+        run: |
+          set -euo pipefail
+          MV="${{ matrix.maven-version }}"
+          if [[ "$MV" == 4.* ]]; then
+            SERIES=4
+          else
+            SERIES=3
+          fi
+          URL="https://archive.apache.org/dist/maven/maven-${SERIES}/${MV}/binaries/apache-maven-${MV}-bin.tar.gz"
+          curl -fsSL "$URL" -o /tmp/maven.tar.gz
+          mkdir -p "$HOME/.local/maven"
+          tar -xzf /tmp/maven.tar.gz -C "$HOME/.local/maven"
+          echo "$HOME/.local/maven/apache-maven-${MV}/bin" >> "$GITHUB_PATH"
+      - name: Verify toolchain versions
+        run: |
+          mvn -v
+          java -version
       - name: mvn test (parent)
         run: mvn -f barback/pom.xml -B test
       - name: mvn package (bench harness compiles)
         run: mvn -f barback/bench/pom.xml -B package -DskipTests
+
+  mvnd:
+    name: mvnd smoke (2.x)
+    runs-on: ubuntu-latest
+    env:
+      # The mvnd pin should be re-confirmed against
+      # https://github.com/apache/maven-mvnd/releases when this workflow
+      # is next touched.
+      MVND_VERSION: '1.0.2'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install mvnd ${{ env.MVND_VERSION }}
+        run: |
+          set -euo pipefail
+          URL="https://github.com/apache/maven-mvnd/releases/download/${MVND_VERSION}/maven-mvnd-${MVND_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "$URL" -o /tmp/mvnd.tar.gz
+          mkdir -p "$HOME/.local/mvnd"
+          tar -xzf /tmp/mvnd.tar.gz -C "$HOME/.local/mvnd"
+          echo "$HOME/.local/mvnd/maven-mvnd-${MVND_VERSION}-linux-amd64/bin" >> "$GITHUB_PATH"
+      - name: Verify mvnd version
+        run: mvnd --version
+      - name: mvnd test (parent)
+        run: mvnd -f barback/pom.xml -B test
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          files: '.github/workflows/*.yml'
