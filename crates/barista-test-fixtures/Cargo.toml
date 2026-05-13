@@ -6,4 +6,8 @@ license.workspace = true
 description = "Shared test fixtures and corpus indexing helpers."
 publish = false
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
 [lib]

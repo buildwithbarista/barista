@@ -1,0 +1,1287 @@
+# Version comparison fixture corpus for the barista-version crate.
+#
+# Each [[case]] declares two version strings and an expected ordering:
+#   - "lt" — left  <  right
+#   - "eq" — left  == right (canonical equality, not raw string equality)
+#   - "gt" — left  >  right
+#
+# Cases are grouped into sections by comment headers; the parser treats
+# them as a flat list. Section headers exist purely so reviewers can
+# audit coverage.
+#
+# Optional `notes` strings document provenance and intent. Cases marked
+# "tentative" require runtime confirmation against the upstream Maven
+# implementation; the property test will surface mismatches.
+#
+# Ported cases come from Apache Maven's ComparableVersionTest:
+#   https://github.com/apache/maven/blob/master/compat/maven-artifact/src/test/java/org/apache/maven/artifact/versioning/ComparableVersionTest.java
+#
+# Apache Maven is licensed under the Apache License 2.0. Test inputs
+# (the version strings themselves) are facts and not copyrightable;
+# they are reproduced here for interoperability testing only.
+
+
+# =================================================================
+# PORTED FROM UPSTREAM
+# =================================================================
+
+# -----------------------------------------------------------------
+# Section 1 — VERSIONS_QUALIFIER sorted-order pairs
+#   Ported from testVersionsQualifier / checkVersionsOrder(String[]).
+#   Each adjacent pair from the sorted array becomes one lt case.
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1-alpha2snapshot"
+right = "1-alpha2"
+expected = "lt"
+notes = "ported from testVersionsQualifier (VERSIONS_QUALIFIER pair)"
+
+[[case]]
+left = "1-alpha2"
+right = "1-alpha-123"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-alpha-123"
+right = "1-beta-2"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-beta-2"
+right = "1-beta123"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-beta123"
+right = "1-m2"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-m2"
+right = "1-m11"
+expected = "lt"
+notes = "ported from testVersionsQualifier (numeric, not lex)"
+
+[[case]]
+left = "1-m11"
+right = "1-rc"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-rc"
+right = "1-cr2"
+expected = "lt"
+notes = "ported from testVersionsQualifier (cr == rc alias)"
+
+[[case]]
+left = "1-cr2"
+right = "1-rc123"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-rc123"
+right = "1-SNAPSHOT"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-SNAPSHOT"
+right = "1"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1"
+right = "1-sp"
+expected = "lt"
+notes = "ported from testVersionsQualifier (sp is post-release)"
+
+[[case]]
+left = "1-sp"
+right = "1-sp2"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-sp2"
+right = "1-sp123"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-sp123"
+right = "1-abc"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-abc"
+right = "1-def"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-def"
+right = "1-pom-1"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-pom-1"
+right = "1-1-snapshot"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-1-snapshot"
+right = "1-1"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-1"
+right = "1-2"
+expected = "lt"
+notes = "ported from testVersionsQualifier"
+
+[[case]]
+left = "1-2"
+right = "1-123"
+expected = "lt"
+notes = "ported from testVersionsQualifier (numeric)"
+
+# Transitive non-adjacent samples from the same array (worth pinning).
+
+[[case]]
+left = "1-alpha2snapshot"
+right = "1-123"
+expected = "lt"
+notes = "ported from testVersionsQualifier (transitive)"
+
+[[case]]
+left = "1-SNAPSHOT"
+right = "1-sp"
+expected = "lt"
+notes = "ported from testVersionsQualifier (transitive: snapshot < ga < sp)"
+
+
+# -----------------------------------------------------------------
+# Section 2 — VERSIONS_NUMBER sorted-order pairs
+#   Ported from testVersionsNumber / checkVersionsOrder(String[]).
+# -----------------------------------------------------------------
+
+[[case]]
+left = "2.0"
+right = "2.0.a"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.0.a"
+right = "2-1"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2-1"
+right = "2.0.2"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.0.2"
+right = "2.0.123"
+expected = "lt"
+notes = "ported from testVersionsNumber (numeric, not lex)"
+
+[[case]]
+left = "2.0.123"
+right = "2.1.0"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.1.0"
+right = "2.1-a"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.1-a"
+right = "2.1b"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.1b"
+right = "2.1-c"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.1-c"
+right = "2.1-1"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.1-1"
+right = "2.1.0.1"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.1.0.1"
+right = "2.2"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.2"
+right = "2.123"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "2.123"
+right = "11.a2"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "11.a2"
+right = "11.a11"
+expected = "lt"
+notes = "ported from testVersionsNumber (numeric in qualifier suffix)"
+
+[[case]]
+left = "11.a11"
+right = "11.b2"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "11.b11"
+right = "11.m2"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "11.m11"
+right = "11"
+expected = "lt"
+notes = "ported from testVersionsNumber (qualifier < release)"
+
+[[case]]
+left = "11"
+right = "11.a"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "11.a"
+right = "11b"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "11b"
+right = "11c"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+[[case]]
+left = "11c"
+right = "11m"
+expected = "lt"
+notes = "ported from testVersionsNumber"
+
+
+# -----------------------------------------------------------------
+# Section 3 — Equality cases (testVersionsEqual)
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1"
+right = "1"
+expected = "eq"
+notes = "ported from testVersionsEqual (identity)"
+
+[[case]]
+left = "1"
+right = "1.0"
+expected = "eq"
+notes = "ported from testVersionsEqual (trailing zero stripping)"
+
+[[case]]
+left = "1"
+right = "1.0.0"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1.0"
+right = "1.0.0"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1"
+right = "1-0"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1"
+right = "1.0-0"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1.0"
+right = "1.0-0"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1a"
+right = "1-a"
+expected = "eq"
+notes = "ported from testVersionsEqual (implicit separator)"
+
+[[case]]
+left = "1a"
+right = "1.0-a"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1a"
+right = "1.0.0-a"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1.0a"
+right = "1-a"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1.0.0a"
+right = "1-a"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1x"
+right = "1-x"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1x"
+right = "1.0-x"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1cr"
+right = "1rc"
+expected = "eq"
+notes = "ported from testVersionsEqual (cr is alias for rc)"
+
+[[case]]
+left = "1a1"
+right = "1-alpha-1"
+expected = "eq"
+notes = "ported from testVersionsEqual (a = alpha alias)"
+
+[[case]]
+left = "1b2"
+right = "1-beta-2"
+expected = "eq"
+notes = "ported from testVersionsEqual (b = beta alias)"
+
+[[case]]
+left = "1m3"
+right = "1-milestone-3"
+expected = "eq"
+notes = "ported from testVersionsEqual (m = milestone alias)"
+
+[[case]]
+left = "1X"
+right = "1x"
+expected = "eq"
+notes = "ported from testVersionsEqual (case insensitive)"
+
+[[case]]
+left = "1A"
+right = "1a"
+expected = "eq"
+notes = "ported from testVersionsEqual (case insensitive)"
+
+[[case]]
+left = "1Cr"
+right = "1Rc"
+expected = "eq"
+notes = "ported from testVersionsEqual (mixed case rc/cr alias)"
+
+[[case]]
+left = "1m3"
+right = "1Milestone3"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1m3"
+right = "1MILESTONE3"
+expected = "eq"
+notes = "ported from testVersionsEqual"
+
+[[case]]
+left = "1-abcdefghijklmnopqrstuvwxyz"
+right = "1-ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+expected = "eq"
+notes = "ported from testLocaleIndependent (full alphabet case-fold)"
+
+
+# -----------------------------------------------------------------
+# Section 4 — testVersionComparing ordered pairs
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1"
+right = "2"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.5"
+right = "2"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1"
+right = "2.5"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0"
+right = "1.1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.1"
+right = "1.2"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0.0"
+right = "1.1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0.1"
+right = "1.1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.1"
+right = "1.2.0"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0-alpha-1"
+right = "1.0"
+expected = "lt"
+notes = "ported from testVersionComparing (pre-release < release)"
+
+[[case]]
+left = "1.0-alpha-1"
+right = "1.0-alpha-2"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0-alpha-1"
+right = "1.0-beta-1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0-beta-1"
+right = "1.0-SNAPSHOT"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0-SNAPSHOT"
+right = "1.0"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0-alpha-1-SNAPSHOT"
+right = "1.0-alpha-1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0"
+right = "1.0-1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0-1"
+right = "1.0-2"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "1.0.0"
+right = "1.0-1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "2.0-1"
+right = "2.0.1"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "2.0.1-klm"
+right = "2.0.1-lmn"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "2.0.1"
+right = "2.0.1-xyz"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "2.0.1"
+right = "2.0.1-123"
+expected = "lt"
+notes = "ported from testVersionComparing"
+
+[[case]]
+left = "2.0.1-xyz"
+right = "2.0.1-123"
+expected = "lt"
+notes = "ported from testVersionComparing (string < integer suffix)"
+
+
+# -----------------------------------------------------------------
+# Section 5 — Leading zeroes + MNG-* edge cases
+# -----------------------------------------------------------------
+
+[[case]]
+left = "0.7"
+right = "2"
+expected = "lt"
+notes = "ported from testLeadingZeroes"
+
+[[case]]
+left = "0.2"
+right = "1.0.7"
+expected = "lt"
+notes = "ported from testLeadingZeroes"
+
+[[case]]
+left = "6.1.0rc3"
+right = "6.1.0"
+expected = "lt"
+notes = "ported from testMng5568 (classical pre-release)"
+
+[[case]]
+left = "6.1.0rc3"
+right = "6.1H.5-beta"
+expected = "lt"
+notes = "ported from testMng5568 (transitive consistency)"
+
+[[case]]
+left = "6.1.0"
+right = "6.1H.5-beta"
+expected = "lt"
+notes = "ported from testMng5568"
+
+[[case]]
+left = "20190126.230843"
+right = "1234567890.12345"
+expected = "lt"
+notes = "ported from testMng6572 (big integer parsing)"
+
+[[case]]
+left = "1234567890.12345"
+right = "123456789012345.1H.5-beta"
+expected = "lt"
+notes = "ported from testMng6572 (15-digit integer)"
+
+[[case]]
+left = "123456789012345.1H.5-beta"
+right = "12345678901234567890.1H.5-beta"
+expected = "lt"
+notes = "ported from testMng6572 (20-digit integer, exceeds u64)"
+
+[[case]]
+left = "20190126.230843"
+right = "12345678901234567890.1H.5-beta"
+expected = "lt"
+notes = "ported from testMng6572"
+
+[[case]]
+left = "1-0.alpha"
+right = "1"
+expected = "lt"
+notes = "ported from testMng6964 (-0.alpha qualifier suffix)"
+
+[[case]]
+left = "1-0.beta"
+right = "1"
+expected = "lt"
+notes = "ported from testMng6964"
+
+[[case]]
+left = "1-0.alpha"
+right = "1-0.beta"
+expected = "lt"
+notes = "ported from testMng6964"
+
+[[case]]
+left = "0000000000000000001"
+right = "1"
+expected = "eq"
+notes = "ported from testVersionEqualWithLeadingZeroes"
+
+[[case]]
+left = "001"
+right = "01"
+expected = "eq"
+notes = "ported from testVersionEqualWithLeadingZeroes"
+
+[[case]]
+left = "0000000000000000000"
+right = "0"
+expected = "eq"
+notes = "ported from testVersionZeroEqualWithLeadingZeroes"
+
+
+# -----------------------------------------------------------------
+# Section 6 — testMng7644 (X1 vs X2 spacing) and testMng7714 (sp)
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0.0.alpha1"
+right = "1.0.0-alpha2"
+expected = "lt"
+notes = "ported from testMng7644 (1.0.0.X1 < 1.0.0-X2)"
+
+[[case]]
+left = "1.0.0.beta1"
+right = "1.0.0-beta2"
+expected = "lt"
+notes = "ported from testMng7644"
+
+[[case]]
+left = "1.0.0.RC1"
+right = "1.0.0-RC2"
+expected = "lt"
+notes = "ported from testMng7644"
+
+[[case]]
+left = "1.0.0.milestone1"
+right = "1.0.0-milestone2"
+expected = "lt"
+notes = "ported from testMng7644"
+
+[[case]]
+left = "2-alpha"
+right = "2.0.alpha"
+expected = "eq"
+notes = "ported from testMng7644 (2-X == 2.0.X)"
+
+[[case]]
+left = "2-alpha"
+right = "2.0.0.alpha"
+expected = "eq"
+notes = "ported from testMng7644 (2-X == 2.0.0.X)"
+
+[[case]]
+left = "2.0.alpha"
+right = "2.0.0.alpha"
+expected = "eq"
+notes = "ported from testMng7644"
+
+[[case]]
+left = "2-RC"
+right = "2.0.RC"
+expected = "eq"
+notes = "ported from testMng7644"
+
+[[case]]
+left = "1.0.final-redhat"
+right = "1.0-sp1-redhat"
+expected = "lt"
+notes = "ported from testMng7714"
+
+[[case]]
+left = "1.0.final-redhat"
+right = "1.0-sp-1-redhat"
+expected = "lt"
+notes = "ported from testMng7714"
+
+[[case]]
+left = "1.0.final-redhat"
+right = "1.0-sp.1-redhat"
+expected = "lt"
+notes = "ported from testMng7714"
+
+
+# -----------------------------------------------------------------
+# Section 7 — Digit/letter/non-ASCII ordering (ported)
+# -----------------------------------------------------------------
+
+[[case]]
+left = "7"
+right = "J"
+expected = "gt"
+notes = "ported from testCompareDigitToLetter (digits > letters)"
+
+[[case]]
+left = "7"
+right = "c"
+expected = "gt"
+notes = "ported from testCompareDigitToLetter"
+
+[[case]]
+left = "1"
+right = "é"
+expected = "gt"
+notes = "ported from testDigitGreaterThanNonAscii"
+
+[[case]]
+left = "1.a"
+right = "1.A"
+expected = "eq"
+notes = "ported from testCompareLowerCaseToUpperCaseASCII"
+
+[[case]]
+left = "1.é"
+right = "1.É"
+expected = "eq"
+notes = "ported from testCompareLowerCaseToUpperCaseNonASCII"
+
+[[case]]
+left = "aardvark"
+right = "zebra"
+expected = "lt"
+notes = "ported from testLexicographicOrder"
+
+[[case]]
+left = "zebra"
+right = "ζέβρα"
+expected = "lt"
+notes = "ported from testLexicographicOrder (Greek > Latin)"
+
+[[case]]
+left = "1.0.0-alpha1"
+right = "1.0.0-ALPHA1"
+expected = "eq"
+notes = "ported from testLexicographicASCIISortOrder (case-insensitive)"
+
+
+# =================================================================
+# ADVERSARIAL CASES
+# =================================================================
+
+# -----------------------------------------------------------------
+# Section A1 — Padding / zero-extension edges
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1"
+right = "1.0.0.0.0"
+expected = "eq"
+notes = "adversarial: deep zero-extension"
+
+[[case]]
+left = "1.0.0.0.0.0.0.0.0"
+right = "1"
+expected = "eq"
+notes = "adversarial: 9 trailing zeros"
+
+[[case]]
+left = "1.0.0.0.1"
+right = "1"
+expected = "gt"
+notes = "adversarial: nonzero after deep padding"
+
+[[case]]
+left = "1.0.0.0.0-alpha"
+right = "1-alpha"
+expected = "eq"
+notes = "adversarial: zero-extension plus qualifier"
+
+[[case]]
+left = "0.0.0.0.0"
+right = "0"
+expected = "eq"
+notes = "adversarial: zero-only deep padding"
+
+
+# -----------------------------------------------------------------
+# Section A2 — Numeric vs lexicographic traps
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.9"
+right = "1.10"
+expected = "lt"
+notes = "adversarial: numeric, not lexicographic"
+
+[[case]]
+left = "1.9.9"
+right = "1.10.0"
+expected = "lt"
+notes = "adversarial: numeric multi-segment"
+
+[[case]]
+left = "1.099"
+right = "1.100"
+expected = "lt"
+notes = "adversarial: numeric with leading zero on rhs"
+
+[[case]]
+left = "1.2"
+right = "1.10"
+expected = "lt"
+notes = "adversarial: a classic lex-vs-num trap"
+
+[[case]]
+left = "1-rc9"
+right = "1-rc10"
+expected = "lt"
+notes = "adversarial: numeric inside qualifier suffix"
+
+
+# -----------------------------------------------------------------
+# Section A3 — Numeric overflow / huge integers
+# -----------------------------------------------------------------
+
+[[case]]
+left = "99999999999999.0"
+right = "1.0"
+expected = "gt"
+notes = "adversarial: 14-digit major fits in i64"
+
+[[case]]
+left = "9223372036854775807"
+right = "9223372036854775808"
+expected = "lt"
+notes = "adversarial: i64::MAX vs i64::MAX+1 — requires big-int"
+
+[[case]]
+left = "18446744073709551615"
+right = "18446744073709551616"
+expected = "lt"
+notes = "adversarial: u64::MAX vs u64::MAX+1 — requires big-int"
+
+[[case]]
+left = "100000000000000000000"
+right = "99999999999999999999"
+expected = "gt"
+notes = "adversarial: 21-digit vs 20-digit integer"
+
+[[case]]
+left = "1.99999999999999999999"
+right = "1.99999999999999999998"
+expected = "gt"
+notes = "adversarial: 20-digit minor segment, differs in last digit"
+
+[[case]]
+left = "0000000000000000000000000000001"
+right = "1"
+expected = "eq"
+notes = "adversarial: 31 leading zeros"
+
+
+# -----------------------------------------------------------------
+# Section A4 — Mixed alpha-numeric tokens (implicit separators)
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0a1"
+right = "1.0a2"
+expected = "lt"
+notes = "adversarial: implicit separator before alpha qualifier"
+
+[[case]]
+left = "1.0alpha1"
+right = "1.0beta1"
+expected = "lt"
+notes = "adversarial: full alias names without separator"
+
+[[case]]
+left = "1.0rc1"
+right = "1.0-rc-1"
+expected = "eq"
+notes = "adversarial: implicit vs explicit separators around rc"
+
+[[case]]
+left = "1.0a"
+right = "1.0b"
+expected = "lt"
+notes = "adversarial: a vs b alias ordering"
+
+[[case]]
+left = "1.0m"
+right = "1.0rc"
+expected = "lt"
+notes = "adversarial: milestone < rc"
+
+[[case]]
+left = "1.0a99"
+right = "1.0b1"
+expected = "lt"
+notes = "adversarial: alpha-N always less than beta regardless of N"
+
+[[case]]
+left = "1m99"
+right = "1rc1"
+expected = "lt"
+notes = "adversarial: milestone-99 < rc-1"
+
+[[case]]
+left = "1cr1"
+right = "1rc1"
+expected = "eq"
+notes = "adversarial: cr alias for rc with numeric suffix"
+
+
+# -----------------------------------------------------------------
+# Section A5 — Multiple dashes / chained qualifiers
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0-alpha-beta"
+right = "1.0-alpha"
+expected = "lt"
+notes = "adversarial: -alpha-beta sorts before -alpha (sub-list rules)"
+
+[[case]]
+left = "1.0-1-2-3"
+right = "1.0-1-2-4"
+expected = "lt"
+notes = "adversarial: chained dash-prefixed integers, last differs"
+
+[[case]]
+left = "1.0-1-2-3"
+right = "1.0-1-3-3"
+expected = "lt"
+notes = "adversarial: chained integers, middle differs"
+
+[[case]]
+left = "1.0-1-2-3"
+right = "1.0-2-2-3"
+expected = "lt"
+notes = "adversarial: chained integers, first differs"
+
+[[case]]
+left = "1.0----"
+right = "1.0"
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; empty sublists"
+
+[[case]]
+left = "1.0-a-b-c"
+right = "1.0-a-b-d"
+expected = "lt"
+notes = "adversarial: deep qualifier chain, tail differs"
+
+
+# -----------------------------------------------------------------
+# Section A6 — ga / final / release aliases
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0.0-ga"
+right = "1.0.0"
+expected = "eq"
+notes = "adversarial: ga alias for release"
+
+[[case]]
+left = "1.0.0-final"
+right = "1.0.0"
+expected = "eq"
+notes = "adversarial: final alias for release"
+
+[[case]]
+left = "1.0.0-ga"
+right = "1.0.0-final"
+expected = "eq"
+notes = "adversarial: ga == final"
+
+[[case]]
+left = "1.0.0-GA"
+right = "1.0.0-ga"
+expected = "eq"
+notes = "adversarial: ga case-insensitive"
+
+[[case]]
+left = "1.0.0-release"
+right = "1.0.0"
+expected = "eq"
+notes = "adversarial: release alias"
+
+[[case]]
+left = "1.0.0-RELEASE"
+right = "1.0.0-final"
+expected = "eq"
+notes = "adversarial: release case-insensitive, equals final"
+
+[[case]]
+left = "1-FinaL"
+right = "1"
+expected = "eq"
+notes = "adversarial: mixed-case final alias (cf. testVersionsHaveSameOrderButAreNotEqual — same ordering)"
+
+
+# -----------------------------------------------------------------
+# Section A7 — sp (service pack) post-release qualifier
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0"
+right = "1.0-sp"
+expected = "lt"
+notes = "adversarial: sp is post-release"
+
+[[case]]
+left = "1.0-sp-1"
+right = "1.0"
+expected = "gt"
+notes = "adversarial: sp-1 > release"
+
+[[case]]
+left = "1.0-sp1"
+right = "1.0-sp2"
+expected = "lt"
+notes = "adversarial: sp numbering"
+
+[[case]]
+left = "1.0-sp9"
+right = "1.0-sp10"
+expected = "lt"
+notes = "adversarial: sp numeric, not lex"
+
+[[case]]
+left = "1.0-sp"
+right = "1.1"
+expected = "lt"
+notes = "adversarial: sp on minor X < release X+1"
+
+
+# -----------------------------------------------------------------
+# Section A8 — SNAPSHOT behavior
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0-SNAPSHOT"
+right = "1.0"
+expected = "lt"
+notes = "adversarial: snapshot < release"
+
+[[case]]
+left = "1.0-SNAPSHOT"
+right = "1.0-rc-9999"
+expected = "gt"
+notes = "adversarial: snapshot > any rc"
+
+[[case]]
+left = "1.0-snapshot"
+right = "1.0-SNAPSHOT"
+expected = "eq"
+notes = "adversarial: snapshot case-insensitive"
+
+[[case]]
+left = "1.0-SNAPSHOT"
+right = "1.0-alpha-99"
+expected = "gt"
+notes = "adversarial: snapshot > alpha"
+
+[[case]]
+left = "1.0-SNAPSHOT"
+right = "1.1-SNAPSHOT"
+expected = "lt"
+notes = "adversarial: snapshots compare by base version"
+
+[[case]]
+left = "1.0-alpha-SNAPSHOT"
+right = "1.0-alpha"
+expected = "lt"
+notes = "adversarial: snapshot-of-alpha < alpha"
+
+
+# -----------------------------------------------------------------
+# Section A9 — Date-style versions
+# -----------------------------------------------------------------
+
+[[case]]
+left = "20240101"
+right = "20240102"
+expected = "lt"
+notes = "adversarial: yyyymmdd numeric"
+
+[[case]]
+left = "2024.01.01"
+right = "1999.12.31"
+expected = "gt"
+notes = "adversarial: dotted-date format"
+
+[[case]]
+left = "2024-01-01"
+right = "2024-02-01"
+expected = "lt"
+notes = "adversarial: dashed-date format"
+
+[[case]]
+left = "20240101.120000"
+right = "20240101.120001"
+expected = "lt"
+notes = "adversarial: timestamp suffix"
+
+[[case]]
+left = "2024.0"
+right = "2024"
+expected = "eq"
+notes = "adversarial: dated version with trailing zero"
+
+
+# -----------------------------------------------------------------
+# Section A10 — Unicode and exotic characters
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.0-α1"
+right = "1.0-α2"
+expected = "lt"
+notes = "tentative — verify against runtime mvn behavior; Greek alpha"
+
+[[case]]
+left = "1.0-naïve"
+right = "1.0-naive"
+expected = "gt"
+notes = "tentative — verify against runtime mvn behavior; diacritics"
+
+[[case]]
+left = "1.٨"
+right = "1.9"
+expected = "lt"
+notes = "ported intent from testNonAsciiDigits — Arabic-Indic 8 < ASCII 9 because non-ASCII digits treated as letters; letters < digits"
+
+[[case]]
+left = "1"
+right = "٨"
+expected = "gt"
+notes = "ported intent from testNonAsciiDigits"
+
+[[case]]
+left = "1.0-Ω"
+right = "1.0-α"
+expected = "gt"
+notes = "tentative — verify against runtime mvn behavior; Greek omega > alpha"
+
+[[case]]
+left = "1.0-naïve"
+right = "1.0-NAÏVE"
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; diacritic case-fold"
+
+
+# -----------------------------------------------------------------
+# Section A11 — Empty / pathological inputs
+# -----------------------------------------------------------------
+
+[[case]]
+left = ""
+right = "1"
+expected = "lt"
+notes = "tentative — verify against runtime mvn behavior; empty string"
+
+[[case]]
+left = ""
+right = ""
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; empty == empty"
+
+[[case]]
+left = "-"
+right = ""
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; bare separator"
+
+[[case]]
+left = "."
+right = ""
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; bare dot"
+
+[[case]]
+left = "-..-"
+right = ""
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; separators only"
+
+[[case]]
+left = "   "
+right = ""
+expected = "gt"
+notes = "tentative — verify against runtime mvn behavior; whitespace is a token"
+
+[[case]]
+left = "0"
+right = ""
+expected = "eq"
+notes = "tentative — verify against runtime mvn behavior; zero == empty (release marker)"
+
+
+# -----------------------------------------------------------------
+# Section A12 — Identity / reflexive cases for sanity
+# -----------------------------------------------------------------
+
+[[case]]
+left = "1.2.3"
+right = "1.2.3"
+expected = "eq"
+notes = "adversarial: trivial identity"
+
+[[case]]
+left = "1.0-SNAPSHOT"
+right = "1.0-SNAPSHOT"
+expected = "eq"
+notes = "adversarial: snapshot identity"
+
+[[case]]
+left = "1.0-alpha-1-SNAPSHOT"
+right = "1.0-alpha-1-SNAPSHOT"
+expected = "eq"
+notes = "adversarial: compound qualifier identity"
