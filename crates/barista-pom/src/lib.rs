@@ -20,11 +20,15 @@
 #![warn(rust_2018_idioms)]
 
 pub mod effective;
+pub mod profile;
 pub mod raw;
 
 pub use effective::{
     EffectiveError, EffectivePom, Interpolation, InterpolationLocation, MAX_CHAIN_DEPTH,
     MAX_INTERPOLATION_DEPTH, ParentResolver, build_effective,
+};
+pub use profile::{
+    ActivationContext, MAX_BOM_IMPORT_DEPTH, ResolveError, ResolvedPom, resolve_pom,
 };
 pub use raw::{
     DependencyManagement, ParseError, Properties, RawActivation, RawActivationFile,

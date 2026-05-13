@@ -27,3 +27,13 @@ Run with `cargo bench -p barista-version --bench compare` to refresh.
 | Version cmp: 1.0.0-alpha-1 vs 1.0.0-rc-3 | 64.60 ns |
 | Version parse: 1.0.0-rc-3 | 420.42 ns |
 | Version cmp: 1 vs 1.0.0 (canonical eq) | 4.55 ns |
+
+## barista-pom
+
+Run with `cargo bench -p barista-pom --bench parse` and `cargo bench -p barista-pom --bench effective` to refresh.
+
+| Benchmark | Median per-iter |
+|---|---|
+| RawPom parse: sample-pom.xml (small) | 13.65 µs |
+| Effective: build_effective on no-parent small POM | 2.05 µs |
+| Effective: interpolate_string (~5 placeholders) | 4.11 µs |
