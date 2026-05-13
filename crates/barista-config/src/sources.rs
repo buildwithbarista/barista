@@ -5,10 +5,11 @@
 //! contribution in a [`LoadAudit`] alongside the resolved
 //! [`Config`].
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::barista_toml::{BaristaTomlExtensions, ProjectConfigFile};
 use crate::schema::*;
+use crate::settings_xml::{SettingsError, parse_settings_xml};
 
 /// Environment-variable getter signature used by [`LoaderInputs`].
 /// Returning `Option<String>` rather than `Result` keeps the "var
@@ -124,50 +125,30 @@ pub enum LoaderError {
     EnvParse { name: String, detail: String },
     #[error("HOME directory could not be resolved")]
     NoHome,
+    #[error("settings.xml at {path:?}: {detail}")]
+    SettingsXml { path: PathBuf, detail: String },
 }
 
-// ============================================================
-// Settings.xml stub (Task 2 replaces this with a real parser)
-// ============================================================
-
-/// Placeholder for parsed Maven `settings.xml` content. A real
-/// parser arrives in a follow-up task; for now the loader treats
-/// settings.xml as a no-op layer (file is consulted only to record
-/// it in the audit if present).
-#[derive(Debug, Clone, Default)]
-pub struct SettingsXml {
-    pub servers: Vec<Server>,
-    pub mirrors: Vec<Mirror>,
-    pub profiles: Vec<XmlProfile>,
-    pub active_profile_ids: Vec<String>,
+impl From<SettingsError> for LoaderError {
+    fn from(e: SettingsError) -> Self {
+        match e {
+            SettingsError::Io { path, source } => LoaderError::FileRead { path, source },
+            SettingsError::XmlParse { path, detail } => LoaderError::SettingsXml { path, detail },
+            other => LoaderError::SettingsXml {
+                path: PathBuf::new(),
+                detail: other.to_string(),
+            },
+        }
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct Server {
-    pub id: String,
-    pub username: Option<String>,
-    /// Already-decrypted; decryption is the parser's job.
-    pub password: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Mirror {
-    pub id: String,
-    pub mirror_of: String,
-    pub url: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct XmlProfile {
-    pub id: String,
-    pub properties: BTreeMap<String, String>,
-}
-
-/// Stub loader for Maven `settings.xml`. The real parser is
-/// delivered by Task 2 of this milestone; until then this returns
-/// an empty [`SettingsXml`] regardless of file content.
-pub fn load_settings_xml(_path: &Path) -> Result<SettingsXml, LoaderError> {
-    Ok(SettingsXml::default())
+/// Public-facing wrapper around [`parse_settings_xml`]: ingests a
+/// `settings.xml` file at `path` and returns its typed
+/// [`crate::settings_xml::SettingsXml`] representation. Errors are
+/// surfaced as [`LoaderError`] so callers using the loader's error
+/// type don't need to handle two error families.
+pub fn load_settings_xml(path: &Path) -> Result<crate::settings_xml::SettingsXml, LoaderError> {
+    parse_settings_xml(path).map_err(LoaderError::from)
 }
 
 // ============================================================
@@ -216,8 +197,16 @@ pub fn load_effective_config(inputs: LoaderInputs<'_>) -> Result<(Config, LoadAu
     };
     if let Some(path) = project_path {
         if path.exists() {
-            let partial = read_partial_toml(&path)?;
-            let fields = apply_with_home(&partial, &mut effective, &home);
+            let file = read_project_toml(&path)?;
+            let mut fields = apply_with_home(&file.base, &mut effective, &home);
+            // Attach project-only extensions (taps, modules,
+            // plugins, project metadata) — but only if at least
+            // one section is populated, so an extensions-less
+            // file leaves `project_extensions` as None.
+            if extensions_present(&file.extensions) {
+                effective.project_extensions = Some(file.extensions);
+                fields.push("project-extensions".into());
+            }
             audit.layers_applied.push(LayerAudit {
                 layer: LayerSource::ProjectConfig(path),
                 fields_set: fields,
@@ -225,16 +214,18 @@ pub fn load_effective_config(inputs: LoaderInputs<'_>) -> Result<(Config, LoadAu
         }
     }
 
-    // 4. Settings.xml — stub layer for Task 1.
+    // 4. Settings.xml — parse and apply.
     let settings_path = inputs
         .settings_xml_path
         .clone()
         .unwrap_or_else(|| home.join(".m2").join("settings.xml"));
     if settings_path.exists() {
-        let _settings = load_settings_xml(&settings_path)?;
+        let settings = load_settings_xml(&settings_path)?;
+        let fields = apply_settings_xml(&settings, &mut effective, &home);
+        effective.maven_settings = settings;
         audit.layers_applied.push(LayerAudit {
             layer: LayerSource::SettingsXml(settings_path),
-            fields_set: Vec::new(), // populated when Task 2 lands
+            fields_set: fields,
         });
     }
 
@@ -309,6 +300,76 @@ fn apply_with_home(partial: &PartialConfig, target: &mut Config, home: &Path) ->
     target.paths.m2_repository = expand_tilde(&target.paths.m2_repository, home);
     target.daemon.socket_dir = expand_tilde(&target.daemon.socket_dir, home);
     fields
+}
+
+/// Apply the parsed Maven `settings.xml` to the running effective
+/// [`Config`]. Returns the list of field names this layer mutated,
+/// for the [`LoadAudit`].
+///
+/// Currently this:
+///
+/// - Maps `<localRepository>` to `paths.m2-repository` (tilde-expanded).
+/// - Records `<offline>true</offline>` in the audit (no direct Config
+///   field today; the offline flag is consumed via `maven_settings`).
+///
+/// Servers, mirrors, profiles, proxies, and plugin groups are not
+/// merged into [`Config`] directly — they are carried verbatim on
+/// `Config::maven_settings` for the resolver and network layer to
+/// consume.
+fn apply_settings_xml(
+    settings: &crate::settings_xml::SettingsXml,
+    target: &mut Config,
+    home: &Path,
+) -> Vec<String> {
+    let mut touched = Vec::new();
+    if let Some(local_repo) = &settings.local_repository {
+        target.paths.m2_repository = expand_tilde(Path::new(local_repo), home);
+        touched.push("paths.m2-repository".into());
+    }
+    if settings.offline {
+        touched.push("maven-settings.offline".into());
+    }
+    if !settings.servers.is_empty() {
+        touched.push("maven-settings.servers".into());
+    }
+    if !settings.mirrors.is_empty() {
+        touched.push("maven-settings.mirrors".into());
+    }
+    if !settings.profiles.is_empty() {
+        touched.push("maven-settings.profiles".into());
+    }
+    if !settings.active_profile_ids.is_empty() {
+        touched.push("maven-settings.active-profiles".into());
+    }
+    if !settings.proxies.is_empty() {
+        touched.push("maven-settings.proxies".into());
+    }
+    if !settings.plugin_groups.is_empty() {
+        touched.push("maven-settings.plugin-groups".into());
+    }
+    touched
+}
+
+fn read_project_toml(path: &Path) -> Result<ProjectConfigFile, LoaderError> {
+    let raw = std::fs::read_to_string(path).map_err(|e| LoaderError::FileRead {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    toml::from_str::<ProjectConfigFile>(&raw).map_err(|e| LoaderError::TomlParse {
+        path: path.to_path_buf(),
+        detail: e.to_string(),
+    })
+}
+
+/// True iff at least one project-only section is populated. An
+/// extensions-less project file should not cause
+/// `Config.project_extensions` to flip to `Some(default)`.
+fn extensions_present(ext: &BaristaTomlExtensions) -> bool {
+    ext.project.is_some()
+        || !ext.taps.is_empty()
+        || !ext.modules.excluded.is_empty()
+        || !ext.modules.overrides.is_empty()
+        || !ext.plugins.classloader_cache_overrides.is_empty()
 }
 
 fn read_partial_toml(path: &Path) -> Result<PartialConfig, LoaderError> {
@@ -1046,7 +1107,85 @@ mod tests {
         assert_eq!(cfg.paths.cache_dir, home.path().join(".barista/cache"));
     }
 
-    // 26. NoHome error when HOME is unset and no override.
+    // 27. Project file with [[taps]] populates project_extensions on the
+    //     effective Config.
+    #[test]
+    fn test_27_project_extensions_populated_from_taps() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        let proj_cfg = proj.path().join("barista.toml");
+        fs::write(
+            &proj_cfg,
+            r#"
+[network]
+max-concurrent-connections = 5
+
+[[taps]]
+id = "acme"
+url = "https://taps.acme.com/b"
+
+[plugins]
+classloader-cache-overrides = { "org.example:plugin" = "no-cache" }
+"#,
+        )
+        .unwrap();
+        let env = empty_env();
+        let mut inputs = inputs_for(home.path(), &env);
+        inputs.project_config_path = Some(proj_cfg);
+        let (cfg, audit) = load_effective_config(inputs).unwrap();
+
+        // Base layer applied.
+        assert_eq!(cfg.network.max_concurrent_connections, 5);
+        // Extensions attached.
+        let ext = cfg.project_extensions.expect("project extensions");
+        assert_eq!(ext.taps.len(), 1);
+        assert_eq!(ext.taps[0].id, "acme");
+        assert_eq!(ext.plugins.classloader_cache_overrides.len(), 1);
+        // Audit notes the extensions were set.
+        let proj_audit = audit
+            .layers_applied
+            .iter()
+            .find(|l| matches!(&l.layer, LayerSource::ProjectConfig(_)))
+            .unwrap();
+        assert!(
+            proj_audit
+                .fields_set
+                .iter()
+                .any(|f| f == "project-extensions")
+        );
+    }
+
+    // 28. A project file with only base fields leaves project_extensions = None.
+    #[test]
+    fn test_28_project_without_extensions_leaves_none() {
+        let home = TempDir::new().unwrap();
+        let proj = TempDir::new().unwrap();
+        let proj_cfg = proj.path().join("barista.toml");
+        fs::write(&proj_cfg, "[network]\nmax-concurrent-connections = 5\n").unwrap();
+        let env = empty_env();
+        let mut inputs = inputs_for(home.path(), &env);
+        inputs.project_config_path = Some(proj_cfg);
+        let (cfg, _) = load_effective_config(inputs).unwrap();
+        assert!(cfg.project_extensions.is_none());
+    }
+
+    // 29. User-level config files cannot accidentally carry
+    //     project-only sections — `PartialConfig` denies unknown
+    //     fields, so a `[[taps]]` in `~/.barista/config.toml`
+    //     would surface as a parse error.
+    #[test]
+    fn test_29_user_config_rejects_project_only_sections() {
+        let home = TempDir::new().unwrap();
+        let user_cfg = home.path().join("u.toml");
+        fs::write(&user_cfg, "[[taps]]\nid = \"x\"\nurl = \"https://x/y\"\n").unwrap();
+        let env = empty_env();
+        let mut inputs = inputs_for(home.path(), &env);
+        inputs.user_config_path = Some(user_cfg);
+        let err = load_effective_config(inputs).unwrap_err();
+        assert!(matches!(err, LoaderError::TomlParse { .. }));
+    }
+
+    // 30. NoHome error when HOME is unset and no override.
     #[test]
     fn test_26_no_home_errors() {
         let env = empty_env();

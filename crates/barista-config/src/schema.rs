@@ -24,6 +24,24 @@ pub struct Config {
     pub logging: LoggingConfig,
     pub telemetry: TelemetryConfig,
     pub compat: CompatConfig,
+    /// Project-local extensions (taps, per-module overrides,
+    /// plugin classloader-cache policy, project metadata) parsed
+    /// out of `barista.toml`. `None` when no project file was
+    /// found or the file omitted all extension sections.
+    ///
+    /// User-level config (`~/.barista/config.toml`) cannot
+    /// populate this field — these settings only make sense
+    /// project-local.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_extensions: Option<crate::barista_toml::BaristaTomlExtensions>,
+
+    /// Parsed Maven `settings.xml` content (servers, mirrors,
+    /// profiles, proxies, plugin groups). Populated by the
+    /// settings.xml layer of the loader and consumed by downstream
+    /// components (resolver, network layer). Not part of Barista's
+    /// own TOML schema.
+    #[serde(skip)]
+    pub maven_settings: crate::settings_xml::SettingsXml,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,7 +190,7 @@ impl Default for LoggingConfig {
 
 /// Partial config — what a TOML file deserializes into. Every
 /// field is `Option`; absent fields inherit from prior layers.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialConfig {
     pub paths: Option<PartialPathsConfig>,
@@ -184,7 +202,7 @@ pub struct PartialConfig {
     pub compat: Option<PartialCompatConfig>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialPathsConfig {
     pub cache_dir: Option<PathBuf>,
@@ -193,7 +211,7 @@ pub struct PartialPathsConfig {
     pub m2_repository: Option<PathBuf>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialNetworkConfig {
     pub max_concurrent_connections: Option<u32>,
@@ -202,7 +220,7 @@ pub struct PartialNetworkConfig {
     pub proxy: Option<String>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialDaemonConfig {
     pub enabled: Option<bool>,
@@ -211,7 +229,7 @@ pub struct PartialDaemonConfig {
     pub socket_dir: Option<PathBuf>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialMavenConfig {
     pub compat_mode: Option<CompatMode>,
@@ -219,21 +237,21 @@ pub struct PartialMavenConfig {
     pub honor_jvm_config: Option<bool>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialLoggingConfig {
     pub level: Option<String>,
     pub maven_shape: Option<bool>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialTelemetryConfig {
     pub enabled: Option<bool>,
     pub endpoint: Option<String>,
 }
 
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PartialCompatConfig {
     pub excluded_modules: Option<Vec<String>>,
