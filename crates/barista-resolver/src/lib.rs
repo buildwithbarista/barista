@@ -1,7 +1,16 @@
 //! Parallel dependency resolver (BFS+Skipper) for Maven artifacts.
 //!
-//! This crate is part of the Barista workspace. See the workspace
-//! README for an overview of the project.
-//!
-//! Currently a scaffold — implementation lands in a subsequent
-//! milestone.
+//! The resolver walks dependency graphs by querying a
+//! [`MetadataSource`] for POMs and `maven-metadata.xml` payloads. The
+//! resolver crate has no knowledge of where those bytes come from —
+//! a remote HTTP repository, an on-disk cache, or an in-process test
+//! fixture all look the same through this trait.
+
+pub mod source;
+pub mod version_spec;
+
+pub use source::{
+    FetchOrigin, GaMetadata, MetadataError, MetadataSource, NullMetadataSource, ResolveKey,
+    VersionString,
+};
+pub use version_spec::{Bound, Interval, ParseError, SpecWarning, VersionSpec};

@@ -1,0 +1,6 @@
+# Nightly Rust required for cargo-fuzz (libfuzzer-sys uses unstable
+# attributes). CI installs nightly alongside the workspace's stable
+# pin so both surfaces work; see .github/workflows/ci.yml.
+[toolchain]
+channel = "nightly"
+components = ["rustfmt", "clippy"]

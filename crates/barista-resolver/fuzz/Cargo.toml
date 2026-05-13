@@ -1,0 +1,24 @@
+[package]
+name = "barista-resolver-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+barista-resolver = { path = ".." }
+
+[[bin]]
+name = "parse_version_spec"
+path = "fuzz_targets/parse_version_spec.rs"
+test = false
+doc = false
+bench = false
+
+# This crate is deliberately NOT a workspace member of the parent
+# Cargo workspace — the workspace root excludes `crates/*/fuzz` so
+# stable-channel builds aren't affected by the nightly toolchain
+# requirement here. Built standalone via `cargo +nightly fuzz`.
