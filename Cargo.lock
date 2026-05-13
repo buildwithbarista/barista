@@ -85,6 +85,9 @@ version = "0.1.0-alpha.0"
 [[package]]
 name = "barista-lockfile"
 version = "0.1.0-alpha.0"
+dependencies = [
+ "insta",
+]
 
 [[package]]
 name = "barista-netanalyze"

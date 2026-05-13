@@ -1,7 +1,9 @@
 //! barista.lock parser, serializer, and diff renderer.
 //!
-//! This crate is part of the Barista workspace. See the workspace
-//! README for an overview of the project.
-//!
-//! Currently a scaffold — implementation lands in a subsequent
-//! milestone.
+//! The lockfile schema and TOML (de)serializer land in a subsequent
+//! milestone. The [`diff`] module is a spike prototype that operates
+//! on a minimal [`diff::LockEntry`] subset of the eventual schema,
+//! to validate the readability of the semantic diff renderer ahead
+//! of the full implementation.
+
+pub mod diff;

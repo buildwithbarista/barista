@@ -7,3 +7,6 @@ description = "barista.lock parser, serializer, and diff renderer."
 publish = false
 
 [lib]
+
+[dev-dependencies]
+insta = "1.47"
