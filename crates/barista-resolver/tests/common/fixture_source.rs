@@ -82,29 +82,26 @@ impl FixtureMetadataSource {
                     None => continue,
                 };
 
-                let coords = Coords::new(&group_id, &artifact_id).map_err(|e| {
-                    LoadError::BadPath {
+                let coords =
+                    Coords::new(&group_id, &artifact_id).map_err(|e| LoadError::BadPath {
                         path: artifact_path.clone(),
                         detail: format!("invalid coords: {e}"),
-                    }
-                })?;
+                    })?;
 
                 // Optional maven-metadata.xml at the group:artifact level.
                 let metadata_path = artifact_path.join("maven-metadata.xml");
                 if metadata_path.is_file() {
                     let bytes = read_file(&metadata_path)?;
-                    let text = std::str::from_utf8(&bytes).map_err(|e| {
-                        LoadError::MetadataParse {
+                    let text =
+                        std::str::from_utf8(&bytes).map_err(|e| LoadError::MetadataParse {
                             path: metadata_path.clone(),
                             detail: format!("non-UTF8 maven-metadata.xml: {e}"),
-                        }
-                    })?;
-                    let parsed = parse_maven_metadata(text).map_err(|detail| {
-                        LoadError::MetadataParse {
+                        })?;
+                    let parsed =
+                        parse_maven_metadata(text).map_err(|detail| LoadError::MetadataParse {
                             path: metadata_path.clone(),
                             detail,
-                        }
-                    })?;
+                        })?;
                     metadatas.insert(
                         coords.clone(),
                         GaMetadata {
@@ -154,11 +151,13 @@ impl FixtureMetadataSource {
     }
 
     /// Number of POMs loaded across all coord+version pairs.
+    #[allow(dead_code)] // consumed by sibling integration test binaries
     pub fn pom_count(&self) -> usize {
         self.poms.len()
     }
 
     /// Number of group:artifact metadata entries loaded.
+    #[allow(dead_code)] // consumed by sibling integration test binaries
     pub fn metadata_count(&self) -> usize {
         self.metadatas.len()
     }
@@ -318,7 +317,11 @@ fn extract_first_text(xml: &str, tag: &str) -> Option<String> {
     let start = xml.find(&open)? + open.len();
     let rel_end = xml[start..].find(&close)?;
     let s = xml[start..start + rel_end].trim();
-    if s.is_empty() { None } else { Some(s.to_string()) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 /// Return the body of the first `<TAG> ... </TAG>` block.

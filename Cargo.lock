@@ -125,9 +125,12 @@ name = "barista-resolver"
 version = "0.1.0-alpha.0"
 dependencies = [
  "async-trait",
+ "barista-config",
  "barista-coords",
  "barista-pom",
  "barista-version",
+ "quick-xml",
+ "serde",
  "thiserror",
  "tokio",
 ]

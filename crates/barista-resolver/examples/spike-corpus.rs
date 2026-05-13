@@ -88,7 +88,9 @@ fn resolve(root: Dep, repo: &Repo) -> HashMap<Coords, String> {
         }
 
         let key = (dep.coords.clone(), dep.version.clone());
-        let Some(entry) = repo.get(&key) else { continue };
+        let Some(entry) = repo.get(&key) else {
+            continue;
+        };
 
         let child_depth = depth + 1;
         for child in &entry.deps {
@@ -97,20 +99,14 @@ fn resolve(root: Dep, repo: &Repo) -> HashMap<Coords, String> {
                     // Already a winner at shallower-or-equal depth.
                 }
                 _ => {
-                    winners.insert(
-                        child.coords.clone(),
-                        (child.version.clone(), child_depth),
-                    );
+                    winners.insert(child.coords.clone(), (child.version.clone(), child_depth));
                     queue.push_back((child.clone(), child_depth));
                 }
             }
         }
     }
 
-    winners
-        .into_iter()
-        .map(|(c, (v, _))| (c, v))
-        .collect()
+    winners.into_iter().map(|(c, (v, _))| (c, v)).collect()
 }
 
 // --- Test driver --------------------------------------------------------
@@ -172,7 +168,10 @@ fn run_corpus_case(name: &str, root: Dep, repo: Repo, expected: Expected) -> (us
     if fail == 0 {
         println!("  PASS ({pass}/{} checks)", pass + fail);
     } else {
-        println!("  FAIL ({pass} pass / {fail} fail of {} checks)", pass + fail);
+        println!(
+            "  FAIL ({pass} pass / {fail} fail of {} checks)",
+            pass + fail
+        );
     }
     (pass, fail)
 }
@@ -192,7 +191,10 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
     let mut r: Repo = HashMap::new();
 
     r.insert(
-        (coord("org.apache.commons", "commons-lang3"), "3.14.0".into()),
+        (
+            coord("org.apache.commons", "commons-lang3"),
+            "3.14.0".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.jupiter", "junit-jupiter", "5.10.0"),
             Dep::new("org.junit-pioneer", "junit-pioneer", "1.9.1"),
@@ -213,7 +215,10 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-api"), "5.10.0".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-api"),
+            "5.10.0".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.0"),
@@ -221,14 +226,20 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-params"), "5.10.0".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-params"),
+            "5.10.0".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.0"),
             Dep::new("org.apiguardian", "apiguardian-api", "1.1.2"),
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-engine"), "5.10.0".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-engine"),
+            "5.10.0".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.platform", "junit-platform-engine", "1.10.0"),
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.0"),
@@ -236,7 +247,10 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-engine"), "1.10.0".into()),
+        (
+            coord("org.junit.platform", "junit-platform-engine"),
+            "1.10.0".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.0"),
@@ -244,8 +258,15 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-commons"), "1.10.0".into()),
-        pom(vec![Dep::new("org.apiguardian", "apiguardian-api", "1.1.2")]),
+        (
+            coord("org.junit.platform", "junit-platform-commons"),
+            "1.10.0".into(),
+        ),
+        pom(vec![Dep::new(
+            "org.apiguardian",
+            "apiguardian-api",
+            "1.1.2",
+        )]),
     );
     r.insert(
         (coord("org.junit-pioneer", "junit-pioneer"), "1.9.1".into()),
@@ -259,18 +280,27 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-launcher"), "1.10.0".into()),
+        (
+            coord("org.junit.platform", "junit-platform-launcher"),
+            "1.10.0".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.platform", "junit-platform-engine", "1.10.0"),
             Dep::new("org.apiguardian", "apiguardian-api", "1.1.2"),
         ]),
     );
-    r.insert((coord("org.hamcrest", "hamcrest"), "2.2".into()), pom(vec![]));
+    r.insert(
+        (coord("org.hamcrest", "hamcrest"), "2.2".into()),
+        pom(vec![]),
+    );
     r.insert(
         (coord("org.easymock", "easymock"), "5.2.0".into()),
         pom(vec![Dep::new("org.objenesis", "objenesis", "3.3")]),
     );
-    r.insert((coord("org.objenesis", "objenesis"), "3.3".into()), pom(vec![]));
+    r.insert(
+        (coord("org.objenesis", "objenesis"), "3.3".into()),
+        pom(vec![]),
+    );
     r.insert(
         (coord("org.apache.commons", "commons-text"), "1.11.0".into()),
         pom(vec![Dep::new(
@@ -287,16 +317,37 @@ fn commons_lang_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.openjdk.jmh", "jmh-generator-annprocess"), "1.37".into()),
+        (
+            coord("org.openjdk.jmh", "jmh-generator-annprocess"),
+            "1.37".into(),
+        ),
         pom(vec![Dep::new("org.openjdk.jmh", "jmh-core", "1.37")]),
     );
-    r.insert((coord("net.sf.jopt-simple", "jopt-simple"), "5.0.4".into()), pom(vec![]));
-    r.insert((coord("org.apache.commons", "commons-math3"), "3.6.1".into()), pom(vec![]));
-    r.insert((coord("org.opentest4j", "opentest4j"), "1.3.0".into()), pom(vec![]));
-    r.insert((coord("org.apiguardian", "apiguardian-api"), "1.1.2".into()), pom(vec![]));
-    r.insert((coord("com.google.code.findbugs", "jsr305"), "3.0.2".into()), pom(vec![]));
     r.insert(
-        (coord("org.apache.commons", "commons-lang3"), "3.13.0".into()),
+        (coord("net.sf.jopt-simple", "jopt-simple"), "5.0.4".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (coord("org.apache.commons", "commons-math3"), "3.6.1".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (coord("org.opentest4j", "opentest4j"), "1.3.0".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (coord("org.apiguardian", "apiguardian-api"), "1.1.2".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (coord("com.google.code.findbugs", "jsr305"), "3.0.2".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (
+            coord("org.apache.commons", "commons-lang3"),
+            "3.13.0".into(),
+        ),
         pom(vec![]),
     );
 
@@ -369,7 +420,10 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-api"), "5.10.2".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-api"),
+            "5.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.2"),
@@ -377,14 +431,20 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-params"), "5.10.2".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-params"),
+            "5.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.2"),
             Dep::new("org.apiguardian", "apiguardian-api", "1.1.2"),
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-engine"), "5.10.2".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-engine"),
+            "5.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.platform", "junit-platform-engine", "1.10.2"),
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.2"),
@@ -392,11 +452,21 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-commons"), "1.10.2".into()),
-        pom(vec![Dep::new("org.apiguardian", "apiguardian-api", "1.1.2")]),
+        (
+            coord("org.junit.platform", "junit-platform-commons"),
+            "1.10.2".into(),
+        ),
+        pom(vec![Dep::new(
+            "org.apiguardian",
+            "apiguardian-api",
+            "1.1.2",
+        )]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-engine"), "1.10.2".into()),
+        (
+            coord("org.junit.platform", "junit-platform-engine"),
+            "1.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.2"),
@@ -412,14 +482,23 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-launcher"), "1.10.2".into()),
+        (
+            coord("org.junit.platform", "junit-platform-launcher"),
+            "1.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.platform", "junit-platform-engine", "1.10.2"),
             Dep::new("org.apiguardian", "apiguardian-api", "1.1.2"),
         ]),
     );
-    r.insert((coord("net.bytebuddy", "byte-buddy"), "1.14.13".into()), pom(vec![]));
-    r.insert((coord("net.bytebuddy", "byte-buddy-agent"), "1.14.13".into()), pom(vec![]));
+    r.insert(
+        (coord("net.bytebuddy", "byte-buddy"), "1.14.13".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (coord("net.bytebuddy", "byte-buddy-agent"), "1.14.13".into()),
+        pom(vec![]),
+    );
     r.insert(
         (coord("org.mockito", "mockito-inline"), "4.11.0".into()),
         pom(vec![Dep::new("org.mockito", "mockito-core", "4.11.0")]),
@@ -442,7 +521,11 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         (coord("com.google.guava", "guava"), "32.1.1-jre".into()),
         pom(vec![
             Dep::new("com.google.guava", "failureaccess", "1.0.1"),
-            Dep::new("com.google.guava", "listenablefuture", "9999.0-empty-to-avoid-conflict-with-guava"),
+            Dep::new(
+                "com.google.guava",
+                "listenablefuture",
+                "9999.0-empty-to-avoid-conflict-with-guava",
+            ),
             Dep::new("com.google.code.findbugs", "jsr305", "3.0.2"),
             Dep::new("org.checkerframework", "checker-qual", "3.33.0"),
             Dep::new("com.google.errorprone", "error_prone_annotations", "2.18.0"),
@@ -457,7 +540,10 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.openjdk.jmh", "jmh-generator-annprocess"), "1.37".into()),
+        (
+            coord("org.openjdk.jmh", "jmh-generator-annprocess"),
+            "1.37".into(),
+        ),
         pom(vec![Dep::new("org.openjdk.jmh", "jmh-core", "1.37")]),
     );
 
@@ -467,7 +553,11 @@ fn commons_io_graph() -> (Dep, Repo, Expected) {
         ("commons-codec", "commons-codec", "1.16.1"),
         ("org.objenesis", "objenesis", "3.3"),
         ("com.google.guava", "failureaccess", "1.0.1"),
-        ("com.google.guava", "listenablefuture", "9999.0-empty-to-avoid-conflict-with-guava"),
+        (
+            "com.google.guava",
+            "listenablefuture",
+            "9999.0-empty-to-avoid-conflict-with-guava",
+        ),
         ("com.google.code.findbugs", "jsr305", "3.0.2"),
         ("org.checkerframework", "checker-qual", "3.33.0"),
         ("com.google.errorprone", "error_prone_annotations", "2.18.0"),
@@ -542,7 +632,10 @@ fn jackson_core_graph() -> (Dep, Repo, Expected) {
     let mut r: Repo = HashMap::new();
 
     r.insert(
-        (coord("com.fasterxml.jackson.core", "jackson-core"), "2.18.0".into()),
+        (
+            coord("com.fasterxml.jackson.core", "jackson-core"),
+            "2.18.0".into(),
+        ),
         pom(vec![
             Dep::new("ch.randelshofer", "fastdoubleparser", "1.0.1"),
             Dep::new("org.junit.jupiter", "junit-jupiter", "5.10.2"),
@@ -565,7 +658,10 @@ fn jackson_core_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-api"), "5.10.2".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-api"),
+            "5.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.2"),
@@ -573,14 +669,20 @@ fn jackson_core_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-params"), "5.10.2".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-params"),
+            "5.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.2"),
             Dep::new("org.apiguardian", "apiguardian-api", "1.1.2"),
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-engine"), "5.10.2".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-engine"),
+            "5.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.platform", "junit-platform-engine", "1.10.2"),
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.2"),
@@ -588,11 +690,21 @@ fn jackson_core_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-commons"), "1.10.2".into()),
-        pom(vec![Dep::new("org.apiguardian", "apiguardian-api", "1.1.2")]),
+        (
+            coord("org.junit.platform", "junit-platform-commons"),
+            "1.10.2".into(),
+        ),
+        pom(vec![Dep::new(
+            "org.apiguardian",
+            "apiguardian-api",
+            "1.1.2",
+        )]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-engine"), "1.10.2".into()),
+        (
+            coord("org.junit.platform", "junit-platform-engine"),
+            "1.10.2".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.2"),
@@ -647,7 +759,10 @@ fn assertj_perf_graph() -> (Dep, Repo, Expected) {
     let mut r: Repo = HashMap::new();
 
     r.insert(
-        (coord("org.assertj", "assertj-performance-tests"), "3.26.3".into()),
+        (
+            coord("org.assertj", "assertj-performance-tests"),
+            "3.26.3".into(),
+        ),
         pom(vec![
             Dep::new("org.assertj", "assertj-core", "3.26.3"),
             Dep::new("org.junit.jupiter", "junit-jupiter", "5.10.3"),
@@ -666,7 +781,10 @@ fn assertj_perf_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-api"), "5.10.3".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-api"),
+            "5.10.3".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.3"),
@@ -674,14 +792,20 @@ fn assertj_perf_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-params"), "5.10.3".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-params"),
+            "5.10.3".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.3"),
             Dep::new("org.apiguardian", "apiguardian-api", "1.1.2"),
         ]),
     );
     r.insert(
-        (coord("org.junit.jupiter", "junit-jupiter-engine"), "5.10.3".into()),
+        (
+            coord("org.junit.jupiter", "junit-jupiter-engine"),
+            "5.10.3".into(),
+        ),
         pom(vec![
             Dep::new("org.junit.platform", "junit-platform-engine", "1.10.3"),
             Dep::new("org.junit.jupiter", "junit-jupiter-api", "5.10.3"),
@@ -689,11 +813,21 @@ fn assertj_perf_graph() -> (Dep, Repo, Expected) {
         ]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-commons"), "1.10.3".into()),
-        pom(vec![Dep::new("org.apiguardian", "apiguardian-api", "1.1.2")]),
+        (
+            coord("org.junit.platform", "junit-platform-commons"),
+            "1.10.3".into(),
+        ),
+        pom(vec![Dep::new(
+            "org.apiguardian",
+            "apiguardian-api",
+            "1.1.2",
+        )]),
     );
     r.insert(
-        (coord("org.junit.platform", "junit-platform-engine"), "1.10.3".into()),
+        (
+            coord("org.junit.platform", "junit-platform-engine"),
+            "1.10.3".into(),
+        ),
         pom(vec![
             Dep::new("org.opentest4j", "opentest4j", "1.3.0"),
             Dep::new("org.junit.platform", "junit-platform-commons", "1.10.3"),
@@ -749,9 +883,15 @@ fn slf4j_integration_graph() -> (Dep, Repo, Expected) {
             Dep::new("junit", "junit", "4.10"),
         ]),
     );
-    r.insert((coord("org.slf4j", "slf4j-api"), "2.0.16".into()), pom(vec![]));
     r.insert(
-        (coord("org.apache.felix", "org.apache.felix.main"), "5.6.1".into()),
+        (coord("org.slf4j", "slf4j-api"), "2.0.16".into()),
+        pom(vec![]),
+    );
+    r.insert(
+        (
+            coord("org.apache.felix", "org.apache.felix.main"),
+            "5.6.1".into(),
+        ),
         pom(vec![Dep::new(
             "org.apache.felix",
             "org.apache.felix.framework",
@@ -759,14 +899,20 @@ fn slf4j_integration_graph() -> (Dep, Repo, Expected) {
         )]),
     );
     r.insert(
-        (coord("org.apache.felix", "org.apache.felix.framework"), "5.6.1".into()),
+        (
+            coord("org.apache.felix", "org.apache.felix.framework"),
+            "5.6.1".into(),
+        ),
         pom(vec![]),
     );
     r.insert(
         (coord("junit", "junit"), "4.10".into()),
         pom(vec![Dep::new("org.hamcrest", "hamcrest-core", "1.1")]),
     );
-    r.insert((coord("org.hamcrest", "hamcrest-core"), "1.1".into()), pom(vec![]));
+    r.insert(
+        (coord("org.hamcrest", "hamcrest-core"), "1.1".into()),
+        pom(vec![]),
+    );
 
     let expected: Expected = [
         ("org.slf4j:slf4j-api", "2.0.16"),
@@ -793,7 +939,10 @@ fn main() {
 
     for (name, (root, repo, expected)) in [
         ("commons-lang 3.14.0", commons_lang_graph()),
-        ("commons-io 2.16.1 (byte-buddy conflict)", commons_io_graph()),
+        (
+            "commons-io 2.16.1 (byte-buddy conflict)",
+            commons_io_graph(),
+        ),
         ("jackson-core 2.18.0", jackson_core_graph()),
         ("assertj-performance-tests 3.26.3", assertj_perf_graph()),
         ("slf4j integration 2.0.16", slf4j_integration_graph()),
@@ -805,7 +954,10 @@ fn main() {
     }
 
     println!("=== TOTAL ===");
-    println!("  {total_pass} pass / {total_fail} fail of {} checks", total_pass + total_fail);
+    println!(
+        "  {total_pass} pass / {total_fail} fail of {} checks",
+        total_pass + total_fail
+    );
     if total_fail == 0 {
         println!("  CORPUS-WIDE PASS");
     } else {

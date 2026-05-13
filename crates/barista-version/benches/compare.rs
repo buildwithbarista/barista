@@ -13,7 +13,7 @@
 use std::hint::black_box;
 
 use barista_version::Version;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 /// Comparing two short release versions — the common case.
 fn bench_simple_compare(c: &mut Criterion) {

@@ -156,10 +156,23 @@ fn build_test_corpus_skipper() -> Repo {
 /// Trace event for visibility into what the resolver did.
 #[derive(Debug)]
 enum Trace {
-    Emit { dep: Dep, depth: usize },
-    SkipAlreadyWon { coords: Coords, depth: usize, won_depth: usize },
-    SkipSupersededSubtree { dep: Dep, depth: usize, won_depth: usize },
-    Missing { dep: Dep },
+    Emit {
+        dep: Dep,
+        depth: usize,
+    },
+    SkipAlreadyWon {
+        coords: Coords,
+        depth: usize,
+        won_depth: usize,
+    },
+    SkipSupersededSubtree {
+        dep: Dep,
+        depth: usize,
+        won_depth: usize,
+    },
+    Missing {
+        dep: Dep,
+    },
 }
 
 struct ResolveResult {
@@ -192,7 +205,10 @@ fn resolve(root: Dep, repo: &Repo) -> ResolveResult {
 
     winners.insert(root.coords.clone(), (root.version.clone(), 0));
     order.push(root.clone());
-    trace.push(Trace::Emit { dep: root.clone(), depth: 0 });
+    trace.push(Trace::Emit {
+        dep: root.clone(),
+        depth: 0,
+    });
     queue.push_back((root, 0));
 
     while let Some((dep, depth)) = queue.pop_front() {
@@ -232,10 +248,7 @@ fn resolve(root: Dep, repo: &Repo) -> ResolveResult {
                     // First sighting OR deeper-then-shallower replacement.
                     // In strict BFS the latter can't happen — but we
                     // handle it defensively. Record winner, emit, enqueue.
-                    winners.insert(
-                        child.coords.clone(),
-                        (child.version.clone(), child_depth),
-                    );
+                    winners.insert(child.coords.clone(), (child.version.clone(), child_depth));
                     order.push(child.clone());
                     trace.push(Trace::Emit {
                         dep: child.clone(),
@@ -283,12 +296,20 @@ fn print_resolution(result: &ResolveResult) {
     for ev in &result.trace {
         match ev {
             Trace::Emit { dep, depth } => println!("  EMIT      {dep} @ depth {depth}"),
-            Trace::SkipAlreadyWon { coords, depth, won_depth } => {
+            Trace::SkipAlreadyWon {
+                coords,
+                depth,
+                won_depth,
+            } => {
                 println!(
                     "  SKIP      {coords} @ depth {depth}  (already won at depth {won_depth})"
                 );
             }
-            Trace::SkipSupersededSubtree { dep, depth, won_depth } => {
+            Trace::SkipSupersededSubtree {
+                dep,
+                depth,
+                won_depth,
+            } => {
                 println!(
                     "  PRUNE     {dep} @ depth {depth}  (subtree superseded; winner at depth {won_depth})"
                 );
@@ -356,10 +377,12 @@ fn run_skipper_test(repo: &Repo) {
         .iter()
         .filter(|d| d.coords == Coords::new("ex", "Y"))
         .count();
-    let skipper_pruned_y = result.trace.iter().any(|t| matches!(
-        t,
-        Trace::SkipAlreadyWon { coords, .. } if *coords == Coords::new("ex", "Y")
-    ));
+    let skipper_pruned_y = result.trace.iter().any(|t| {
+        matches!(
+            t,
+            Trace::SkipAlreadyWon { coords, .. } if *coords == Coords::new("ex", "Y")
+        )
+    });
     if y_count == 1 && skipper_pruned_y {
         println!("PASS: skipper pruned Y's re-entry from N's subtree (Y emitted once at depth 1)");
     } else {

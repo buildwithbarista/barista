@@ -92,6 +92,60 @@ pub struct MavenConfig {
     pub honor_mvn_config: bool,
     /// If true, honor `.mvn/jvm.config` JVM args. Default: true.
     pub honor_jvm_config: bool,
+    /// Update policy for SNAPSHOT artifacts and repository metadata.
+    /// Default: [`UpdatePolicy::Daily`] (matches Maven's default).
+    #[serde(default = "MavenConfig::default_snapshot_update_policy")]
+    pub snapshot_update_policy: UpdatePolicy,
+    /// Update policy for non-SNAPSHOT (release) artifacts. Default:
+    /// [`UpdatePolicy::Never`] — releases are immutable, so the cache
+    /// is authoritative once populated.
+    #[serde(default = "MavenConfig::default_release_update_policy")]
+    pub release_update_policy: UpdatePolicy,
+}
+
+impl MavenConfig {
+    fn default_snapshot_update_policy() -> UpdatePolicy {
+        UpdatePolicy::Daily
+    }
+    fn default_release_update_policy() -> UpdatePolicy {
+        UpdatePolicy::Never
+    }
+}
+
+/// Maven update policy, parsed from `<updatePolicy>` in `settings.xml`
+/// or from a CLI flag.
+///
+/// Per Maven semantics:
+///
+/// * `always`         — re-fetch metadata on every build.
+/// * `daily`          — re-fetch if the local cached copy is more
+///   than 24 hours old. This is Maven's default.
+/// * `interval:N`     — re-fetch if the local cached copy is more
+///   than `N` minutes old.
+/// * `never`          — never re-fetch unless the build was invoked
+///   with `--update` (Maven's `-U`).
+///
+/// Lives in `barista-config` rather than `barista-resolver` to keep
+/// the dependency edge one-way: the resolver depends on config, not
+/// the other way around.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdatePolicy {
+    /// Re-fetch on every build.
+    Always,
+    /// Re-fetch if the local cached copy is more than 24 hours old.
+    Daily,
+    /// Re-fetch if the local cached copy is more than `minutes`
+    /// minutes old.
+    Interval { minutes: u32 },
+    /// Never re-fetch unless `--update` is passed on the CLI.
+    Never,
+}
+
+impl Default for UpdatePolicy {
+    fn default() -> Self {
+        Self::Daily
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +227,8 @@ impl Default for MavenConfig {
             compat_mode: CompatMode::Auto,
             honor_mvn_config: true,
             honor_jvm_config: true,
+            snapshot_update_policy: UpdatePolicy::Daily,
+            release_update_policy: UpdatePolicy::Never,
         }
     }
 }
@@ -235,6 +291,8 @@ pub struct PartialMavenConfig {
     pub compat_mode: Option<CompatMode>,
     pub honor_mvn_config: Option<bool>,
     pub honor_jvm_config: Option<bool>,
+    pub snapshot_update_policy: Option<UpdatePolicy>,
+    pub release_update_policy: Option<UpdatePolicy>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -330,6 +388,14 @@ impl PartialConfig {
                 target.maven.honor_jvm_config = v;
                 touched.push("maven.honor-jvm-config".into());
             }
+            if let Some(v) = m.snapshot_update_policy {
+                target.maven.snapshot_update_policy = v;
+                touched.push("maven.snapshot-update-policy".into());
+            }
+            if let Some(v) = m.release_update_policy {
+                target.maven.release_update_policy = v;
+                touched.push("maven.release-update-policy".into());
+            }
         }
         if let Some(l) = &self.logging {
             if let Some(v) = &l.level {
@@ -358,5 +424,56 @@ impl PartialConfig {
             }
         }
         touched
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maven_config_default_update_policies() {
+        let m = MavenConfig::default();
+        assert_eq!(m.snapshot_update_policy, UpdatePolicy::Daily);
+        assert_eq!(m.release_update_policy, UpdatePolicy::Never);
+    }
+
+    #[test]
+    fn update_policy_toml_roundtrip_simple() {
+        let toml_src = r#"
+[maven]
+compat-mode = "auto"
+honor-mvn-config = true
+honor-jvm-config = true
+snapshot-update-policy = "always"
+release-update-policy = "never"
+"#;
+        let p: PartialConfig = toml::from_str(toml_src).expect("parse");
+        let m = p.maven.clone().expect("maven section");
+        assert_eq!(m.snapshot_update_policy, Some(UpdatePolicy::Always));
+        assert_eq!(m.release_update_policy, Some(UpdatePolicy::Never));
+
+        let mut cfg = Config::default();
+        let touched = p.apply_to(&mut cfg);
+        assert!(touched.iter().any(|t| t == "maven.snapshot-update-policy"));
+        assert!(touched.iter().any(|t| t == "maven.release-update-policy"));
+        assert_eq!(cfg.maven.snapshot_update_policy, UpdatePolicy::Always);
+        assert_eq!(cfg.maven.release_update_policy, UpdatePolicy::Never);
+    }
+
+    #[test]
+    fn update_policy_toml_roundtrip_interval() {
+        // The Interval variant is externally-tagged: its TOML
+        // representation is `[interval] minutes = 30` inline as a
+        // table. Test the round-trip via toml.
+        let original = UpdatePolicy::Interval { minutes: 30 };
+        let s = toml::to_string(&original).expect("ser");
+        let back: UpdatePolicy = toml::from_str(&s).expect("de");
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn update_policy_default_is_daily() {
+        assert_eq!(UpdatePolicy::default(), UpdatePolicy::Daily);
     }
 }

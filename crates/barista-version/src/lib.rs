@@ -598,6 +598,30 @@ impl Version {
     pub fn canonical(&self) -> &str {
         &self.canonical
     }
+
+    /// Returns true if this version is a SNAPSHOT — i.e. the original
+    /// string ends with `-SNAPSHOT` (case-insensitive).
+    ///
+    /// Used by the resolver to filter SNAPSHOT versions out of
+    /// `RELEASE` meta-version resolution and to trigger SNAPSHOT-
+    /// specific fetch logic (timestamp resolution via
+    /// `maven-metadata.xml`).
+    ///
+    /// Note: this checks the original (as-typed) string, not the
+    /// canonical form — a timestamped version like
+    /// `1.0.0-20240101.123456-7` is *not* a SNAPSHOT in this sense
+    /// even though it was produced by publishing one.
+    pub fn is_snapshot(&self) -> bool {
+        let s = self.original.as_bytes();
+        const SUFFIX: &[u8] = b"-SNAPSHOT";
+        if s.len() < SUFFIX.len() {
+            return false;
+        }
+        let tail = &s[s.len() - SUFFIX.len()..];
+        tail.iter()
+            .zip(SUFFIX.iter())
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    }
 }
 
 /// Errors from [`Version::parse_strict`]. [`Version::parse`] /
@@ -1175,6 +1199,50 @@ mod tests {
     }
 
     // ---- Hash / Eq follow canonical form ---------------------------------
+
+    // ---- is_snapshot -----------------------------------------------------
+
+    #[test]
+    fn is_snapshot_upper() {
+        assert!(v("1.0.0-SNAPSHOT").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_lower() {
+        assert!(v("1.0.0-snapshot").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_mixed_case() {
+        assert!(v("1.0.0-SnApShOt").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_release_is_not() {
+        assert!(!v("1.0.0").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_rc_is_not() {
+        assert!(!v("1.0.0-rc-1").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_timestamped_is_not() {
+        // A timestamped publish of a snapshot is not itself a
+        // SNAPSHOT version.
+        assert!(!v("1.0.0-20240101.123456-7").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_empty_is_not() {
+        assert!(!v("").is_snapshot());
+    }
+
+    #[test]
+    fn is_snapshot_short_is_not() {
+        assert!(!v("S").is_snapshot());
+    }
 
     #[test]
     fn hashmap_key_canonical() {

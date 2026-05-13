@@ -74,10 +74,7 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
     ));
 
     // ---- daemon ----
-    lines.push((
-        "daemon.enabled".into(),
-        config.daemon.enabled.to_string(),
-    ));
+    lines.push(("daemon.enabled".into(), config.daemon.enabled.to_string()));
     lines.push((
         "daemon.idle-shutdown-secs".into(),
         config.daemon.idle_shutdown_secs.to_string(),
@@ -137,10 +134,7 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
         "maven-settings.local-repository".into(),
         format_opt_string(ms.local_repository.as_deref()),
     ));
-    lines.push((
-        "maven-settings.offline".into(),
-        ms.offline.to_string(),
-    ));
+    lines.push(("maven-settings.offline".into(), ms.offline.to_string()));
     lines.push((
         "maven-settings.interactive-mode".into(),
         ms.interactive_mode.to_string(),
@@ -195,13 +189,7 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
         ));
         lines.push((
             "project-extensions.modules.overrides".into(),
-            format_str_list(
-                &ext.modules
-                    .overrides
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            ),
+            format_str_list(&ext.modules.overrides.keys().cloned().collect::<Vec<_>>()),
         ));
         lines.push((
             "project-extensions.plugins.classloader-cache-overrides".into(),
@@ -379,7 +367,12 @@ fn make_inputs(
 #[test]
 fn defaults_only() {
     let sb = Sandbox::new();
-    let inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     let (cfg, audit) = load_effective_config(inputs).unwrap();
     let rendered = render_effective(&cfg, &audit);
     insta::assert_snapshot!(sb.redact(&rendered));
@@ -392,7 +385,12 @@ fn user_only() {
     fs::create_dir_all(user_cfg.parent().unwrap()).unwrap();
     fs::write(&user_cfg, "[network]\nmax-concurrent-connections = 8\n").unwrap();
 
-    let mut inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let mut inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     inputs.user_config_path = Some(user_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
     let rendered = render_effective(&cfg, &audit);
@@ -405,7 +403,12 @@ fn project_only() {
     let proj_cfg = sb.proj().join("barista.toml");
     fs::write(&proj_cfg, "[logging]\nlevel = \"debug\"\n").unwrap();
 
-    let mut inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let mut inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
     let rendered = render_effective(&cfg, &audit);
@@ -419,13 +422,14 @@ fn project_overrides_user() {
     fs::create_dir_all(user_cfg.parent().unwrap()).unwrap();
     fs::write(&user_cfg, "[network]\nmax-concurrent-connections = 8\n").unwrap();
     let proj_cfg = sb.proj().join("barista.toml");
-    fs::write(
-        &proj_cfg,
-        "[network]\nmax-concurrent-connections = 10\n",
-    )
-    .unwrap();
+    fs::write(&proj_cfg, "[network]\nmax-concurrent-connections = 10\n").unwrap();
 
-    let mut inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let mut inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     inputs.user_config_path = Some(user_cfg);
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
@@ -440,11 +444,7 @@ fn env_overrides_project() {
     fs::create_dir_all(user_cfg.parent().unwrap()).unwrap();
     fs::write(&user_cfg, "[network]\nmax-concurrent-connections = 8\n").unwrap();
     let proj_cfg = sb.proj().join("barista.toml");
-    fs::write(
-        &proj_cfg,
-        "[network]\nmax-concurrent-connections = 10\n",
-    )
-    .unwrap();
+    fs::write(&proj_cfg, "[network]\nmax-concurrent-connections = 10\n").unwrap();
 
     let mut env = HashMap::new();
     env.insert(
@@ -467,11 +467,7 @@ fn cli_overrides_env() {
     fs::create_dir_all(user_cfg.parent().unwrap()).unwrap();
     fs::write(&user_cfg, "[network]\nmax-concurrent-connections = 8\n").unwrap();
     let proj_cfg = sb.proj().join("barista.toml");
-    fs::write(
-        &proj_cfg,
-        "[network]\nmax-concurrent-connections = 10\n",
-    )
-    .unwrap();
+    fs::write(&proj_cfg, "[network]\nmax-concurrent-connections = 10\n").unwrap();
 
     let mut env = HashMap::new();
     env.insert(
@@ -503,7 +499,12 @@ fn settings_xml_local_repository() {
     )
     .unwrap();
 
-    let inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     let (cfg, audit) = load_effective_config(inputs).unwrap();
     let rendered = render_effective(&cfg, &audit);
     insta::assert_snapshot!(sb.redact(&rendered));
@@ -553,7 +554,12 @@ fn settings_xml_full() {
     )
     .unwrap();
 
-    let inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     let (cfg, audit) = load_effective_config(inputs).unwrap();
     let rendered = render_effective(&cfg, &audit);
     insta::assert_snapshot!(sb.redact(&rendered));
@@ -584,7 +590,12 @@ classloader-cache-overrides = { "org.example:plugin" = "no-cache", "org.example:
     )
     .unwrap();
 
-    let mut inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), CliOverrides::default());
+    let mut inputs = make_inputs(
+        sb.home(),
+        sb.home(),
+        HashMap::new(),
+        CliOverrides::default(),
+    );
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
     let rendered = render_effective(&cfg, &audit);
@@ -646,11 +657,7 @@ fn all_six_layers() {
 fn walk_up_finds_project_toml() {
     let sb = Sandbox::new();
     let proj_cfg = sb.proj().join("barista.toml");
-    fs::write(
-        &proj_cfg,
-        "[network]\nmax-concurrent-connections = 9\n",
-    )
-    .unwrap();
+    fs::write(&proj_cfg, "[network]\nmax-concurrent-connections = 9\n").unwrap();
     let nested = sb.proj().join("a/b/c");
     fs::create_dir_all(&nested).unwrap();
 

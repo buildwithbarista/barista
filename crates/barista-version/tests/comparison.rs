@@ -13,7 +13,7 @@
 
 use std::cmp::Ordering;
 
-use barista_test_fixtures::{load_version_cases, Expected};
+use barista_test_fixtures::{Expected, load_version_cases};
 use barista_version::Version;
 
 const TENTATIVE_MARKER: &str = "tentative — verify against runtime mvn behavior";

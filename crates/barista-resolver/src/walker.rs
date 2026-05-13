@@ -59,6 +59,7 @@ use barista_pom::{
 };
 use barista_version::Version;
 
+use crate::skipper::{ExclusionSet, SkipDecision, SkipperState, SkipperStats};
 use crate::source::{MetadataError, MetadataSource, ResolveKey};
 use crate::version_spec::{ParseError as SpecParseError, SpecWarning, VersionSpec};
 
@@ -78,6 +79,9 @@ pub struct ResolvedGraph {
     pub warnings: Vec<SpecWarning>,
     /// Per-coord audit: which path won and what alternatives were seen.
     pub audit: Vec<AuditEntry>,
+    /// Skipper telemetry. Zeroed when the skipper is disabled via
+    /// [`WalkOptions::enable_skipper`] = `false`.
+    pub skipper_stats: SkipperStats,
 }
 
 /// A resolved dependency edge in the final graph.
@@ -183,6 +187,11 @@ pub struct WalkOptions {
     /// Activation context for resolving transitive POMs. Defaults to an
     /// empty context (only `activeByDefault` profiles fire).
     pub activation: ActivationContext,
+    /// Enable BFS+Skipper subtree pruning. Default: `true`. Set to
+    /// `false` to produce the un-skippered graph for differential
+    /// testing — correctness requires the two modes produce identical
+    /// `winners` maps.
+    pub enable_skipper: bool,
 }
 
 impl Default for WalkOptions {
@@ -191,6 +200,7 @@ impl Default for WalkOptions {
             strip_optional: true,
             include_scopes: BTreeSet::new(),
             activation: ActivationContext::default(),
+            enable_skipper: true,
         }
     }
 }
@@ -217,6 +227,14 @@ pub enum WalkError {
     /// A `<dependency>` referenced a coord we couldn't even construct.
     #[error("invalid dependency coordinate {detail}")]
     InvalidCoords { detail: String },
+    /// A SNAPSHOT version was encountered but no timestamped publish
+    /// could be resolved from the upstream `maven-metadata.xml`.
+    #[error("could not resolve snapshot version for {coords}:{version}: {detail}")]
+    SnapshotResolution {
+        coords: String,
+        version: String,
+        detail: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -231,7 +249,7 @@ pub async fn walk<S: MetadataSource + ?Sized>(
     source: &S,
     opts: &WalkOptions,
 ) -> Result<ResolvedGraph, WalkError> {
-    let mut state = WalkState::new();
+    let mut state = WalkState::new(opts.enable_skipper);
     // Seed the frontier with the root POM's directly-declared deps.
     enqueue_direct_deps(&mut state, &root.pom.dependencies, opts)?;
 
@@ -277,11 +295,21 @@ struct WalkState {
     /// during traversal.
     losers: HashMap<Coords, Vec<(String, u32)>>,
     warnings: Vec<SpecWarning>,
+    /// Subtree-pruning state. Disabled when
+    /// [`WalkOptions::enable_skipper`] = `false`.
+    skipper: SkipperState,
 }
 
 impl WalkState {
-    fn new() -> Self {
-        Self::default()
+    fn new(enable_skipper: bool) -> Self {
+        Self {
+            skipper: if enable_skipper {
+                SkipperState::new()
+            } else {
+                SkipperState::disabled()
+            },
+            ..Self::default()
+        }
     }
 
     fn finish(self) -> ResolvedGraph {
@@ -290,6 +318,7 @@ impl WalkState {
             order,
             losers,
             warnings,
+            skipper,
             ..
         } = self;
 
@@ -298,8 +327,7 @@ impl WalkState {
             .filter_map(|c| winners.get(c).cloned())
             .collect();
 
-        let winners_btree: BTreeMap<Coords, ResolvedDep> =
-            winners.into_iter().collect();
+        let winners_btree: BTreeMap<Coords, ResolvedDep> = winners.into_iter().collect();
 
         let mut audit: Vec<AuditEntry> = winners_btree
             .values()
@@ -317,6 +345,7 @@ impl WalkState {
             winners: winners_btree,
             warnings,
             audit,
+            skipper_stats: skipper.into_stats(),
         }
     }
 }
@@ -377,6 +406,46 @@ async fn process_item<S: MetadataSource + ?Sized>(
         return Ok(());
     }
 
+    // SKIPPER SEAM (M2.1 Task 3): consult the path-pruning skipper.
+    //
+    // The skipper runs BEFORE nearest-wins so it can short-circuit
+    // version resolution and POM fetches that nearest-wins would
+    // otherwise also prune — and so the leaf cache (MRESOLVER-256)
+    // can fire on repeated leaf visits, saving a `fetch_pom` call
+    // that nearest-wins doesn't currently avoid in every case.
+    //
+    // The skipper is correctness-safe: when it returns `Skip`, the
+    // walker simply returns Ok(()) — equivalent to the nearest-wins
+    // skip for already-resolved cases, or to "we know there are no
+    // transitives" for the known-leaf case. The walk's `winners`
+    // map is therefore identical to a walk with the skipper disabled.
+    let path_exclusions = ExclusionSet::from_raw(&exclusions);
+    let skip_decision = state
+        .skipper
+        .decide(&coords, depth, &path_exclusions, &state.winners);
+    if let SkipDecision::Skip { .. } = skip_decision {
+        // Preserve audit semantics: when the skipper short-circuits a
+        // candidate that would otherwise be recorded as a "loser" by
+        // the nearest-wins check below, append a loser entry now. We
+        // use the raw declared version (pre-spec-resolution) because
+        // resolving here would defeat the whole point of the skip.
+        if state.winners.contains_key(&coords) {
+            let raw_version = dep
+                .version
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("<unresolved>")
+                .to_string();
+            state
+                .losers
+                .entry(coords.clone())
+                .or_default()
+                .push((raw_version, depth));
+        }
+        return Ok(());
+    }
+
     // 2. Effective scope.
     let declared_scope = Scope::parse(dep.scope.as_deref());
     let effective_scope = if is_direct {
@@ -425,6 +494,14 @@ async fn process_item<S: MetadataSource + ?Sized>(
 
     let resolved_version = resolve_spec(&spec, &coords, source, &mut state.warnings).await?;
 
+    // SNAPSHOT timestamp resolution. If the resolved version is a
+    // `-SNAPSHOT`, ask the source for its timestamped publish so we
+    // fetch the actual POM. The walker still keys conflict resolution
+    // on the `-SNAPSHOT` form (that's the resolution identity); only
+    // the upstream fetch needs the timestamped value.
+    let fetch_version =
+        resolve_snapshot_fetch_version(&resolved_version, &coords, &dep, source).await?;
+
     // 5. Nearest-wins check. If a winner exists at shallower-or-equal
     // depth, this node loses; record in audit and skip recursion.
     if let Some(existing) = state.winners.get(&coords) {
@@ -446,12 +523,11 @@ async fn process_item<S: MetadataSource + ?Sized>(
             .push((existing.version.clone(), existing.depth));
     }
 
-    // SKIPPER SEAM (M2.1 Task 3): consult Skipper.should_prune(&coords,
-    // &resolved_version, depth, &exclusions) here. If it returns true,
-    // skip the fetch_pom + child enqueue. The walker's correctness must
-    // not depend on the skipper firing — it is purely an optimization.
-
-    // 6. Record this node as the (provisional) winner.
+    // Note: the SKIPPER SEAM is now earlier in this function (right
+    // after the exclusion check). By the time we reach this point the
+    // skipper has already said Walk — we're committed to recording
+    // this node as a winner and (if it's not a system-scope leaf)
+    // walking its transitives.
     let winning_path = {
         let mut p = parent_path.clone();
         p.push(coords.clone());
@@ -476,12 +552,18 @@ async fn process_item<S: MetadataSource + ?Sized>(
     // (Scope::inherit covers this); system scope is non-transitive, and
     // we don't fetch for that.
     if effective_scope == Scope::System {
+        // System scope is a terminal node — feed the skipper so future
+        // visits skip the (no-op) re-walk.
+        state
+            .skipper
+            .record_visit(coords.clone(), path_exclusions.clone(), true);
         return Ok(());
     }
 
     // Fetch + resolve the child POM. A missing transitive POM is a hard
-    // error — surface it.
-    let (raw_pom, _origin) = source.fetch_pom(&coords, &resolved_version).await?;
+    // error — surface it. For SNAPSHOTs, fetch_version may be a
+    // timestamped publish like `1.0.0-20240101.123456-7`.
+    let (raw_pom, _origin) = source.fetch_pom(&coords, &fetch_version).await?;
 
     // Resolve the child POM (parent merge + interpolation + depMgt). For
     // the resolver-only walker, we use a parent resolver that delegates
@@ -511,6 +593,7 @@ async fn process_item<S: MetadataSource + ?Sized>(
         v
     };
 
+    let mut enqueued_any = false;
     for child in &resolved_child.pom.dependencies {
         let child_scope = Scope::parse(child.scope.as_deref());
         // Skip depMgt-only scope on transitives.
@@ -525,7 +608,14 @@ async fn process_item<S: MetadataSource + ?Sized>(
             exclusions: merged_exclusions.clone(),
             is_direct: false,
         });
+        enqueued_any = true;
     }
+
+    // Feed the skipper: was this a leaf (no transitives enqueued)?
+    let was_leaf = !enqueued_any;
+    state
+        .skipper
+        .record_visit(coords.clone(), path_exclusions.clone(), was_leaf);
 
     Ok(())
 }
@@ -580,9 +670,10 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
                     intervals.iter().any(|iv| interval_contains(iv, &parsed))
                 })
                 .collect();
-            if let Some(picked) = in_range.iter().max_by(|a, b| {
-                Version::parse(a).cmp(&Version::parse(b))
-            }) {
+            if let Some(picked) = in_range
+                .iter()
+                .max_by(|a, b| Version::parse(a).cmp(&Version::parse(b)))
+            {
                 Ok((*picked).clone())
             } else {
                 Err(WalkError::NoMetaVersionCandidate {
@@ -593,12 +684,14 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
         }
         VersionSpec::Latest => {
             let (md, _) = source.fetch_metadata(coords).await?;
-            let picked = md.versions.last().cloned().ok_or_else(|| {
-                WalkError::NoMetaVersionCandidate {
-                    coords: coords.to_string(),
-                    spec: "LATEST".to_string(),
-                }
-            })?;
+            let picked =
+                md.versions
+                    .last()
+                    .cloned()
+                    .ok_or_else(|| WalkError::NoMetaVersionCandidate {
+                        coords: coords.to_string(),
+                        spec: "LATEST".to_string(),
+                    })?;
             warnings.push(SpecWarning::LatestUsed {
                 coords: coords.to_string(),
                 resolved_to: picked.clone(),
@@ -623,6 +716,56 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
             });
             Ok(picked)
         }
+    }
+}
+
+/// If `version` is a SNAPSHOT, consult [`MetadataSource::fetch_snapshot_info`]
+/// to find the timestamped publish to actually fetch. For non-SNAPSHOT
+/// versions, returns `version` unchanged.
+///
+/// Failures to fetch snapshot info are reported as
+/// [`WalkError::SnapshotResolution`] so the caller can distinguish
+/// "no timestamped publish available" from a generic transport
+/// failure. If the source returns `MetadataNotFound` (the trait's
+/// default impl), we fall back to using the `-SNAPSHOT` version
+/// verbatim — this preserves the pre-snapshot-resolution behaviour
+/// for sources that don't override the trait method.
+async fn resolve_snapshot_fetch_version<S: MetadataSource + ?Sized>(
+    version: &str,
+    coords: &ResolveKey,
+    dep: &RawDependency,
+    source: &S,
+) -> Result<String, WalkError> {
+    let parsed = Version::parse(version);
+    if !parsed.is_snapshot() {
+        return Ok(version.to_string());
+    }
+
+    match source.fetch_snapshot_info(coords, version).await {
+        Ok((info, _origin)) => {
+            let extension = dep.r#type.as_deref().unwrap_or("jar");
+            let classifier = dep.classifier.as_deref();
+            match info.pick_version(extension, classifier) {
+                Some(ts) => Ok(ts.to_string()),
+                None => Err(WalkError::SnapshotResolution {
+                    coords: coords.to_string(),
+                    version: version.to_string(),
+                    detail: format!(
+                        "no snapshotVersion entry for extension={extension:?} classifier={classifier:?}"
+                    ),
+                }),
+            }
+        }
+        // Default impl + sources that don't carry snapshot info: fall
+        // back to the SNAPSHOT-form version. This is the pre-T5
+        // behaviour and keeps the existing fixture-source tests
+        // working.
+        Err(MetadataError::MetadataNotFound { .. }) => Ok(version.to_string()),
+        Err(e) => Err(WalkError::SnapshotResolution {
+            coords: coords.to_string(),
+            version: version.to_string(),
+            detail: e.to_string(),
+        }),
     }
 }
 
@@ -744,9 +887,7 @@ impl MetadataSource for FixtureSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use barista_pom::{
-        EffectivePom, Properties, RawDependency, RawExclusion, ResolvedPom,
-    };
+    use barista_pom::{EffectivePom, Properties, RawDependency, RawExclusion, ResolvedPom};
 
     // ---- helpers ----------------------------------------------------------
 
@@ -833,12 +974,25 @@ mod tests {
         // root -> D 1.0 -> C 2.0
         // Both C's at depth 2; declaration order ties → B's C 1.0 wins.
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![dep("ex", "C", "1.0")]));
-        src.add_pom(co("ex", "D"), "1.0", pom("ex", "D", "1.0", vec![dep("ex", "C", "2.0")]));
+        src.add_pom(
+            co("ex", "B"),
+            "1.0",
+            pom("ex", "B", "1.0", vec![dep("ex", "C", "1.0")]),
+        );
+        src.add_pom(
+            co("ex", "D"),
+            "1.0",
+            pom("ex", "D", "1.0", vec![dep("ex", "C", "2.0")]),
+        );
         src.add_pom(co("ex", "C"), "1.0", pom("ex", "C", "1.0", vec![]));
         src.add_pom(co("ex", "C"), "2.0", pom("ex", "C", "2.0", vec![]));
 
-        let root = pom("ex", "root", "1.0", vec![dep("ex", "B", "1.0"), dep("ex", "D", "1.0")]);
+        let root = pom(
+            "ex",
+            "root",
+            "1.0",
+            vec![dep("ex", "B", "1.0"), dep("ex", "D", "1.0")],
+        );
         let g = run(root, &src).await;
         assert_eq!(versions(&g, "ex", "C"), Some("1.0".into()));
         assert_eq!(g.resolved.len(), 3); // B, D, C
@@ -850,8 +1004,16 @@ mod tests {
     async fn cycle_terminates() {
         // root -> A -> B -> A (cycle)
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
-        src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![dep("ex", "A", "1.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
+        src.add_pom(
+            co("ex", "B"),
+            "1.0",
+            pom("ex", "B", "1.0", vec![dep("ex", "A", "1.0")]),
+        );
 
         let root = pom("ex", "root", "1.0", vec![dep("ex", "A", "1.0")]);
         let g = run(root, &src).await;
@@ -866,7 +1028,11 @@ mod tests {
     async fn scope_narrowing_test_parent() {
         // root -test-> A -compile-> B  =>  B effective scope = test
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
 
         let root = pom(
@@ -885,17 +1051,31 @@ mod tests {
     #[tokio::test]
     async fn provided_parent_makes_transitive_provided() {
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
 
         let root = pom(
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), Some("provided"), None, vec![])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                Some("provided"),
+                None,
+                vec![],
+            )],
         );
         let g = run(root, &src).await;
-        assert_eq!(g.winners.get(&co("ex", "B")).unwrap().scope, Scope::Provided);
+        assert_eq!(
+            g.winners.get(&co("ex", "B")).unwrap().scope,
+            Scope::Provided
+        );
     }
 
     // ---- 5. Optional transitive stripped ----------------------------------
@@ -928,15 +1108,34 @@ mod tests {
     async fn exclusion_fires_on_transitive() {
         let mut src = FixtureSource::new();
         // root -> A (excl org.foo:bar) -> B -> org.foo:bar
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
-        src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![dep("org.foo", "bar", "1.0")]));
-        src.add_pom(co("org.foo", "bar"), "1.0", pom("org.foo", "bar", "1.0", vec![]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
+        src.add_pom(
+            co("ex", "B"),
+            "1.0",
+            pom("ex", "B", "1.0", vec![dep("org.foo", "bar", "1.0")]),
+        );
+        src.add_pom(
+            co("org.foo", "bar"),
+            "1.0",
+            pom("org.foo", "bar", "1.0", vec![]),
+        );
 
         let root = pom(
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), None, None, vec![("org.foo", "bar")])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                None,
+                None,
+                vec![("org.foo", "bar")],
+            )],
         );
         let g = run(root, &src).await;
         assert!(!g.winners.contains_key(&co("org.foo", "bar")));
@@ -952,7 +1151,9 @@ mod tests {
         let mut d = dep("ex", "A", "1.0");
         d.version = None; // simulate missing version with no depMgt
         let root = pom("ex", "root", "1.0", vec![d]);
-        let err = walk(&resolved(root), &src, &WalkOptions::default()).await.unwrap_err();
+        let err = walk(&resolved(root), &src, &WalkOptions::default())
+            .await
+            .unwrap_err();
         assert!(matches!(err, WalkError::MissingVersion { .. }));
     }
 
@@ -961,14 +1162,25 @@ mod tests {
     #[tokio::test]
     async fn system_does_not_propagate() {
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
 
         let root = pom(
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), Some("system"), None, vec![])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                Some("system"),
+                None,
+                vec![],
+            )],
         );
         let g = run(root, &src).await;
         // A is recorded (direct dep), but B (transitive via system) is not.
@@ -982,7 +1194,11 @@ mod tests {
     async fn direct_wins_over_transitive() {
         let mut src = FixtureSource::new();
         // root declares C 1.0 directly; via A it'd get C 2.0.
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "C", "2.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "C", "2.0")]),
+        );
         src.add_pom(co("ex", "C"), "1.0", pom("ex", "C", "1.0", vec![]));
         src.add_pom(co("ex", "C"), "2.0", pom("ex", "C", "2.0", vec![]));
 
@@ -1051,7 +1267,9 @@ mod tests {
         let mut d = dep("ex", "A", "[1.0,");
         d.version = Some("[1.0,".into()); // unmatched bracket
         let root = pom("ex", "root", "1.0", vec![d]);
-        let err = walk(&resolved(root), &src, &WalkOptions::default()).await.unwrap_err();
+        let err = walk(&resolved(root), &src, &WalkOptions::default())
+            .await
+            .unwrap_err();
         assert!(matches!(err, WalkError::InvalidSpec { .. }));
     }
 
@@ -1073,7 +1291,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(versions(&g, "ex", "A"), Some("2.0".into()));
-        assert!(g.warnings.iter().any(|w| matches!(w, SpecWarning::LatestUsed { .. })));
+        assert!(
+            g.warnings
+                .iter()
+                .any(|w| matches!(w, SpecWarning::LatestUsed { .. }))
+        );
     }
 
     // ---- 15. RELEASE filters snapshots ------------------------------------
@@ -1082,7 +1304,11 @@ mod tests {
     async fn release_skips_snapshots() {
         let mut src = FixtureSource::new();
         src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![]));
-        src.add_pom(co("ex", "A"), "2.0-SNAPSHOT", pom("ex", "A", "2.0-SNAPSHOT", vec![]));
+        src.add_pom(
+            co("ex", "A"),
+            "2.0-SNAPSHOT",
+            pom("ex", "A", "2.0-SNAPSHOT", vec![]),
+        );
 
         let mut d = dep("ex", "A", "RELEASE");
         d.version = Some("RELEASE".into());
@@ -1091,7 +1317,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(versions(&g, "ex", "A"), Some("1.0".into()));
-        assert!(g.warnings.iter().any(|w| matches!(w, SpecWarning::ReleaseUsed { .. })));
+        assert!(
+            g.warnings
+                .iter()
+                .any(|w| matches!(w, SpecWarning::ReleaseUsed { .. }))
+        );
     }
 
     // ---- Extras ----------------------------------------------------------
@@ -1107,7 +1337,14 @@ mod tests {
                 "ex",
                 "A",
                 "1.0",
-                vec![dep_with("ex", "B", Some("1.0"), Some("runtime"), None, vec![])],
+                vec![dep_with(
+                    "ex",
+                    "B",
+                    Some("1.0"),
+                    Some("runtime"),
+                    None,
+                    vec![],
+                )],
             ),
         );
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
@@ -1135,7 +1372,14 @@ mod tests {
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), Some("runtime"), None, vec![])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                Some("runtime"),
+                None,
+                vec![],
+            )],
         );
         let g = run(root, &src).await;
         assert!(!g.winners.contains_key(&co("ex", "B")));
@@ -1145,7 +1389,16 @@ mod tests {
     #[tokio::test]
     async fn wildcard_exclusion_kills_all_transitives() {
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0"), dep("ex", "C", "1.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom(
+                "ex",
+                "A",
+                "1.0",
+                vec![dep("ex", "B", "1.0"), dep("ex", "C", "1.0")],
+            ),
+        );
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
         src.add_pom(co("ex", "C"), "1.0", pom("ex", "C", "1.0", vec![]));
 
@@ -1153,7 +1406,14 @@ mod tests {
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), None, None, vec![("*", "*")])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                None,
+                None,
+                vec![("*", "*")],
+            )],
         );
         let g = run(root, &src).await;
         assert!(g.winners.contains_key(&co("ex", "A")));
@@ -1165,16 +1425,39 @@ mod tests {
     #[tokio::test]
     async fn exclusion_propagates_two_levels_down() {
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
-        src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![dep("ex", "C", "1.0")]));
-        src.add_pom(co("ex", "C"), "1.0", pom("ex", "C", "1.0", vec![dep("org.bad", "evil", "1.0")]));
-        src.add_pom(co("org.bad", "evil"), "1.0", pom("org.bad", "evil", "1.0", vec![]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
+        src.add_pom(
+            co("ex", "B"),
+            "1.0",
+            pom("ex", "B", "1.0", vec![dep("ex", "C", "1.0")]),
+        );
+        src.add_pom(
+            co("ex", "C"),
+            "1.0",
+            pom("ex", "C", "1.0", vec![dep("org.bad", "evil", "1.0")]),
+        );
+        src.add_pom(
+            co("org.bad", "evil"),
+            "1.0",
+            pom("org.bad", "evil", "1.0", vec![]),
+        );
 
         let root = pom(
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), None, None, vec![("org.bad", "evil")])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                None,
+                None,
+                vec![("org.bad", "evil")],
+            )],
         );
         let g = run(root, &src).await;
         assert!(!g.winners.contains_key(&co("org.bad", "evil")));
@@ -1184,10 +1467,19 @@ mod tests {
     #[tokio::test]
     async fn audit_records_losers() {
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "C", "2.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "C", "2.0")]),
+        );
         src.add_pom(co("ex", "C"), "1.0", pom("ex", "C", "1.0", vec![]));
         src.add_pom(co("ex", "C"), "2.0", pom("ex", "C", "2.0", vec![]));
-        let root = pom("ex", "root", "1.0", vec![dep("ex", "C", "1.0"), dep("ex", "A", "1.0")]);
+        let root = pom(
+            "ex",
+            "root",
+            "1.0",
+            vec![dep("ex", "C", "1.0"), dep("ex", "A", "1.0")],
+        );
         let g = run(root, &src).await;
         let a = g.audit.iter().find(|a| a.coords == co("ex", "C")).unwrap();
         assert_eq!(a.winning_version, "1.0");
@@ -1211,9 +1503,22 @@ mod tests {
         src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![]));
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
         src.add_pom(co("ex", "C"), "1.0", pom("ex", "C", "1.0", vec![]));
-        let root = pom("ex", "root", "1.0", vec![dep("ex", "A", "1.0"), dep("ex", "B", "1.0"), dep("ex", "C", "1.0")]);
+        let root = pom(
+            "ex",
+            "root",
+            "1.0",
+            vec![
+                dep("ex", "A", "1.0"),
+                dep("ex", "B", "1.0"),
+                dep("ex", "C", "1.0"),
+            ],
+        );
         let g = run(root, &src).await;
-        let names: Vec<&str> = g.resolved.iter().map(|d| d.coords.artifact.as_str()).collect();
+        let names: Vec<&str> = g
+            .resolved
+            .iter()
+            .map(|d| d.coords.artifact.as_str())
+            .collect();
         assert_eq!(names, vec!["A", "B", "C"]);
     }
 
@@ -1273,7 +1578,11 @@ mod tests {
     #[tokio::test]
     async fn winning_path_records_traversal() {
         let mut src = FixtureSource::new();
-        src.add_pom(co("ex", "A"), "1.0", pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]));
+        src.add_pom(
+            co("ex", "A"),
+            "1.0",
+            pom("ex", "A", "1.0", vec![dep("ex", "B", "1.0")]),
+        );
         src.add_pom(co("ex", "B"), "1.0", pom("ex", "B", "1.0", vec![]));
         let root = pom("ex", "root", "1.0", vec![dep("ex", "A", "1.0")]);
         let g = run(root, &src).await;
@@ -1293,7 +1602,10 @@ mod tests {
         let err = walk(&resolved(root), &src, &WalkOptions::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, WalkError::Metadata(MetadataError::NotFound { .. })));
+        assert!(matches!(
+            err,
+            WalkError::Metadata(MetadataError::NotFound { .. })
+        ));
     }
 
     // 29. Import scope on direct dep is silently dropped.
@@ -1304,7 +1616,14 @@ mod tests {
             "ex",
             "root",
             "1.0",
-            vec![dep_with("ex", "A", Some("1.0"), Some("import"), None, vec![])],
+            vec![dep_with(
+                "ex",
+                "A",
+                Some("1.0"),
+                Some("import"),
+                None,
+                vec![],
+            )],
         );
         let g = run(root, &src).await;
         assert!(g.winners.is_empty());

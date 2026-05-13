@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use barista_coords::Coords;
 use barista_pom::RawPom;
 
+use crate::snapshot::SnapshotInfo;
+
 /// Coordinate identity used by the resolver. Maven's group+artifact
 /// pair is the resolution-conflict key; type+classifier participate
 /// only in artifact-file identity (GATC).
@@ -114,6 +116,25 @@ pub trait MetadataSource: Send + Sync {
     /// default does nothing. Used to overlap I/O with BFS traversal.
     async fn warm(&self, _coords: &ResolveKey, _version: &str) -> Result<(), MetadataError> {
         Ok(())
+    }
+
+    /// Fetch the `maven-metadata.xml` for a specific SNAPSHOT
+    /// version, parsed into a [`SnapshotInfo`]. Used by the resolver
+    /// when it encounters a `-SNAPSHOT` version and needs to pick the
+    /// concrete timestamped publish.
+    ///
+    /// The default implementation returns
+    /// [`MetadataError::MetadataNotFound`]; production cache
+    /// implementations override it. Test fixtures override it to
+    /// return hand-crafted [`SnapshotInfo`] values.
+    async fn fetch_snapshot_info(
+        &self,
+        coords: &ResolveKey,
+        _version: &str,
+    ) -> Result<(SnapshotInfo, FetchOrigin), MetadataError> {
+        Err(MetadataError::MetadataNotFound {
+            coords: format!("{}:{}", coords.group, coords.artifact),
+        })
     }
 }
 

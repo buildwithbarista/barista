@@ -19,8 +19,7 @@ fn coords(group: &str, artifact: &str) -> Coords {
 
 #[tokio::test]
 async fn loads_default_fixtures() {
-    let src = FixtureMetadataSource::load_default()
-        .expect("default fixtures must load cleanly");
+    let src = FixtureMetadataSource::load_default().expect("default fixtures must load cleanly");
     assert!(
         src.pom_count() >= 3,
         "expected ≥3 POMs loaded, got {}",
@@ -37,10 +36,7 @@ async fn loads_default_fixtures() {
 async fn fetch_pom_returns_fixture_origin() {
     let src = FixtureMetadataSource::load_default().unwrap();
     let c = coords("org.apache.commons", "commons-lang3");
-    let (pom, origin) = src
-        .fetch_pom(&c, "3.14.0")
-        .await
-        .expect("fixture present");
+    let (pom, origin) = src.fetch_pom(&c, "3.14.0").await.expect("fixture present");
     assert_eq!(pom.artifact_id, "commons-lang3");
     assert_eq!(pom.version.as_deref(), Some("3.14.0"));
     assert_eq!(origin, FetchOrigin::Fixture);
