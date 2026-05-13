@@ -1,0 +1,38 @@
+---
+source: crates/barista-config/tests/effective.rs
+expression: sb.redact(&rendered)
+---
+=== effective config ===
+compat.excluded-modules            = []
+daemon.enabled                     = true
+daemon.idle-shutdown-secs          = 600
+daemon.max-heap                    = <unset>
+daemon.socket-dir                  = "<HOME>/.barista/run"
+logging.level                      = "info"
+logging.maven-shape                = false
+maven-settings.active-profiles     = []
+maven-settings.interactive-mode    = true
+maven-settings.local-repository    = <unset>
+maven-settings.mirrors             = []
+maven-settings.offline             = false
+maven-settings.plugin-groups       = []
+maven-settings.profiles            = []
+maven-settings.proxies             = []
+maven-settings.servers             = []
+maven.compat-mode                  = auto
+maven.honor-jvm-config             = true
+maven.honor-mvn-config             = true
+network.http2-enabled              = true
+network.max-concurrent-connections = 6
+network.proxy                      = <unset>
+network.request-timeout-secs       = 60
+paths.cache-dir                    = "<HOME>/.barista/cache"
+paths.m2-repository                = "<HOME>/.m2/repository"
+paths.settings-xml                 = "<HOME>/.m2/settings.xml"
+paths.user-config-dir              = "<HOME>/.barista"
+project-extensions                 = <unset>
+telemetry.enabled                  = false
+telemetry.endpoint                 = <unset>
+
+=== audit ===
+defaults         <-                                          [<all>]
