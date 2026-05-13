@@ -19,8 +19,13 @@
 #![warn(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
+pub mod effective;
 pub mod raw;
 
+pub use effective::{
+    EffectiveError, EffectivePom, Interpolation, InterpolationLocation, MAX_CHAIN_DEPTH,
+    MAX_INTERPOLATION_DEPTH, ParentResolver, build_effective,
+};
 pub use raw::{
     DependencyManagement, ParseError, Properties, RawActivation, RawActivationFile,
     RawActivationProperty, RawBuild, RawDependency, RawExclusion, RawParent, RawPlugin,
