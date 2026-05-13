@@ -7,3 +7,12 @@ description = "Content-addressed local artifact cache and metadata index."
 publish = false
 
 [lib]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+sha1 = "0.10"
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

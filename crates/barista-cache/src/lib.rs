@@ -1,7 +1,16 @@
-//! Content-addressed local artifact cache and metadata index.
+//! Local content-addressed cache for Barista artifacts.
 //!
-//! This crate is part of the Barista workspace. See the workspace
-//! README for an overview of the project.
+//! The cache stores artifact bytes by SHA-256 digest under a
+//! 256-way fan-out tree (`objects/<aa>/<full-hex>`) and writes
+//! every entry atomically via tmp-file + `rename(2)`. See the
+//! [`cas`] module for the on-disk substrate, and [`checksum`]
+//! for sidecar-driven verification of downloaded artifacts.
 //!
-//! Currently a scaffold — implementation lands in a subsequent
-//! milestone.
+//! Higher-level pieces (index/journal, fetcher, GC) layer on top
+//! of `cas` and will land in subsequent modules.
+
+pub mod cas;
+pub mod checksum;
+
+pub use cas::{Cas, CasError, ContentHash};
+pub use checksum::{Algorithm, ChecksumError, ChecksumExpected, Verification, verify};
