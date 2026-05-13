@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TEST FIXTURE: hand-trimmed copy of jackson-annotations 2.18.0.
+
+  Divergence from upstream (https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-annotations/2.18.0/jackson-annotations-2.18.0.pom):
+  - The `<parent>` element (jackson-bom:2.18.0) is removed and the
+    resulting <groupId> + <version> are inlined verbatim.
+  - The upstream `<dependencies>` block is empty (jackson-annotations is a leaf),
+    so no further trimming is needed there.
+  - Marketing metadata (developers, scm, licenses, ciManagement, etc.) is
+    stripped to keep the fixture tiny and human-greppable.
+
+  These changes do not affect the dependency graph the resolver walks for this
+  POM: jackson-annotations 2.18.0 has zero non-test transitive dependencies in
+  both upstream and this trimmed form.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.fasterxml.jackson.core</groupId>
+  <artifactId>jackson-annotations</artifactId>
+  <version>2.18.0</version>
+  <packaging>bundle</packaging>
+  <name>Jackson-annotations</name>
+  <description>Core annotations used for value types, used by Jackson data binding package.</description>
+  <dependencies>
+  </dependencies>
+</project>

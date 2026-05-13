@@ -20,3 +20,8 @@ barista-version = { path = "../barista-version" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
+criterion = { version = "0.8", default-features = false, features = ["plotters", "cargo_bench_support"] }
+
+[[bench]]
+name = "walker"
+harness = false

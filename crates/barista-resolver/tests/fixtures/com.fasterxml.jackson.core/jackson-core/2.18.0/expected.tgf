@@ -1,0 +1,12 @@
+# TGF ground-truth for the resolver golden test.
+#
+# Hand-authored to match `mvn dependency:tree -DoutputType=tgf` on
+# jackson-core:2.18.0 walked from a synthetic root.  jackson-core's
+# upstream parent POM (jackson-base) is not in the fixture corpus, so the
+# walker stops transitive expansion after the direct edge — and the
+# upstream POM declares no compile-scope transitive deps anyway, so the
+# resulting set matches `mvn dependency:tree -Dscope=compile`.
+#
+# Format: `<id> <group>:<artifact>:<version>:<scope>` per node.
+1 com.fasterxml.jackson.core:jackson-core:2.18.0:compile
+#

@@ -1,0 +1,9 @@
+# TGF ground-truth for the resolver golden test.
+#
+# Hand-authored to match `mvn dependency:tree -DoutputType=tgf` on
+# commons-io:2.16.1 walked from a synthetic root.  commons-io declares
+# only test-scope deps, so the walker reports only the direct edge.
+#
+# Format: `<id> <group>:<artifact>:<version>:<scope>` per node.
+1 commons-io:commons-io:2.16.1:compile
+#

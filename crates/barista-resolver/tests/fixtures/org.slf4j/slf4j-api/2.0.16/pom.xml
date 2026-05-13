@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  TEST FIXTURE: hand-trimmed copy of slf4j-api 2.0.16.
+
+  Divergence from upstream (https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.16/slf4j-api-2.0.16.pom):
+  - The `<parent>` element (slf4j-parent:2.0.16) is removed and the
+    resulting <groupId> is inlined verbatim.
+  - The upstream POM's `<dependencies>` are all `<scope>test</scope>` or
+    `<scope>provided</scope>` and are stripped — slf4j-api has no
+    compile-scope transitive dependencies, which is precisely what the
+    golden test compares against.
+  - Marketing metadata (developers, scm, licenses, ciManagement, etc.) is
+    stripped.
+
+  Resulting graph: slf4j-api is a leaf with zero transitive dependencies,
+  matching `mvn dependency:tree -Dscope=compile` on the upstream artifact.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.slf4j</groupId>
+  <artifactId>slf4j-api</artifactId>
+  <version>2.0.16</version>
+  <packaging>jar</packaging>
+  <name>SLF4J API Module</name>
+  <description>The slf4j API</description>
+  <dependencies>
+  </dependencies>
+</project>
