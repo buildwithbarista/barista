@@ -1,0 +1,48 @@
+# CI workflow skeleton.
+#
+# The toolchain matrix (Maven 3.9.x and 4.0.x, mvnd 2.x, JDK 17 + 21,
+# a Windows runner, barback's dual-JDK test matrix) is filled in by a
+# subsequent commit. This file currently exists so the workflow runs
+# at all; the matrix expansion is intentional follow-up work.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust workspace (cargo check + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo check
+        run: cargo check --workspace --all-targets
+      - name: cargo test
+        run: cargo test --workspace
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  barback:
+    name: barback (Maven, placeholder JDK — pinned in a follow-up)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK (placeholder — expanded to JDK 17 + 21 matrix in a follow-up)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: mvn test (parent)
+        run: mvn -f barback/pom.xml -B test
+      - name: mvn package (bench harness compiles)
+        run: mvn -f barback/bench/pom.xml -B package -DskipTests
