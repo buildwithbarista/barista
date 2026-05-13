@@ -953,10 +953,22 @@ expected = "lt"
 notes = "adversarial: a vs b alias ordering"
 
 [[case]]
+left = "1.0m1"
+right = "1.0rc1"
+expected = "lt"
+notes = "adversarial: milestone < rc — alias `m → milestone` fires when followed by a digit"
+
+[[case]]
 left = "1.0m"
 right = "1.0rc"
-expected = "lt"
-notes = "adversarial: milestone < rc"
+expected = "gt"
+notes = """
+adversarial: bare trailing `m` is NOT aliased to `milestone` — Maven's
+alias table only fires when the single-letter qualifier is followed
+immediately by a digit. Bare `m` sorts as an unknown qualifier
+(lex-after `sp`, post-release), while `rc` is pre-release. So
+`1.0m > 1.0rc`.
+"""
 
 [[case]]
 left = "1.0a99"
