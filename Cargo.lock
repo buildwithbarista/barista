@@ -83,6 +83,7 @@ version = "0.1.0-alpha.0"
 name = "barista-pom"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "ciborium",
  "criterion",
  "indexmap",
  "quick-xml",

@@ -13,6 +13,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 quick-xml = { version = "0.40", features = ["serialize"] }
 thiserror = "2.0"
 indexmap = { version = "2.14", features = ["serde"] }
+ciborium = "0.2.2"
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false, features = ["plotters", "cargo_bench_support"] }

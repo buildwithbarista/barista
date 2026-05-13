@@ -19,10 +19,12 @@
 #![warn(missing_debug_implementations)]
 #![warn(rust_2018_idioms)]
 
+pub mod blob;
 pub mod effective;
 pub mod profile;
 pub mod raw;
 
+pub use blob::{BLOB_MAGIC, BLOB_SCHEMA_VERSION, BlobError, PomBlob, read_blob, write_blob};
 pub use effective::{
     EffectiveError, EffectivePom, Interpolation, InterpolationLocation, MAX_CHAIN_DEPTH,
     MAX_INTERPOLATION_DEPTH, ParentResolver, build_effective,
