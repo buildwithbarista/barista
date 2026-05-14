@@ -1,0 +1,13 @@
+[
+  {
+    "number": 11,
+    "state": "OPEN",
+    "title": "[security] gitleaks: aws-access-key in tests/fixtures/secret-scan/planted.txt:3",
+    "body": "<!-- sec-fingerprint: 0000000000000000000000000000000000000000000000000000000000000000 -->\n\nA different, unrelated finding. The new alert in alerts_single.json has a different fingerprint and should still be filed as net-new.\n",
+    "labels": [
+      {"name": "security"},
+      {"name": "security-bot"},
+      {"name": "gitleaks"}
+    ]
+  }
+]
