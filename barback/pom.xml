@@ -23,6 +23,16 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.2</junit.version>
+        <!--
+          OWASP Dependency-Check is wired up under the `dependency-check`
+          profile below. Quick local builds (`mvn verify`) skip it by
+          default so contributors don't pay the NVD-download cost on every
+          change. Enable explicitly with:
+            mvn -P dependency-check verify
+          The CI gate runs it on every PR.
+        -->
+        <dependency-check-maven.version>12.1.0</dependency-check-maven.version>
+        <dependency-check.skip>true</dependency-check.skip>
     </properties>
 
     <dependencyManagement>
@@ -57,7 +67,62 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
             </plugin>
+            <plugin>
+                <!--
+                  OWASP Dependency-Check.
+
+                  Bound to `verify` but skipped by default via the
+                  `dependency-check.skip` property declared above. Activate
+                  via the `dependency-check` profile (CI) or by setting the
+                  property to `false` on the command line.
+
+                  `failBuildOnCVSS=7` fails the build on any High or
+                  Critical CVE (CVSS v3 base score >= 7.0). Adjust only
+                  with a documented justification.
+                -->
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>${dependency-check-maven.version}</version>
+                <configuration>
+                    <skip>${dependency-check.skip}</skip>
+                    <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <formats>
+                        <format>HTML</format>
+                        <format>SARIF</format>
+                    </formats>
+                    <!--
+                      NVD API key, if available, raises the rate limit and
+                      shortens the database update step. Settable via the
+                      NVD_API_KEY environment variable in CI; the plugin
+                      reads `nvdApiKey` from the active settings.
+                    -->
+                    <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <!--
+              `dependency-check` profile: flips the skip flag so the OWASP
+              Dependency-Check plugin runs on `verify`. Used by CI and by
+              contributors who want to reproduce the scan locally:
+
+                mvn -f barback/pom.xml -P dependency-check verify
+            -->
+            <id>dependency-check</id>
+            <properties>
+                <dependency-check.skip>false</dependency-check.skip>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>

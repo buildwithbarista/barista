@@ -142,6 +142,45 @@ entries) lives at `docs/ci/secret-scan-allowlist.md`.
 - Update any documentation affected by your change.
 - CI must be green before a PR is merged.
 
+## Dependency scanning
+
+CI runs a Software Composition Analysis (SCA) suite on every PR, every push
+to `main`, and on a daily schedule. The suite is defined in
+[`.github/workflows/sca.yml`](.github/workflows/sca.yml) and combines five
+overlapping scanners — `cargo-deny`, `cargo-audit`, OSV-Scanner, OWASP
+Dependency-Check, and Trivy `fs`. Overlap is intentional: the four
+vulnerability databases behind these tools disagree on a non-trivial subset
+of advisories.
+
+To reproduce the most useful checks locally:
+
+```bash
+# Rust crate policy: advisories, license allowlist, banned crates,
+# source allowlist. Configured in deny.toml at the repo root.
+cargo install cargo-deny --locked
+cargo deny check
+
+# Rust advisory scan against Cargo.lock.
+cargo install cargo-audit --locked
+cargo audit
+
+# Java dependency CVE scan (downloads the NVD database on first run;
+# ~5 minutes, ~1 GB. Faster with an NVD API key in $NVD_API_KEY.)
+mvn -f barback/pom.xml -P dependency-check verify
+```
+
+### Adding or updating dependencies
+
+When a contribution adds or updates a dependency, run `cargo deny check`
+(or the equivalent Maven scan) before opening the PR. If the change adds a
+crate under a new license, the license must be added to the allowlist in
+`deny.toml` with a one-line justification in the commit message.
+
+To bump a dependency to a known-safe version, consult an
+ecosystem-vulnerability source for the recommended target version rather
+than auto-bumping to the latest; the goal is to land on a version with no
+open advisories.
+
 ## Reporting bugs and requesting features
 
 Bug reports and feature requests go in [GitHub Issues](../../issues). Issue templates live

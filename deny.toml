@@ -1,0 +1,133 @@
+# cargo-deny configuration for the Barista workspace.
+#
+# `cargo deny check` enforces four classes of supply-chain hygiene on every PR
+# and on `push: main`:
+#
+#   advisories   Fail on any RustSec advisory affecting a dependency.
+#   bans         Fail when a banned crate (e.g., openssl-sys) is in the tree,
+#                or when a duplicate-versions ratchet is breached.
+#   licenses     Fail on any license outside the curated allowlist below.
+#   sources      Fail on any registry / git source outside the curated
+#                allowlist (crates.io + workspace path deps).
+#
+# See https://embarkstudios.github.io/cargo-deny/ for the schema reference.
+# Schema version 2 is required by cargo-deny >= 0.16.
+#
+# Update flow: when a new crate is pulled in that needs an additional license,
+# git source, or duplicate version, open a PR adding the entry here with a
+# justification in the commit message. Do not silently broaden the allowlist.
+
+[graph]
+# Scan every target; cross-compilation targets pull in OS-specific crates
+# (windows-sys, libc) that we still want to vet.
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# ---------------------------------------------------------------------------
+# advisories
+# ---------------------------------------------------------------------------
+# Strict posture: any RustSec advisory fails the check. Yanked crates also
+# fail — yanks usually signal a real problem.
+#
+# `ignore` is for advisories we have triaged and decided to accept, each with
+# a justification. Keep this list short and revisit it monthly: an entry that
+# stays here for more than one release cycle is a tech-debt smell.
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = [
+    # bincode 2.x is marked unmaintained (RUSTSEC-2025-0141) following the
+    # upstream team's decision to stop development. No safe upgrade path
+    # exists yet; alternatives (postcard, bitcode, rkyv) are tracked in
+    # follow-up work. Re-evaluate when the cache/lockfile crates migrate.
+    "RUSTSEC-2025-0141",
+]
+
+# ---------------------------------------------------------------------------
+# licenses
+# ---------------------------------------------------------------------------
+# Allowlist policy: permissive licenses compatible with the dual MIT/Apache
+# license of this project. Add a new entry only when a transitive dependency
+# requires it and the license is genuinely permissive.
+#
+# Confidence threshold is intentionally strict (0.8) — when SPDX detection
+# is fuzzy we want a human to look at the LICENSE file rather than guessing.
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "MPL-2.0",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    # Used by `webpki-roots` for the embedded CA-bundle data file. The CDLA
+    # Permissive 2.0 is an OSI-style permissive license maintained by the
+    # Linux Foundation; allowed because the only crate that ships under it
+    # is the cert bundle, not executable code.
+    "CDLA-Permissive-2.0",
+]
+# No explicit `deny` list; anything not in `allow` is denied by default.
+exceptions = []
+
+# ---------------------------------------------------------------------------
+# bans
+# ---------------------------------------------------------------------------
+# Crate-level policy. The headline rule: prefer `rustls` over OpenSSL for
+# every TLS use case. Banning `openssl-sys` (and friends) keeps the
+# `openssl` C library out of the build, which simplifies cross-compilation,
+# avoids a non-trivial CVE history, and keeps the static-binary story clean.
+#
+# If a future dependency *must* pull in OpenSSL, downgrade the entry below
+# from `deny` to `warn` and document the transitive root in the commit.
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# `wildcards = "deny"` flags `version = "*"` requirements. Workspace path
+# deps are declared with `{ path = "../crate" }` and no explicit version,
+# which cargo-deny otherwise reports as a wildcard. Path-only deps are
+# locked to the workspace member by the path itself, so they're safe.
+allow-wildcard-paths = true
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+deny = [
+    # Prefer rustls — keeps OpenSSL (and its CVE history) out of the build.
+    { crate = "openssl", reason = "Use rustls instead; see deny.toml header." },
+    { crate = "openssl-sys", reason = "Use rustls instead; see deny.toml header." },
+    { crate = "native-tls", reason = "Use rustls instead; see deny.toml header." },
+]
+
+allow = []
+skip = []
+skip-tree = []
+
+# ---------------------------------------------------------------------------
+# sources
+# ---------------------------------------------------------------------------
+# Only crates.io is allowed as a registry. Workspace path dependencies are
+# implicitly allowed by cargo-deny. If a git dependency becomes necessary,
+# pin it by commit SHA and add the canonical URL to `allow-git` below with a
+# justification.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[sources.allow-org]
+github = []
+gitlab = []
+bitbucket = []

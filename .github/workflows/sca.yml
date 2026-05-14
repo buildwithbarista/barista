@@ -1,0 +1,200 @@
+# Software Composition Analysis — dependency vulnerability scanning.
+#
+# Runs five overlapping scanners on every PR, every push to `main`, and on a
+# daily schedule. Overlap is intentional: cargo-audit/cargo-deny lean on the
+# RustSec advisory database; OSV-Scanner uses the OSV.dev union; OWASP DC
+# uses the NVD; Trivy uses its own vulnerability metadata. The four
+# databases disagree on a non-trivial subset of advisories, so the union
+# catches more than any one scanner.
+#
+# Coverage:
+#   Rust   — cargo-deny, cargo-audit, OSV-Scanner, Trivy
+#   Java   — OSV-Scanner, OWASP Dependency-Check, Trivy
+#   Other  — Trivy (lockfile types neither cargo-* nor OSV covers)
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers can audit
+# drift. When bumping, update both the SHA and the comment.
+#
+# Findings are uploaded to GitHub code scanning as SARIF where the scanner
+# supports it. Failures here block merges to `main`.
+
+name: SCA — dependency vulnerability scanning
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # 04:17 UTC daily. The minute is non-round to avoid colliding with the
+    # top-of-hour cron storm on GitHub's shared schedulers.
+    - cron: "17 4 * * *"
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # cargo-deny — advisories, license allowlist, banned crates, source allowlist.
+  # Config lives in deny.toml at the repo root.
+  # ---------------------------------------------------------------------------
+  cargo-deny-check:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2.0.18
+        with:
+          # Run all four checks; the default is `check` with no further args,
+          # which expands to advisories + bans + licenses + sources.
+          command: check
+          arguments: --all-features
+
+  # ---------------------------------------------------------------------------
+  # cargo-audit — RustSec advisory scan against Cargo.lock. Overlaps with
+  # cargo-deny's [advisories] section by design: the two tools occasionally
+  # disagree on what an advisory means for a workspace and we want the
+  # broader signal.
+  #
+  # Local reproduction:
+  #   cargo install cargo-audit --locked
+  #   cargo audit
+  # ---------------------------------------------------------------------------
+  cargo-audit-check:
+    name: cargo-audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      # `rustsec/audit-check` opens issues on `push: main` failures by default;
+      # `issues: write` is the documented requirement.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run cargo-audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # OSV-Scanner — Cargo (Cargo.lock) + Maven (barback/pom.xml) coverage from
+  # the OSV.dev database union. SARIF is uploaded to code scanning via the
+  # reusable workflow's built-in step.
+  #
+  # We call the reusable workflow (not the action directly): the reusable
+  # version handles SARIF generation + upload, which the raw action does
+  # not.
+  # ---------------------------------------------------------------------------
+  osv-scanner:
+    name: OSV-Scanner
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    # google/osv-scanner-action ships a reusable workflow that wraps the
+    # action + SARIF upload. Pinned to the same SHA as the action itself.
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      # `-r ./` recurses from the repo root, picking up both Cargo.lock and
+      # barback/pom.xml automatically. OSV-Scanner identifies lockfile types
+      # by filename.
+      scan-args: |-
+        -r
+        --skip-git
+        ./
+
+  # ---------------------------------------------------------------------------
+  # OWASP Dependency-Check — Maven-side belt-and-suspenders alongside
+  # OSV-Scanner. OWASP DC uses the NVD vulnerability database, OSV uses the
+  # OSV.dev union; they disagree on a non-trivial subset of advisories.
+  #
+  # Configured in barback/pom.xml under the `dependency-check` profile so
+  # local builds don't pay the NVD-download cost on every `mvn verify`. Pass
+  # `-P dependency-check` (or `-Ddependency-check.skip=false`) to opt in.
+  # ---------------------------------------------------------------------------
+  barback-owasp-dc:
+    name: OWASP Dependency-Check (barback)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up JDK 21
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Cache OWASP Dependency-Check NVD data
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-dc-${{ runner.os }}-${{ hashFiles('barback/pom.xml') }}
+          restore-keys: |
+            owasp-dc-${{ runner.os }}-
+      - name: Run dependency-check (verify phase, opt-in profile)
+        env:
+          # Optional; if a contributor sets NVD_API_KEY as a repo secret the
+          # plugin uses the higher-rate-limited NVD API endpoint. The plugin
+          # still works (slower) without it.
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          mvn -f barback/pom.xml -B -P dependency-check verify
+
+  # ---------------------------------------------------------------------------
+  # Trivy `fs` scan — cross-ecosystem catch-all. Picks up lockfile types and
+  # IaC misconfigurations that none of the language-specific scanners
+  # reliably cover.
+  #
+  # `secret` scanner is intentionally NOT enabled here — secret scanning is
+  # owned by the dedicated secret-scan workflow (gitleaks + trufflehog) so
+  # we don't double-report and so the allowlist semantics stay coherent.
+  # ---------------------------------------------------------------------------
+  trivy-fs:
+    name: Trivy fs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run Trivy (filesystem scan, SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          # `vuln` + `misconfig` only — `secret` is owned by the secret-scan
+          # workflow. Adding it here would create a parallel allowlist
+          # surface that drifts from .gitleaksignore.
+          scanners: vuln,misconfig
+          format: sarif
+          output: trivy-results.sarif
+          # Surface High+ findings; the SARIF upload still records Low/Med.
+          severity: CRITICAL,HIGH
+          # Fail the job on any finding at the configured severity.
+          exit-code: '1'
+          ignore-unfixed: false
+      - name: Upload SARIF to code scanning
+        # Always upload, even when the scan step failed, so reviewers can
+        # inspect the findings in the Security tab.
+        if: always()
+        uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
