@@ -65,6 +65,61 @@ on your PATH.
 - A 100-project compatibility corpus will live under `test-corpus/` once that milestone lands;
   it is not yet required for local development.
 
+## Local security checks
+
+The repo ships a small set of security checks that run locally on every commit via the
+[pre-commit](https://pre-commit.com/) framework. They are the same checks CI enforces, just
+cheaper to run before you push.
+
+### Install the tools
+
+- **gitleaks** — secret scanner.
+  - macOS: `brew install gitleaks`
+  - Linux: `apt install gitleaks` if your distro packages it, otherwise grab a release
+    binary from <https://github.com/gitleaks/gitleaks/releases> and put it on your `PATH`.
+- **pre-commit** — hook runner.
+  - macOS: `brew install pre-commit`
+  - Linux/anywhere with Python: `pip install pre-commit` (or `pipx install pre-commit`).
+
+### Wire up the hooks
+
+Run this once per fresh clone:
+
+    pre-commit install
+
+That installs the git `pre-commit` hook. Every subsequent `git commit` will run the hooks
+configured in `.pre-commit-config.yaml` — currently gitleaks, a handful of language-agnostic
+hygiene checks, and `cargo fmt --check` / `cargo clippy --workspace -- -D warnings` for any
+staged Rust files.
+
+### Verify the secret-scan round-trip
+
+You can sanity-check the whole secret-scan pipeline (config, allowlist mechanism, rule pack)
+without touching git history by running:
+
+    bash scripts/test-secret-scan.sh
+
+It scans a synthetic AWS-shaped fixture under `tests/fixtures/secrets/` and asserts that
+gitleaks (a) fires on it as configured, and (b) honours `.gitleaksignore` when the matching
+fingerprint is listed. Both halves should pass; if either fails, the secret-scan setup is
+broken and the surrounding hook + CI workflow cannot be trusted until it is fixed.
+
+### When the hook fires on something you believe is a false positive
+
+The default move is **not** to allowlist. Before reaching for `.gitleaksignore`:
+
+1. Confirm the value is not a real credential. If it is, rotate it before doing anything
+   else.
+2. Remove or redact the value at source if you can — the best waiver is no waiver.
+3. If the value genuinely cannot be removed (e.g., a deliberately-shaped fixture or an
+   example token in user-facing docs), capture the fingerprint from the gitleaks JSON
+   report and add it to `.gitleaksignore` with a comment naming the file, the rule, and
+   the rationale. Explain the trade-off in your PR description. A reviewer from the
+   security area-CODEOWNERS group needs to approve the entry.
+
+The full allowlist-hygiene playbook (review cadence, audit process, who reaps stale
+entries) lives at `docs/ci/secret-scan-allowlist.md`.
+
 ## Coding conventions
 
 - **Rust.** `cargo fmt` must be clean. `cargo clippy --workspace --all-targets -- -D warnings`
