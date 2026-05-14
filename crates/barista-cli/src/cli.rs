@@ -92,6 +92,13 @@ pub struct GlobalFlags {
     #[arg(long, global = true)]
     pub strict: bool,
 
+    /// Treat the on-disk lockfile as authoritative: error if
+    /// resolution would change it instead of rewriting. Implied by
+    /// `--ci`; `barista pull` honors it via the `Frozen` validation
+    /// mode in `barista-lockfile`.
+    #[arg(long, global = true)]
+    pub frozen: bool,
+
     /// Force one-shot execution; bypass the barback daemon.
     #[arg(long, global = true)]
     pub no_daemon: bool,
@@ -372,10 +379,26 @@ pub struct MavenVocabArgs {
 /// code `2` (a not-yet-implemented sentinel). M3.1 T2–T6 + T8
 /// replace the stubs with real impls in subsequent batches.
 pub fn dispatch(cli: Cli) -> i32 {
+    let Cli {
+        global: mut g,
+        command,
+    } = cli;
     // The `--ci` shortcut expands to `--frozen --output json
-    // --quiet` once `--frozen` lands. Per-command dispatchers that
-    // need global flags take `&cli.global` directly.
-    let Cli { global, command } = cli;
+    // --quiet`. Explicit user flags win; `--ci` only sets defaults
+    // that haven't been set otherwise. (Today `output` has a default
+    // value of `Human` rather than `Option<_>`, so we can't
+    // distinguish "user explicitly said --output human" from "user
+    // said nothing" — under `--ci`, `--output json` always wins. The
+    // booleans `frozen` and `quiet` are additive, so promoting them
+    // is unambiguous.)
+    if g.ci {
+        g.frozen = true;
+        g.quiet = true;
+        g.output = OutputFormat::Json;
+        // Suppress ANSI colors in CI to keep output byte-deterministic.
+        g.no_color = true;
+    }
+    let global = g;
 
     match command {
         Command::Pull(args) => crate::cmd::pull::run(&global, &args),

@@ -60,11 +60,17 @@ pub fn run(global: &GlobalFlags, args: &PullArgs) -> i32 {
     let mut renderer = make_runtime_renderer(global);
     let exit = match run_inner(global, args) {
         Ok(report) => {
-            // Render the report only when not in `--quiet`. JSON/NDJSON
-            // consumers typically want the document even under
-            // `--quiet`, but mirroring the pre-renderer behaviour for
-            // M3.2 T1 keeps the snapshot suite stable; T3 revisits.
-            if !global.quiet {
+            // `--quiet` suppresses the human-readable summary only:
+            // JSON / NDJSON consumers (and the `--ci` shortcut) need
+            // the structured document regardless. The renderer's per-
+            // format impl knows whether to short-circuit; pull just
+            // always asks it to render and the human renderer is the
+            // one that respects `--quiet`.
+            let should_render = match global.output {
+                crate::cli::OutputFormat::Human => !global.quiet,
+                crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Ndjson => true,
+            };
+            if should_render {
                 if let Err(e) = renderer.render_pull(&report) {
                     eprintln!("error: rendering pull report failed: {e}");
                     return 1;

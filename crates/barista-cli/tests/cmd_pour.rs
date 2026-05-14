@@ -195,6 +195,7 @@ fn flags_for(fx: &Fixture) -> GlobalFlags {
         root: Some(fx.project_root.clone()),
         file: None,
         strict: false,
+        frozen: false,
         no_daemon: false,
         maven_compat: None,
         config: None,
