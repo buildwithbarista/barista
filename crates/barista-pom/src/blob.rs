@@ -118,7 +118,7 @@ pub enum BlobError {
 pub fn write_blob(blob: &PomBlob) -> Result<Vec<u8>, BlobError> {
     let mut out = Vec::with_capacity(2048);
     out.extend_from_slice(BLOB_MAGIC);
-    ciborium::ser::into_writer(blob, &mut out).map_err(|e| BlobError::Cbor(format!("{}", e)))?;
+    ciborium::ser::into_writer(blob, &mut out).map_err(|e| BlobError::Cbor(format!("{e}")))?;
     Ok(out)
 }
 
@@ -141,7 +141,7 @@ pub fn read_blob(bytes: &[u8]) -> Result<PomBlob, BlobError> {
         });
     }
     let blob: PomBlob =
-        ciborium::de::from_reader(payload).map_err(|e| BlobError::Cbor(format!("{}", e)))?;
+        ciborium::de::from_reader(payload).map_err(|e| BlobError::Cbor(format!("{e}")))?;
     if blob.schema_version != BLOB_SCHEMA_VERSION {
         return Err(BlobError::SchemaVersionMismatch {
             expected: BLOB_SCHEMA_VERSION,

@@ -813,14 +813,14 @@ fn interp(
             // ${a}=${a}. Treat as unresolved.
             return Err(EffectiveError::UnresolvedPlaceholder {
                 placeholder: first_placeholder(&next).unwrap_or_else(|| next.clone()),
-                location: format!("{:?}", loc),
+                location: format!("{loc:?}"),
             });
         }
         current = next;
     }
     Err(EffectiveError::UnresolvedPlaceholder {
         placeholder: first_placeholder(&current).unwrap_or(current),
-        location: format!("{:?}", loc),
+        location: format!("{loc:?}"),
     })
 }
 
@@ -874,7 +874,7 @@ fn pass(
                     None => {
                         return Err(EffectiveError::UnresolvedPlaceholder {
                             placeholder: placeholder.to_string(),
-                            location: format!("{:?}", loc),
+                            location: format!("{loc:?}"),
                         });
                     }
                 }

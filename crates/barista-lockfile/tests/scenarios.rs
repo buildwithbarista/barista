@@ -6,7 +6,8 @@
 //! they ever change unintentionally, the human-readable format has
 //! drifted and the change requires explicit review.
 
-use barista_lockfile::diff::{LockEntry, diff, render};
+use barista_lockfile::diff::{LockEntry, diff, diff_lockfiles, render};
+use barista_lockfile::{Lockfile, LockfileEntry};
 
 fn mk(g: &str, a: &str, v: &str) -> LockEntry {
     LockEntry {
@@ -192,4 +193,117 @@ fn scenario_junit_4_to_5() {
 
     let d = diff(&left, &right);
     insta::assert_snapshot!("junit_4_to_5", render(&d));
+}
+
+// ---------------------------------------------------------------------------
+// Bridge scenarios: same shapes, but built from real `Lockfile` /
+// `LockfileEntry` values. Verifies that `diff_lockfiles` produces
+// rendered output identical to the prototype path.
+// ---------------------------------------------------------------------------
+
+/// Build a minimal real `LockfileEntry`. Sha256/url/size are filler;
+/// the diff bridge intentionally drops them.
+fn lfe(coords: &str, version: &str) -> LockfileEntry {
+    LockfileEntry {
+        coords: coords.to_string(),
+        version: version.to_string(),
+        scope: "compile".to_string(),
+        optional: false,
+        sha256: "0".repeat(64),
+        sha1: None,
+        size_bytes: 0,
+        source_url: "https://example.invalid/".to_string(),
+        etag: None,
+        last_modified: None,
+        classifier: None,
+        type_: "jar".to_string(),
+        from_path: Vec::new(),
+        depth: 0,
+        snapshot_resolution: None,
+        exclusions: Vec::new(),
+    }
+}
+
+fn lockfile_with(entries: Vec<LockfileEntry>) -> Lockfile {
+    let mut lf = Lockfile::new("0".repeat(64), "0".repeat(64));
+    lf.entries = entries;
+    lf
+}
+
+/// Scenario 4 (bridge): the same Spring Boot 3.2.x -> 3.3.x bump as
+/// `scenario_spring_boot_bump`, but built from real `Lockfile` values
+/// and rendered through `diff_lockfiles`. The snapshot intentionally
+/// matches the prototype snapshot byte-for-byte — that's the bridge's
+/// correctness property.
+#[test]
+fn scenario_lockfile_spring_boot_bump() {
+    let old_version = "6.1.4";
+    let new_version = "6.1.6";
+    let springs = [
+        "spring-aop",
+        "spring-beans",
+        "spring-context",
+        "spring-context-support",
+        "spring-core",
+        "spring-expression",
+        "spring-jcl",
+        "spring-jdbc",
+        "spring-messaging",
+        "spring-orm",
+        "spring-oxm",
+        "spring-tx",
+        "spring-web",
+        "spring-webflux",
+        "spring-webmvc",
+    ];
+    let boots = [
+        "spring-boot",
+        "spring-boot-autoconfigure",
+        "spring-boot-starter",
+        "spring-boot-starter-actuator",
+        "spring-boot-starter-json",
+        "spring-boot-starter-logging",
+        "spring-boot-starter-tomcat",
+        "spring-boot-starter-web",
+    ];
+    let micrometer = [
+        "micrometer-commons",
+        "micrometer-core",
+        "micrometer-jakarta9",
+        "micrometer-observation",
+        "micrometer-registry-prometheus",
+    ];
+
+    let mut left: Vec<LockfileEntry> = Vec::new();
+    let mut right: Vec<LockfileEntry> = Vec::new();
+
+    for a in springs {
+        left.push(lfe(&format!("org.springframework:{a}"), old_version));
+        right.push(lfe(&format!("org.springframework:{a}"), new_version));
+    }
+    for a in boots {
+        left.push(lfe(&format!("org.springframework.boot:{a}"), "3.2.5"));
+        right.push(lfe(&format!("org.springframework.boot:{a}"), "3.3.0"));
+    }
+    for a in micrometer {
+        left.push(lfe(&format!("io.micrometer:{a}"), "1.12.5"));
+        right.push(lfe(&format!("io.micrometer:{a}"), "1.13.0"));
+    }
+
+    // Stable, unchanged transitive.
+    left.push(lfe("org.slf4j:slf4j-api", "2.0.13"));
+    right.push(lfe("org.slf4j:slf4j-api", "2.0.13"));
+
+    // New transitive: Tomcat 10.1 bumped to a version that pulls a
+    // new helper jar.
+    right.push(lfe("org.apache.tomcat.embed:tomcat-embed-el", "10.1.24"));
+
+    // Removed transitive: deprecated in 3.3.
+    left.push(lfe("jakarta.annotation:jakarta.annotation-api", "2.1.1"));
+
+    let left_lf = lockfile_with(left);
+    let right_lf = lockfile_with(right);
+
+    let d = diff_lockfiles(&left_lf, &right_lf);
+    insta::assert_snapshot!("lockfile_spring_boot_bump", render(&d));
 }

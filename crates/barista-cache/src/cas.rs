@@ -324,7 +324,7 @@ impl Cas {
             .unwrap_or(0);
         let ctr = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
         let tid = thread_id_u64();
-        let name = format!("{:016x}{:016x}{:016x}", nanos, ctr, tid);
+        let name = format!("{nanos:016x}{ctr:016x}{tid:016x}");
         self.root.join(TMP_DIR).join(name)
     }
 }
@@ -415,7 +415,7 @@ fn decode_hex_nibble(b: u8) -> Result<u8, CasError> {
         b'a'..=b'f' => Ok(b - b'a' + 10),
         b'A'..=b'F' => Ok(b - b'A' + 10),
         other => Err(CasError::HashFormat {
-            detail: format!("non-hex byte 0x{:02x}", other),
+            detail: format!("non-hex byte 0x{other:02x}"),
         }),
     }
 }
@@ -424,7 +424,7 @@ fn decode_hex_nibble(b: u8) -> Result<u8, CasError> {
 /// `ThreadId` only exposes a `Debug` impl, so we render+parse it.
 fn thread_id_u64() -> u64 {
     let id = std::thread::current().id();
-    let dbg = format!("{:?}", id);
+    let dbg = format!("{id:?}");
     let digits: String = dbg.chars().filter(|c| c.is_ascii_digit()).collect();
     digits.parse().unwrap_or(0)
 }

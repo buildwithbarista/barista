@@ -90,7 +90,7 @@ fn alias(q: &str) -> &str {
 /// release index, matching Maven's behaviour where `1ga` sorts the same
 /// as `1` ordinally.
 fn comparable_qualifier(qualifier: &str) -> String {
-    if RELEASE_QUALIFIERS.iter().any(|r| *r == qualifier) {
+    if RELEASE_QUALIFIERS.contains(&qualifier) {
         return RELEASE_INDEX.to_owned();
     }
     if let Some(idx) = QUALIFIERS.iter().position(|q| *q == qualifier) {

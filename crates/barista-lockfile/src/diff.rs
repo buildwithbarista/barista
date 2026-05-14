@@ -15,6 +15,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::schema::{Lockfile, LockfileEntry};
+
 /// A minimal lockfile entry. The real lockfile schema (PRD §7) has
 /// more fields (checksums, resolution path, etc.) — this is the
 /// spike's subset.
@@ -48,6 +50,25 @@ impl LockEntry {
     /// version / classifier / type changes.
     fn ga(&self) -> String {
         format!("{}:{}", self.group_id, self.artifact_id)
+    }
+
+    /// Bridge from the on-disk schema's richer entry to the diff
+    /// renderer's minimal entry. Parses coords ("g:a") into
+    /// `group_id` + `artifact_id`; preserves scope, classifier, and
+    /// type. Size, checksum, and URL fields are intentionally
+    /// dropped — the lockfile's pin-by-hash semantics mean those
+    /// changes implicitly accompany a version bump and would just
+    /// clutter the diff.
+    pub fn from_lockfile_entry(e: &LockfileEntry) -> Self {
+        let (group_id, artifact_id) = parse_coords(&e.coords);
+        Self {
+            group_id,
+            artifact_id,
+            version: e.version.clone(),
+            scope: e.scope.clone(),
+            classifier: e.classifier.clone(),
+            type_: e.type_.clone(),
+        }
     }
 
     /// Render the artifact part the way Maven coordinates usually
@@ -223,6 +244,39 @@ pub fn diff(left: &[LockEntry], right: &[LockEntry]) -> LockDiff {
 
     sort_diff(&mut out);
     out
+}
+
+/// Compute a diff between two on-disk lockfiles.
+///
+/// Coordinates, versions, scopes, classifiers, and types are all
+/// surfaced; size, URL, and checksum changes are not surfaced (the
+/// lockfile's pin-by-hash semantics mean those changes implicitly
+/// accompany a version bump and would just clutter the diff).
+pub fn diff_lockfiles(left: &Lockfile, right: &Lockfile) -> LockDiff {
+    let left_entries: Vec<LockEntry> = left
+        .entries
+        .iter()
+        .map(LockEntry::from_lockfile_entry)
+        .collect();
+    let right_entries: Vec<LockEntry> = right
+        .entries
+        .iter()
+        .map(LockEntry::from_lockfile_entry)
+        .collect();
+    diff(&left_entries, &right_entries)
+}
+
+/// Split a `"group:artifact"` coordinate string into its parts.
+/// Defensive: a malformed coord (no colon) is treated as an
+/// artifact-only entry with empty group. This shouldn't occur on
+/// well-formed lockfiles produced by the resolver, but is preferable
+/// to panicking on a hand-crafted or corrupted input.
+fn parse_coords(coords: &str) -> (String, String) {
+    if let Some((g, a)) = coords.split_once(':') {
+        (g.to_string(), a.to_string())
+    } else {
+        (String::new(), coords.to_string())
+    }
 }
 
 /// Stable, alphabetical sort within each category. Version-change
@@ -584,5 +638,137 @@ mod tests {
         ];
         let d = diff(&v, &v);
         assert!(d.is_empty());
+    }
+
+    // ------- Bridge tests: real Lockfile/LockfileEntry -> LockEntry -------
+
+    use crate::schema::{Lockfile, LockfileEntry};
+
+    /// Build a minimal `LockfileEntry` for bridge tests. Real
+    /// lockfiles include checksum, URL, and size fields; for diff
+    /// tests these are filler.
+    fn lf_entry(coords: &str, version: &str) -> LockfileEntry {
+        LockfileEntry {
+            coords: coords.to_string(),
+            version: version.to_string(),
+            scope: "compile".to_string(),
+            optional: false,
+            sha256: "0".repeat(64),
+            sha1: None,
+            size_bytes: 0,
+            source_url: "https://example.invalid/".to_string(),
+            etag: None,
+            last_modified: None,
+            classifier: None,
+            type_: "jar".to_string(),
+            from_path: Vec::new(),
+            depth: 0,
+            snapshot_resolution: None,
+            exclusions: Vec::new(),
+        }
+    }
+
+    fn lockfile_with(entries: Vec<LockfileEntry>) -> Lockfile {
+        let mut lf = Lockfile::new(
+            "0".repeat(64), // project_signature
+            "0".repeat(64), // settings_fingerprint
+        );
+        lf.entries = entries;
+        lf
+    }
+
+    #[test]
+    fn from_lockfile_entry_parses_group_and_artifact() {
+        let lf_e = lf_entry("org.apache.commons:commons-lang3", "3.14.0");
+        let le = LockEntry::from_lockfile_entry(&lf_e);
+        assert_eq!(le.group_id, "org.apache.commons");
+        assert_eq!(le.artifact_id, "commons-lang3");
+        assert_eq!(le.version, "3.14.0");
+    }
+
+    #[test]
+    fn from_lockfile_entry_handles_malformed_coords_defensively() {
+        let lf_e = lf_entry("just-an-artifact", "1.0.0");
+        let le = LockEntry::from_lockfile_entry(&lf_e);
+        // Malformed coord falls back to empty group + full string
+        // as artifact id. Defensive — well-formed lockfiles never
+        // hit this branch.
+        assert_eq!(le.group_id, "");
+        assert_eq!(le.artifact_id, "just-an-artifact");
+    }
+
+    #[test]
+    fn from_lockfile_entry_preserves_scope() {
+        let mut lf_e = lf_entry("org.junit.jupiter:junit-jupiter", "5.10.2");
+        lf_e.scope = "test".to_string();
+        let le = LockEntry::from_lockfile_entry(&lf_e);
+        assert_eq!(le.scope, "test");
+    }
+
+    #[test]
+    fn from_lockfile_entry_preserves_classifier() {
+        let mut lf_e = lf_entry("io.netty:netty-tcnative-boringssl-static", "2.0.62");
+        lf_e.classifier = Some("linux-x86_64".to_string());
+        let le = LockEntry::from_lockfile_entry(&lf_e);
+        assert_eq!(le.classifier.as_deref(), Some("linux-x86_64"));
+    }
+
+    #[test]
+    fn from_lockfile_entry_preserves_type() {
+        let mut lf_e = lf_entry("com.example:my-bom", "1.0.0");
+        lf_e.type_ = "pom".to_string();
+        let le = LockEntry::from_lockfile_entry(&lf_e);
+        assert_eq!(le.type_, "pom");
+    }
+
+    #[test]
+    fn diff_lockfiles_identical_is_empty() {
+        let lf = lockfile_with(vec![
+            lf_entry("org.springframework:spring-core", "6.1.4"),
+            lf_entry("org.slf4j:slf4j-api", "2.0.16"),
+        ]);
+        let d = diff_lockfiles(&lf, &lf);
+        assert!(d.is_empty(), "expected empty diff, got {d:?}");
+    }
+
+    #[test]
+    fn diff_lockfiles_detects_upgrade() {
+        let left = lockfile_with(vec![lf_entry("org.springframework:spring-core", "6.1.4")]);
+        let right = lockfile_with(vec![lf_entry("org.springframework:spring-core", "6.1.6")]);
+        let d = diff_lockfiles(&left, &right);
+        assert_eq!(d.upgraded.len(), 1);
+        assert_eq!(d.upgraded[0].coords, "org.springframework:spring-core");
+        assert_eq!(d.upgraded[0].from, "6.1.4");
+        assert_eq!(d.upgraded[0].to, "6.1.6");
+        assert_eq!(d.added.len(), 0);
+        assert_eq!(d.removed.len(), 0);
+    }
+
+    #[test]
+    fn diff_lockfiles_detects_added() {
+        let left = lockfile_with(vec![lf_entry("org.slf4j:slf4j-api", "2.0.16")]);
+        let right = lockfile_with(vec![
+            lf_entry("org.slf4j:slf4j-api", "2.0.16"),
+            lf_entry("org.apache.tomcat.embed:tomcat-embed-el", "10.1.24"),
+        ]);
+        let d = diff_lockfiles(&left, &right);
+        assert_eq!(d.added.len(), 1);
+        assert_eq!(d.added[0].group_id, "org.apache.tomcat.embed");
+        assert_eq!(d.added[0].artifact_id, "tomcat-embed-el");
+        assert_eq!(d.removed.len(), 0);
+    }
+
+    #[test]
+    fn diff_lockfiles_detects_removed() {
+        let left = lockfile_with(vec![
+            lf_entry("org.slf4j:slf4j-api", "2.0.16"),
+            lf_entry("jakarta.annotation:jakarta.annotation-api", "2.1.1"),
+        ]);
+        let right = lockfile_with(vec![lf_entry("org.slf4j:slf4j-api", "2.0.16")]);
+        let d = diff_lockfiles(&left, &right);
+        assert_eq!(d.removed.len(), 1);
+        assert_eq!(d.removed[0].group_id, "jakarta.annotation");
+        assert_eq!(d.removed[0].artifact_id, "jakarta.annotation-api");
+        assert_eq!(d.added.len(), 0);
     }
 }

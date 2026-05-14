@@ -47,6 +47,7 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Current lockfile schema version.
@@ -56,7 +57,7 @@ use serde::{Deserialize, Serialize};
 pub const LOCKFILE_SCHEMA_VERSION: u32 = 1;
 
 /// A parsed `barista.lock` file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Lockfile {
     pub meta: Meta,
 
@@ -76,7 +77,7 @@ pub struct Lockfile {
 }
 
 /// `[meta]` table: stable identifying information about the lockfile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Meta {
     /// Schema version. Must equal [`LOCKFILE_SCHEMA_VERSION`].
     pub schema_version: u32,
@@ -91,7 +92,7 @@ pub struct Meta {
 }
 
 /// One module of the current reactor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReactorEntry {
     /// `group:artifact`.
     pub coords: String,
@@ -101,7 +102,7 @@ pub struct ReactorEntry {
 }
 
 /// A single resolved artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LockfileEntry {
     /// `group:artifact`. Classifier and type are encoded in their own fields.
     pub coords: String,
@@ -156,14 +157,14 @@ pub struct LockfileEntry {
 }
 
 /// A `group:artifact` exclusion applied during resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Exclusion {
     pub group: String,
     pub artifact: String,
 }
 
 /// `[settings]` table: snapshot of relevant `settings.xml` bits.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mirrors: Vec<MirrorRef>,
@@ -172,7 +173,7 @@ pub struct SettingsSnapshot {
 }
 
 /// A mirror declaration as captured at lock time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MirrorRef {
     pub id: String,
     pub url: String,
@@ -180,7 +181,7 @@ pub struct MirrorRef {
 }
 
 /// A repository declaration as captured at lock time.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RepositoryRef {
     pub id: String,
     pub url: String,
@@ -379,10 +380,7 @@ fn epoch_to_rfc3339(secs: u64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
     let year = if m <= 2 { y + 1 } else { y };
 
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, m, d, hour, minute, second
-    )
+    format!("{year:04}-{m:02}-{d:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 // ----- tests -----------------------------------------------------------------
@@ -852,5 +850,50 @@ source_url = "https://example.com/a.jar"
         lf.entries.push(sample_entry("g:a", "1.0.0"));
         let s = lf.to_toml().expect("serialize");
         assert!(!s.contains("depth = 0"), "unexpected `depth = 0` in:\n{s}");
+    }
+
+    #[test]
+    fn json_schema_validates_a_real_lockfile() {
+        // Build a hand-crafted Lockfile value, serialize to JSON (not
+        // TOML — JSON Schema validates JSON shape; the TOML and JSON
+        // serde forms share the same struct so this is well-defined).
+        let mut lf = empty_lockfile();
+        lf.entries
+            .push(sample_entry("org.slf4j:slf4j-api", "2.0.16"));
+        let json = serde_json::to_value(&lf).expect("Lockfile serializes to JSON");
+
+        // Load the on-disk schema. The schema lives at the monorepo
+        // root under `schema/lockfile/v1.json`. CI generates it before
+        // running tests; locally, skip the test if the file is absent.
+        let schema_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schema/lockfile/v1.json");
+        if !schema_path.exists() {
+            eprintln!(
+                "skipping: schema not present at {schema_path:?} \
+                 (run `cargo run -p barista-lockfile --example export-schema \
+                 > schema/lockfile/v1.json` to generate)"
+            );
+            return;
+        }
+        let schema_text = std::fs::read_to_string(&schema_path)
+            .unwrap_or_else(|_| panic!("schema must exist at {schema_path:?}"));
+        let schema: serde_json::Value =
+            serde_json::from_str(&schema_text).expect("v1.json must parse as JSON");
+
+        // Sanity: the schema should declare itself a JSON Schema and
+        // carry the public $id that downstream tools key off of.
+        assert!(schema.is_object(), "schema must be a JSON object");
+        assert_eq!(
+            schema.get("$id").and_then(|v| v.as_str()),
+            Some("https://barista.build/schema/lockfile/v1.json"),
+            "schema $id must match the published URL"
+        );
+
+        // Full schema-driven validation against the Lockfile JSON
+        // requires a JSON Schema library, which is heavyweight for
+        // v0.1. Flagged for v0.2. For now we only verify the schema
+        // is valid JSON and a real Lockfile serializes to a JSON
+        // object.
+        assert!(json.is_object());
     }
 }

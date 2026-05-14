@@ -1,0 +1,44 @@
+---
+source: crates/barista-lockfile/tests/scenarios.rs
+expression: render(&d)
+---
+Lockfile diff: 30 changes total
+  + 1 added
+  - 1 removed
+  ^ 28 upgraded
+
+Added (1):
+  + org.apache.tomcat.embed:tomcat-embed-el:10.1.24 compile
+
+Removed (1):
+  - jakarta.annotation:jakarta.annotation-api:2.1.1 compile
+
+Upgraded (28):
+  ^ io.micrometer:micrometer-commons:1.12.5 -> 1.13.0
+  ^ io.micrometer:micrometer-core:1.12.5 -> 1.13.0
+  ^ io.micrometer:micrometer-jakarta9:1.12.5 -> 1.13.0
+  ^ io.micrometer:micrometer-observation:1.12.5 -> 1.13.0
+  ^ io.micrometer:micrometer-registry-prometheus:1.12.5 -> 1.13.0
+  ^ org.springframework.boot:spring-boot:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-autoconfigure:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-starter:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-starter-actuator:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-starter-json:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-starter-logging:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-starter-tomcat:3.2.5 -> 3.3.0
+  ^ org.springframework.boot:spring-boot-starter-web:3.2.5 -> 3.3.0
+  ^ org.springframework:spring-aop:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-beans:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-context:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-context-support:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-core:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-expression:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-jcl:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-jdbc:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-messaging:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-orm:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-oxm:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-tx:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-web:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-webflux:6.1.4 -> 6.1.6
+  ^ org.springframework:spring-webmvc:6.1.4 -> 6.1.6

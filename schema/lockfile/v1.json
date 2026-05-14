@@ -1,7 +1,271 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "Exclusion": {
+      "description": "A `group:artifact` exclusion applied during resolution.",
+      "properties": {
+        "artifact": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group",
+        "artifact"
+      ],
+      "type": "object"
+    },
+    "LockfileEntry": {
+      "description": "A single resolved artifact.",
+      "properties": {
+        "classifier": {
+          "description": "Maven classifier, e.g. `sources`, `linux-x86_64`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "coords": {
+          "description": "`group:artifact`. Classifier and type are encoded in their own fields.",
+          "type": "string"
+        },
+        "depth": {
+          "description": "BFS depth at which this entry was selected. 0 = direct.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "etag": {
+          "description": "HTTP `ETag` from the fetch response, for revalidation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exclusions": {
+          "description": "Exclusions applied while resolving this entry's transitive\ndependencies. Recorded for diff context — they do not affect\nre-fetching.",
+          "items": {
+            "$ref": "#/$defs/Exclusion"
+          },
+          "type": "array"
+        },
+        "from_path": {
+          "description": "The dep-graph path (coords by BFS) that \"won\" this entry under\nnearest-wins. Empty for direct dependencies.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "last_modified": {
+          "description": "HTTP `Last-Modified` from the fetch response, for revalidation.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "optional": {
+          "description": "`true` for optional dependencies. Defaults to `false`.",
+          "type": "boolean"
+        },
+        "scope": {
+          "description": "One of `compile`, `runtime`, `test`, `provided`, `system`.",
+          "type": "string"
+        },
+        "sha1": {
+          "description": "SHA-1 (hex), if the upstream repository served one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sha256": {
+          "description": "SHA-256 (hex) of the artifact bytes.",
+          "type": "string"
+        },
+        "size_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snapshot_resolution": {
+          "description": "For SNAPSHOTs: the timestamped version actually fetched\n(e.g. `1.2.3-20260513.123456-7`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_url": {
+          "description": "Upstream URL the artifact was fetched from.",
+          "type": "string"
+        },
+        "type": {
+          "default": "jar",
+          "description": "Artifact type / packaging. Defaults to `\"jar\"` when absent.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "coords",
+        "version",
+        "scope",
+        "sha256",
+        "size_bytes",
+        "source_url"
+      ],
+      "type": "object"
+    },
+    "Meta": {
+      "description": "`[meta]` table: stable identifying information about the lockfile.",
+      "properties": {
+        "generated_at": {
+          "description": "RFC 3339 timestamp.",
+          "type": "string"
+        },
+        "generated_by": {
+          "description": "Producer string, e.g. `\"barista 0.1.0-alpha.0\"`.",
+          "type": "string"
+        },
+        "project_signature": {
+          "description": "SHA-256 (hex) of canonicalized effective POMs across the reactor.",
+          "type": "string"
+        },
+        "schema_version": {
+          "description": "Schema version. Must equal [`LOCKFILE_SCHEMA_VERSION`].",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settings_fingerprint": {
+          "description": "SHA-256 (hex) of the relevant `settings.xml` bits used during resolution.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "generated_by",
+        "generated_at",
+        "project_signature",
+        "settings_fingerprint"
+      ],
+      "type": "object"
+    },
+    "MirrorRef": {
+      "description": "A mirror declaration as captured at lock time.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "mirror_of": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url",
+        "mirror_of"
+      ],
+      "type": "object"
+    },
+    "ReactorEntry": {
+      "description": "One module of the current reactor.",
+      "properties": {
+        "coords": {
+          "description": "`group:artifact`.",
+          "type": "string"
+        },
+        "relative_path": {
+          "description": "Path to the module's `pom.xml`, relative to the project root.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "coords",
+        "version",
+        "relative_path"
+      ],
+      "type": "object"
+    },
+    "RepositoryRef": {
+      "description": "A repository declaration as captured at lock time.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "url"
+      ],
+      "type": "object"
+    },
+    "SettingsSnapshot": {
+      "description": "`[settings]` table: snapshot of relevant `settings.xml` bits.",
+      "properties": {
+        "mirrors": {
+          "items": {
+            "$ref": "#/$defs/MirrorRef"
+          },
+          "type": "array"
+        },
+        "repositories": {
+          "items": {
+            "$ref": "#/$defs/RepositoryRef"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
   "$id": "https://barista.build/schema/lockfile/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "JSON Schema for the `barista.lock` file format. The lockfile is serialized as TOML on disk; this schema describes the equivalent JSON shape and is suitable for IDE validation and external tooling.",
+  "properties": {
+    "entries": {
+      "description": "Resolved dependency entries, one per artifact.",
+      "items": {
+        "$ref": "#/$defs/LockfileEntry"
+      },
+      "type": "array"
+    },
+    "meta": {
+      "$ref": "#/$defs/Meta"
+    },
+    "reactor": {
+      "description": "Modules of the current reactor (multi-module Maven project).\nSingle-module projects emit a single reactor entry.",
+      "items": {
+        "$ref": "#/$defs/ReactorEntry"
+      },
+      "type": "array"
+    },
+    "settings": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SettingsSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional snapshot of relevant `settings.xml` bits at lock time.\nUsed to detect environment drift between lock and build hosts."
+    }
+  },
+  "required": [
+    "meta"
+  ],
   "title": "barista.lock (v1)",
-  "description": "Placeholder schema. The concrete lockfile schema is finalized in a subsequent release.",
   "type": "object"
 }

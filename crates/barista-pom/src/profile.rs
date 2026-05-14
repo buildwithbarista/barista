@@ -770,7 +770,7 @@ fn apply_dependency_management(pom: &mut RawPom) -> Result<(), ResolveError> {
             }
             let key = DepKey::of(d);
             if let Some(other) = by_key.get(&key) {
-                if other as *const _ != d as *const _ {
+                if !std::ptr::eq(other, d) {
                     if d.version.is_none() {
                         d.version = other.version.clone();
                     }

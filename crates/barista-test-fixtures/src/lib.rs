@@ -56,8 +56,7 @@ struct VersionCorpus {
 
 /// Raw TOML source of the version-comparison corpus, embedded at
 /// compile time so consumers do not need a runtime working directory.
-pub const VERSION_CASES_TOML: &str =
-    include_str!("../data/version-cases.toml");
+pub const VERSION_CASES_TOML: &str = include_str!("../data/version-cases.toml");
 
 /// Parse and return every case in the version-comparison corpus.
 ///
@@ -65,8 +64,8 @@ pub const VERSION_CASES_TOML: &str =
 /// into the crate, so a panic here indicates a corrupted source tree
 /// and is not a runtime failure mode worth recovering from.
 pub fn load_version_cases() -> Vec<VersionCase> {
-    let corpus: VersionCorpus = toml::from_str(VERSION_CASES_TOML)
-        .expect("version-cases.toml is malformed");
+    let corpus: VersionCorpus =
+        toml::from_str(VERSION_CASES_TOML).expect("version-cases.toml is malformed");
     corpus.cases
 }
 
@@ -100,8 +99,7 @@ struct CorpusIndexFile {
 
 /// Raw TOML source of the corpus pointer index, embedded at compile
 /// time so consumers do not need a runtime working directory.
-pub const CORPUS_INDEX_TOML: &str =
-    include_str!("../data/corpus-100.toml");
+pub const CORPUS_INDEX_TOML: &str = include_str!("../data/corpus-100.toml");
 
 /// Load the corpus pointer index.
 ///
@@ -112,8 +110,8 @@ pub const CORPUS_INDEX_TOML: &str =
 /// Panics if the embedded TOML is malformed. The fixture is checked
 /// into the crate, so a panic indicates a corrupted source tree.
 pub fn load_corpus_index() -> Vec<CorpusEntry> {
-    let parsed: CorpusIndexFile = toml::from_str(CORPUS_INDEX_TOML)
-        .expect("corpus-100.toml must be valid TOML");
+    let parsed: CorpusIndexFile =
+        toml::from_str(CORPUS_INDEX_TOML).expect("corpus-100.toml must be valid TOML");
     parsed.entries
 }
 
@@ -156,10 +154,7 @@ mod tests {
     #[test]
     fn corpus_index_entries_are_structurally_valid() {
         for entry in load_corpus_index() {
-            assert!(
-                !entry.id.is_empty(),
-                "corpus entry id must be non-empty"
-            );
+            assert!(!entry.id.is_empty(), "corpus entry id must be non-empty");
             assert!(
                 !entry.description.is_empty(),
                 "corpus entry description must be non-empty (id = {})",
@@ -174,8 +169,7 @@ mod tests {
             // The relative_path is expected to be of the form
             // `test-corpus/<id>/checkout`, so the second segment
             // must match the entry's id.
-            let segments: Vec<&str> =
-                entry.relative_path.split('/').collect();
+            let segments: Vec<&str> = entry.relative_path.split('/').collect();
             assert!(
                 segments.len() >= 2,
                 "relative_path must have at least two segments (id = {}, got {})",
