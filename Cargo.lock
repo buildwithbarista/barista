@@ -274,6 +274,12 @@ version = "0.1.0-alpha.0"
 [[package]]
 name = "barista-telemetry"
 version = "0.1.0-alpha.0"
+dependencies = [
+ "barista-config",
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "barista-test-fixtures"

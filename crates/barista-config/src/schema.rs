@@ -168,10 +168,20 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct TelemetryConfig {
-    /// Telemetry opt-in. Default: false.
+    /// Telemetry opt-in. Default: `false`. The CLI never flips
+    /// this implicitly; it must be set by the user (config file or
+    /// the `BARISTA_TELEMETRY__ENABLED=1` env override).
     pub enabled: bool,
-    /// Endpoint URL. None means no-op transport.
+    /// Endpoint URL the transport posts to. `None` means "no
+    /// transport configured" — even when `enabled = true` the
+    /// no-op `NullSink` is used. The actual HTTP transport lands
+    /// in a later milestone.
     pub endpoint: Option<String>,
+    /// Stable opaque per-install identifier. When `None` (the
+    /// default), no per-install ID is attached to outgoing events.
+    /// Operators who want to correlate events across runs can pin
+    /// a value via `~/.barista/config.toml`.
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -307,6 +317,7 @@ pub struct PartialLoggingConfig {
 pub struct PartialTelemetryConfig {
     pub enabled: Option<bool>,
     pub endpoint: Option<String>,
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -415,6 +426,10 @@ impl PartialConfig {
             if let Some(v) = &t.endpoint {
                 target.telemetry.endpoint = Some(v.clone());
                 touched.push("telemetry.endpoint".into());
+            }
+            if let Some(v) = &t.client_id {
+                target.telemetry.client_id = Some(v.clone());
+                touched.push("telemetry.client-id".into());
             }
         }
         if let Some(c) = &self.compat {

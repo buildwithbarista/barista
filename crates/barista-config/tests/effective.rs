@@ -121,6 +121,10 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
         "telemetry.endpoint".into(),
         format_opt_string(config.telemetry.endpoint.as_deref()),
     ));
+    lines.push((
+        "telemetry.client-id".into(),
+        format_opt_string(config.telemetry.client_id.as_deref()),
+    ));
 
     // ---- compat ----
     lines.push((
@@ -611,7 +615,7 @@ fn all_six_layers() {
     fs::create_dir_all(user_cfg.parent().unwrap()).unwrap();
     fs::write(
         &user_cfg,
-        "[network]\nrequest-timeout-secs = 30\n[telemetry]\nenabled = true\n",
+        "[network]\nrequest-timeout-secs = 30\n[telemetry]\nenabled = true\nclient-id = \"abc-123\"\n",
     )
     .unwrap();
 

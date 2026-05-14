@@ -7,3 +7,11 @@ description = "Opt-in telemetry transport for Barista (off by default)."
 publish = false
 
 [lib]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+barista-config = { path = "../barista-config" }
+serde_json = "1"
+toml = "0.8"
