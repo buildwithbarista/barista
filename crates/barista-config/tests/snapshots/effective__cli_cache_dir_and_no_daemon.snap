@@ -34,6 +34,7 @@ project-extensions                 = <unset>
 telemetry.client-id                = <unset>
 telemetry.enabled                  = false
 telemetry.endpoint                 = <unset>
+telemetry.transport-enabled        = false
 
 === audit ===
 defaults         <-                                          [<all>]

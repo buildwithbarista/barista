@@ -10,8 +10,15 @@ publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Synchronous transport for the v0.1 stub. The blocking flavour
+# avoids forcing a Tokio runtime on telemetry consumers, which are
+# sync in v0.1. `rustls-tls` matches the feature set already in
+# use by `barista-cache` so the workspace builds a single TLS
+# stack. No retries, no streaming, no cookies — just POST.
+# Sonatype-verified at 0.12.x: no malware, policy-compliant.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 
 [dev-dependencies]
 barista-config = { path = "../barista-config" }
-serde_json = "1"
 toml = "0.8"

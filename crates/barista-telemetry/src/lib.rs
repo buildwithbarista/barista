@@ -74,6 +74,13 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod transport;
+
+pub use transport::{
+    HttpSinkInitError, HttpTelemetrySink, HttpTransport, MockHttpCall, MockHttpTransport,
+    ReqwestTransport, TransportError,
+};
+
 // ============================================================
 // Settings
 // ============================================================
@@ -83,17 +90,35 @@ use serde::{Deserialize, Serialize};
 /// Mirrors `barista_config::TelemetryConfig` but is owned by this
 /// crate so consumers can wire transports without depending on
 /// the config crate directly. The default is
-/// `{ enabled: false, endpoint: None, client_id: None }` — i.e.
-/// fully off and unconfigured.
+/// `{ enabled: false, endpoint: None, client_id: None,
+/// transport_enabled: false }` — i.e. fully off and unconfigured.
+///
+/// # Three independent guards
+///
+/// The HTTP transport is gated behind three separate booleans —
+/// **all** of which must be true before a request is sent:
+///
+/// 1. [`enabled`](Self::enabled) — the user has opted in to
+///    telemetry at all.
+/// 2. [`endpoint`](Self::endpoint) is `Some(_)` — a destination
+///    URL exists.
+/// 3. [`transport_enabled`](Self::transport_enabled) — the
+///    transport is allowed to fire. Held off until the privacy
+///    posture has been reviewed and signed off; flipped on in a
+///    later release once the privacy document lands.
+///
+/// All three default to "off" so the network path is unreachable
+/// out of the box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct TelemetrySettings {
     /// Whether telemetry is enabled. Default `false`.
     ///
-    /// **This is the only switch.** The crate has no other way
-    /// to enable emission. There is no environment variable read
-    /// inside this crate; the env-var override happens upstream
-    /// in `barista-config` before settings are constructed.
+    /// **This is the user-facing opt-in.** The crate has no other
+    /// way to enable emission. There is no environment variable
+    /// read inside this crate; the env-var override happens
+    /// upstream in `barista-config` before settings are
+    /// constructed.
     pub enabled: bool,
 
     /// Endpoint URL the transport posts to. `None` means no
@@ -105,6 +130,20 @@ pub struct TelemetrySettings {
     /// per-install ID is attached to outgoing events. This crate
     /// does **not** invent one if absent.
     pub client_id: Option<String>,
+
+    /// Master switch for the HTTP transport. Default `false`.
+    ///
+    /// **This is the post-privacy-review go-live lever.** Even
+    /// when the user has set `enabled = true` and configured an
+    /// `endpoint`, no HTTP request leaves the process until this
+    /// is `true`. The rationale: the wire shape of events, the
+    /// destination, and the privacy contract need to ship and be
+    /// reviewed before the transport is allowed to fire. Once the
+    /// privacy doc lands (M3.3 T5) and the v0.2 release approves
+    /// going live, this defaults to `true` (or the field is
+    /// dropped entirely). Until then, the transport stub is
+    /// implemented but unreachable by default.
+    pub transport_enabled: bool,
 }
 
 impl TelemetrySettings {
@@ -116,6 +155,7 @@ impl TelemetrySettings {
             enabled: false,
             endpoint: None,
             client_id: None,
+            transport_enabled: false,
         }
     }
 }
@@ -352,6 +392,7 @@ mod tests {
             enabled: true,
             endpoint: Some("https://telemetry.example/v1".into()),
             client_id: None,
+            transport_enabled: false,
         };
         let t = Telemetry::from_settings(&s);
         assert!(t.is_active());
@@ -363,6 +404,7 @@ mod tests {
             enabled: true,
             endpoint: Some("https://example.test/ingest".into()),
             client_id: Some("ci-001".into()),
+            transport_enabled: true,
         };
         let serialized = toml::to_string(&s).unwrap();
         let back: TelemetrySettings = toml::from_str(&serialized).unwrap();

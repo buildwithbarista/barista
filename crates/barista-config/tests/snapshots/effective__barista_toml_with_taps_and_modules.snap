@@ -38,6 +38,7 @@ project-extensions.taps                                = ["acme", "internal"]
 telemetry.client-id                                    = <unset>
 telemetry.enabled                                      = false
 telemetry.endpoint                                     = <unset>
+telemetry.transport-enabled                            = false
 
 === audit ===
 defaults         <-                                          [<all>]
