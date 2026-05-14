@@ -10,12 +10,24 @@
 //! the resolver / fetcher wiring (which lands in a later milestone).
 //! If no lockfile is present, we surface a friendly error pointing
 //! the user at `barista pull --no-fetch`.
+//!
+//! # Output
+//!
+//! The two flag-driven shapes — `--format text` and `--format json` —
+//! still exist (M3.1 contract), but the bytes they emit are produced
+//! by the M3.2 T1 renderer pipeline. The legacy [`tree::render_text`]
+//! / [`tree::render_json`] helpers are preserved as thin wrappers over
+//! the shared renderer so existing snapshot tests don't have to
+//! retarget. The global `--output {human,json,ndjson}` flag, when
+//! set, takes precedence over `--format`: it routes the same
+//! [`GrindTreeReport`] through the chosen renderer.
 
 use std::path::PathBuf;
 
-use barista_lockfile::{Lockfile, LockfileEntry};
+use barista_lockfile::Lockfile;
 
-use crate::cli::{GlobalFlags, GrindCommand, TreeArgs, TreeFormat};
+use crate::cli::{GlobalFlags, GrindCommand, OutputFormat, TreeArgs, TreeFormat};
+use crate::output::{Renderer, make_runtime_renderer};
 use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
 
 /// Dispatch a `barista grind <sub>` invocation. Returns the process
@@ -62,6 +74,10 @@ pub enum TreeError {
     /// JSON serialization failed.
     #[error("serialization: {0}")]
     Serialize(#[from] serde_json::Error),
+
+    /// Failed to render the report through the chosen output format.
+    #[error("output: {0}")]
+    Render(#[from] crate::output::RenderError),
 }
 
 pub mod tree {
@@ -69,19 +85,35 @@ pub mod tree {
     //! on-disk `barista.lock`.
 
     use super::*;
+    use crate::output::human::{render_tree_text, report_from_lockfile};
+    use crate::output::report::GrindTreeReport;
 
     /// Entry point. Returns the process exit code.
     pub fn run(global: &GlobalFlags, args: &TreeArgs) -> i32 {
-        match run_inner(global, args) {
+        let mut renderer = make_runtime_renderer(global);
+        let exit = match run_inner(global, args, &mut *renderer) {
             Ok(()) => 0,
             Err(e) => {
-                eprintln!("error: barista grind tree failed: {e}");
+                if matches!(global.output, OutputFormat::Human) {
+                    eprintln!("error: barista grind tree failed: {e}");
+                } else if let Err(re) = renderer.render_error(&e) {
+                    eprintln!("error: rendering error report failed: {re}");
+                }
                 1
             }
+        };
+        if let Err(e) = renderer.finish() {
+            eprintln!("error: flushing output failed: {e}");
+            return 1;
         }
+        exit
     }
 
-    fn run_inner(global: &GlobalFlags, args: &TreeArgs) -> Result<(), TreeError> {
+    fn run_inner(
+        global: &GlobalFlags,
+        args: &TreeArgs,
+        renderer: &mut dyn Renderer,
+    ) -> Result<(), TreeError> {
         let root = resolve_project_root(ResolveInputs {
             root: global.root.clone(),
             file: global.file.clone(),
@@ -97,210 +129,116 @@ pub mod tree {
             });
         }
         let lf = Lockfile::read(&lock_path)?;
-        let rendered = match args.format {
-            TreeFormat::Text => render_text(&lf),
-            TreeFormat::Json => render_json(&lf)?,
-        };
-        print!("{rendered}");
+        let report = report_from_lockfile(&lf);
+
+        // Compatibility: for Human output, honour the per-command
+        // `--format json` (M3.1) by routing through the JSON renderer
+        // even when the global default is Human.
+        match (global.output, args.format) {
+            (OutputFormat::Human, TreeFormat::Json) => {
+                // Build an ad-hoc JSON renderer over stdout — pretty,
+                // matching M3.1 byte-for-byte. Done inline rather
+                // than swapping the caller's renderer so the global
+                // `--output` path stays predictable.
+                let mut json = crate::output::JsonRenderer::new(
+                    Box::new(std::io::stdout()),
+                    /* pretty: */ true,
+                );
+                json.render_grind_tree(&report)?;
+            }
+            _ => {
+                renderer.render_grind_tree(&report)?;
+            }
+        }
         Ok(())
     }
 
-    // ---- text renderer ------------------------------------------------
-
     /// Render the lockfile as an indented ASCII tree.
     ///
-    /// Each reactor entry is a root. Direct dependencies (entries
-    /// with an empty `from_path`) are listed under a synthetic
-    /// `(direct dependencies)` heading when no reactor is present, or
-    /// under each reactor entry when one or more exist (the lockfile
-    /// schema does not currently associate direct deps with a
-    /// specific reactor module, so we list them once under the first
-    /// reactor entry).
-    ///
-    /// Transitive entries are placed under their `from_path` parent.
-    /// If a parent cannot be located in the lockfile (which can
-    /// happen with hand-crafted lockfiles or future schema changes),
-    /// the entry is rendered at the top level under an `(orphan)`
-    /// heading so it stays visible.
-    ///
-    /// Output ends in a single trailing newline.
+    /// Preserved for callers that want the rendering without going
+    /// through a [`Renderer`]. Identical to the byte output the
+    /// pre-renderer implementation produced.
     pub fn render_text(lf: &Lockfile) -> String {
-        let mut out = String::new();
-
-        // Index entries by their full path = from_path + [coords].
-        // This is what a *child* entry references as its parent path.
-        // We use the BFS-flavored key directly: a child whose
-        // from_path equals an entry's full path is that entry's
-        // dependency.
-
-        // Group children by parent's full-path key. Direct deps key
-        // off the empty path.
-        let mut children: std::collections::BTreeMap<Vec<String>, Vec<usize>> =
-            std::collections::BTreeMap::new();
-        for (i, e) in lf.entries.iter().enumerate() {
-            children.entry(e.from_path.clone()).or_default().push(i);
-        }
-
-        if lf.reactor.is_empty() {
-            // No reactor: render direct deps at the top, then
-            // recurse on transitives.
-            out.push_str("(no reactor)\n");
-            render_children(lf, &children, &[], "", &mut out);
-        } else {
-            for (i, r) in lf.reactor.iter().enumerate() {
-                let last = i + 1 == lf.reactor.len();
-                let coords_v = format!("{}:{}", r.coords, r.version);
-                out.push_str(&coords_v);
-                out.push('\n');
-                // Attach direct deps (empty from_path) under the
-                // first reactor entry only — see doc comment.
-                if i == 0 {
-                    render_children(lf, &children, &[], "", &mut out);
-                }
-                if !last {
-                    out.push('\n');
-                }
-            }
-        }
-
-        // Surface orphan transitive entries (entries whose from_path
-        // does not match any entry's full path) so users notice them.
-        let known_paths: std::collections::BTreeSet<Vec<String>> = std::iter::once(Vec::new())
-            .chain(lf.entries.iter().map(entry_full_path))
-            .collect();
-        let mut orphans: Vec<usize> = Vec::new();
-        for (i, e) in lf.entries.iter().enumerate() {
-            if !e.from_path.is_empty() && !known_paths.contains(&e.from_path) {
-                orphans.push(i);
-            }
-        }
-        if !orphans.is_empty() {
-            out.push_str("\n(orphan transitives)\n");
-            for (k, &idx) in orphans.iter().enumerate() {
-                let last = k + 1 == orphans.len();
-                let prefix = if last { "└── " } else { "├── " };
-                out.push_str(prefix);
-                out.push_str(&format_entry_line(&lf.entries[idx]));
-                out.push('\n');
-            }
-        }
-
-        out
+        render_tree_text(&report_from_lockfile(lf))
     }
 
-    /// The full BFS path of an entry, used as the key its own
-    /// children reference in `from_path`.
-    fn entry_full_path(e: &LockfileEntry) -> Vec<String> {
-        let mut v = e.from_path.clone();
-        v.push(e.coords.clone());
-        v
-    }
-
-    /// One line of the tree: `group:artifact:version  [scope]`.
-    fn format_entry_line(e: &LockfileEntry) -> String {
-        format!("{}:{}  [{}]", e.coords, e.version, e.scope)
-    }
-
-    /// Render the children of a node whose full path is `parent_path`.
+    /// Render the lockfile as a pretty-printed JSON document.
     ///
-    /// `indent` is the prefix already emitted on previous lines for
-    /// parent indentation (e.g. `"│   "`). It is extended per child
-    /// with the connector glyphs.
-    fn render_children(
-        lf: &Lockfile,
-        children: &std::collections::BTreeMap<Vec<String>, Vec<usize>>,
-        parent_path: &[String],
-        indent: &str,
-        out: &mut String,
-    ) {
-        let Some(kids) = children.get(parent_path) else {
-            return;
-        };
-        for (i, &idx) in kids.iter().enumerate() {
-            let last = i + 1 == kids.len();
-            let connector = if last { "└── " } else { "├── " };
-            out.push_str(indent);
-            out.push_str(connector);
-            out.push_str(&format_entry_line(&lf.entries[idx]));
-            out.push('\n');
-
-            let child_indent = if last { "    " } else { "│   " };
-            let mut next_indent = String::with_capacity(indent.len() + child_indent.len());
-            next_indent.push_str(indent);
-            next_indent.push_str(child_indent);
-
-            let mut child_path = parent_path.to_vec();
-            child_path.push(lf.entries[idx].coords.clone());
-            render_children(lf, children, &child_path, &next_indent, out);
-        }
-    }
-
-    // ---- json renderer ------------------------------------------------
-
-    /// Render the lockfile as a flat JSON document. The shape is
-    /// stable across the v0.1 schema and carries a `schema_version`
-    /// so downstream consumers can detect breaking changes.
+    /// Preserves the M3.1 `grind tree --format json` shape
+    /// (`schema_version`, `reactor[]`, `nodes[]`) — *without* the
+    /// `"command"` discriminator that the new global `--output json`
+    /// renderer prepends. This stays the per-command machine-readable
+    /// view, separate from the global structured-output pipeline.
+    /// Ends in a trailing newline.
     pub fn render_json(lf: &Lockfile) -> Result<String, TreeError> {
-        let doc = TreeJson::from_lockfile(lf);
-        let mut s = serde_json::to_string_pretty(&doc)?;
+        let r = report_from_lockfile(lf);
+        let legacy = LegacyTreeJson {
+            schema_version: r.schema_version,
+            reactor: r.reactor.iter().map(LegacyReactor::from).collect(),
+            nodes: r.nodes.iter().map(LegacyNode::from).collect(),
+        };
+        let mut s = serde_json::to_string_pretty(&legacy)?;
         s.push('\n');
         Ok(s)
     }
 
-    /// JSON shape emitted by `grind tree --format json`.
+    /// Legacy JSON shape for `grind tree --format json`.
+    ///
+    /// Distinct from the renderer's [`GrindTreeReport`] for two
+    /// reasons: this one has no `"command"` discriminator (that's a
+    /// global-renderer property), and it uses snake-case keys
+    /// (`from_path`, `relative_path`, `schema_version`) because
+    /// `--format json` predates the global structured-output
+    /// pipeline and is locked to its existing shape.
     #[derive(serde::Serialize)]
-    pub struct TreeJson {
-        /// Stable shape version. Bumped on breaking changes.
-        pub schema_version: u32,
-        /// Reactor modules, in lockfile order.
-        pub reactor: Vec<ReactorJson>,
-        /// Resolved entries, in lockfile order.
-        pub nodes: Vec<TreeNode>,
+    struct LegacyTreeJson {
+        schema_version: u32,
+        reactor: Vec<LegacyReactor>,
+        nodes: Vec<LegacyNode>,
     }
 
-    /// JSON representation of one reactor module.
     #[derive(serde::Serialize)]
-    pub struct ReactorJson {
-        pub coords: String,
-        pub version: String,
-        pub relative_path: String,
+    struct LegacyReactor {
+        coords: String,
+        version: String,
+        relative_path: String,
     }
 
-    /// JSON representation of one resolved entry.
     #[derive(serde::Serialize)]
-    pub struct TreeNode {
-        pub coords: String,
-        pub version: String,
-        pub scope: String,
-        pub depth: u32,
-        pub from_path: Vec<String>,
+    struct LegacyNode {
+        coords: String,
+        version: String,
+        scope: String,
+        depth: u32,
+        from_path: Vec<String>,
     }
 
-    impl TreeJson {
-        fn from_lockfile(lf: &Lockfile) -> Self {
+    impl From<&crate::output::report::ReactorModule> for LegacyReactor {
+        fn from(r: &crate::output::report::ReactorModule) -> Self {
             Self {
-                schema_version: 1,
-                reactor: lf
-                    .reactor
-                    .iter()
-                    .map(|r| ReactorJson {
-                        coords: r.coords.clone(),
-                        version: r.version.clone(),
-                        relative_path: r.relative_path.clone(),
-                    })
-                    .collect(),
-                nodes: lf
-                    .entries
-                    .iter()
-                    .map(|e| TreeNode {
-                        coords: e.coords.clone(),
-                        version: e.version.clone(),
-                        scope: e.scope.clone(),
-                        depth: e.depth,
-                        from_path: e.from_path.clone(),
-                    })
-                    .collect(),
+                coords: r.coords.clone(),
+                version: r.version.clone(),
+                relative_path: r.relative_path.clone(),
             }
         }
+    }
+
+    impl From<&crate::output::report::TreeNode> for LegacyNode {
+        fn from(n: &crate::output::report::TreeNode) -> Self {
+            Self {
+                coords: n.coords.clone(),
+                version: n.version.clone(),
+                scope: n.scope.clone(),
+                depth: n.depth,
+                from_path: n.from_path.clone(),
+            }
+        }
+    }
+
+    /// Build the structured [`GrindTreeReport`] from a lockfile.
+    /// Exposed so callers writing their own renderers don't have to
+    /// reach into [`crate::output::human`].
+    pub fn build_report(lf: &Lockfile) -> GrindTreeReport {
+        report_from_lockfile(lf)
     }
 }

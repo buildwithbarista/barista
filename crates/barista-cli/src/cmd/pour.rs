@@ -28,6 +28,15 @@
 //! locked coordinate is missing, [`PourError::NotInCache`] surfaces
 //! every missing coord and points the user at `barista pull` to
 //! populate the cache.
+//!
+//! # Output
+//!
+//! Like the other v0.1 commands, `pour` builds a structured
+//! [`PourReport`] (defined in [`crate::output::report`]) and
+//! dispatches it through the renderer chosen by `--output`. The
+//! human renderer prints the same `pour: <summary>` line to stderr
+//! the pre-renderer code did; JSON / NDJSON emit the report as a
+//! document or event respectively.
 
 use std::path::{Path, PathBuf};
 
@@ -37,8 +46,13 @@ use barista_config::{Config, LoadAudit, LoaderError, LoaderInputs, load_effectiv
 use barista_coords::Coords;
 use barista_lockfile::{Lockfile, LockfileEntry, LockfileError};
 
-use crate::cli::{GlobalFlags, PourArgs, ScopeArg};
+use crate::cli::{GlobalFlags, OutputFormat, PourArgs, ScopeArg};
+use crate::output::make_runtime_renderer;
 use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
+
+// Re-export so existing call sites (and integration tests) keep
+// importing `barista_cli::cmd::pour::PourReport`.
+pub use crate::output::report::PourReport;
 
 /// Run `barista pour`.
 ///
@@ -49,22 +63,32 @@ use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
 /// - `2` on user/precondition errors: no lockfile, artifacts missing
 ///   from the cache, malformed coords in the lockfile.
 pub fn run(global: &GlobalFlags, args: &PourArgs) -> i32 {
-    match run_inner(global, args) {
+    let mut renderer = make_runtime_renderer(global);
+    let exit = match run_inner(global, args) {
         Ok(report) => {
             if !global.quiet {
-                eprintln!("pour: {}", report.summary());
+                if let Err(e) = renderer.render_pour(&report) {
+                    eprintln!("error: rendering pour report failed: {e}");
+                    return 1;
+                }
             }
             0
         }
-        Err(e) if e.is_precondition() => {
-            eprintln!("error: barista pour failed: {e}");
-            2
-        }
         Err(e) => {
-            eprintln!("error: barista pour failed: {e}");
-            1
+            let code = if e.is_precondition() { 2 } else { 1 };
+            if matches!(global.output, OutputFormat::Human) {
+                eprintln!("error: barista pour failed: {e}");
+            } else if let Err(re) = renderer.render_error(&e) {
+                eprintln!("error: rendering error report failed: {re}");
+            }
+            code
         }
+    };
+    if let Err(e) = renderer.finish() {
+        eprintln!("error: flushing output failed: {e}");
+        return 1;
     }
+    exit
 }
 
 /// Library-friendly entry point used by [`run`] and integration
@@ -238,45 +262,6 @@ fn format_coord(e: &LockfileEntry) -> String {
 /// a [`Coords`]. Wraps the error for clean propagation.
 fn parse_coords(s: &str) -> Result<Coords, String> {
     s.parse::<Coords>().map_err(|e| e.to_string())
-}
-
-/// Result of a successful `barista pour` run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PourReport {
-    /// The directory artifacts were (or would be) materialized into.
-    pub target: PathBuf,
-    /// The scope filter that was applied, e.g. `"compile"`.
-    pub scope: String,
-    /// Total entries in the lockfile (before filtering).
-    pub considered: usize,
-    /// Entries selected after scope filtering.
-    pub planned: usize,
-    /// Entries actually materialized. `0` for `--dry-run`.
-    pub materialized: usize,
-    /// `true` when this was a `--dry-run`.
-    pub dry_run: bool,
-    /// Destination paths. For real runs, these are the paths
-    /// actually written. For dry-runs, the paths that *would* be
-    /// written. Same length as [`Self::planned`].
-    pub planned_paths: Vec<PathBuf>,
-}
-
-impl PourReport {
-    /// Render a single human-readable summary line.
-    pub fn summary(&self) -> String {
-        let mode = if self.dry_run { "dry-run: " } else { "" };
-        format!(
-            "{mode}{} of {} entries (scope={}) → {}",
-            if self.dry_run {
-                self.planned
-            } else {
-                self.materialized
-            },
-            self.considered,
-            self.scope,
-            self.target.display(),
-        )
-    }
 }
 
 /// Errors surfaced from `barista pour`.

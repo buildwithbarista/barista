@@ -1,0 +1,8 @@
+---
+source: crates/barista-cli/tests/output_renderer.rs
+assertion_line: 461
+expression: stdout.as_string()
+---
+com.example:app:1.0.0
+├── org.apache.commons:commons-lang3:3.14.0  [compile]
+└── org.slf4j:slf4j-api:2.0.16  [compile]

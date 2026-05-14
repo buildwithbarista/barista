@@ -1,0 +1,6 @@
+---
+source: crates/barista-cli/tests/output_renderer.rs
+assertion_line: 448
+expression: stdout.as_string()
+---
+{"event":"result","data":{"command":"pour","target":"/m2","scope":"compile","considered":3,"planned":2,"materialized":2,"dry-run":false,"planned-paths":["/m2/g/a/1.0/a-1.0.jar","/m2/g/b/1.0/b-1.0.jar"]}}
