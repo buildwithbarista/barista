@@ -154,6 +154,28 @@ fn dial_in_non_interactive() {
 }
 
 #[test]
+fn dial_in_output_path_and_force() {
+    let cli = parse(&[
+        "barista",
+        "dial-in",
+        "--output-path",
+        "/tmp/cfg.toml",
+        "--force",
+    ]);
+    match cli.command {
+        Command::DialIn(args) => {
+            assert_eq!(
+                args.output_path.as_deref(),
+                Some(std::path::Path::new("/tmp/cfg.toml"))
+            );
+            assert!(args.force);
+            assert!(!args.non_interactive);
+        }
+        _ => panic!("expected DialIn"),
+    }
+}
+
+#[test]
 fn shot_passes_through_args() {
     let cli = parse(&["barista", "shot", "mvn", "-v"]);
     match cli.command {

@@ -284,10 +284,23 @@ pub struct PourArgs {
 /// Arguments for `barista dial-in`.
 #[derive(Debug, clap::Args)]
 pub struct DialInArgs {
-    /// Run non-interactively (read answers from stdin or use
-    /// defaults).
+    /// Run non-interactively (use defaults for every answer).
     #[arg(long)]
     pub non_interactive: bool,
+
+    /// Override the output path. Defaults to
+    /// `~/.barista/config.toml`.
+    ///
+    /// Named `output-path` rather than `output` to avoid colliding
+    /// with the global `--output <FORMAT>` flag, which is for
+    /// renderer selection (human/json/ndjson).
+    #[arg(long = "output-path", value_name = "PATH")]
+    pub output_path: Option<PathBuf>,
+
+    /// Overwrite an existing config file. Without this, dial-in
+    /// refuses to clobber a pre-existing file.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Arguments for `barista shot`.
@@ -342,7 +355,7 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Pull(args) => crate::cmd::pull::run(&global, &args),
         Command::Grind { subcommand } => crate::cmd::grind::run(&global, &subcommand),
         Command::Pour(_) => stub("pour"),
-        Command::DialIn(_) => stub("dial-in"),
+        Command::DialIn(args) => crate::cmd::dial_in::run(&global, &args),
         Command::Shot(_) => stub("shot"),
         Command::Wrapper(_) => stub("wrapper"),
         Command::Clean(a) => {
