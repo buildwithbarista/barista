@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/output/v1/grind-tree.json",
+  "title": "barista grind tree — structured output",
+  "description": "Top-level document emitted by `barista grind tree --format json`. Encodes the resolved dependency tree rooted at the project's pom. Coordinate strings use Maven `group:artifact:version` notation (`gA:gV:gC`); classifier/type when present are appended per Maven convention.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "root-coord",
+    "nodes"
+  ],
+  "properties": {
+    "command": {
+      "const": "grind-tree",
+      "description": "Discriminator. Always the literal string `grind-tree` for documents produced by `barista grind tree`."
+    },
+    "root-coord": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^: ]+:[^: ]+:[^: ]+(:[^: ]*){0,2}$",
+      "description": "Coordinate of the root node — the project being resolved — in `group:artifact:version` form (optionally followed by `:classifier` and `:type`)."
+    },
+    "nodes": {
+      "type": "array",
+      "description": "Flat list of nodes in the resolved tree. Order is unspecified; consumers should index by `coord` and walk via the `children` arrays starting from `root-coord`.",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "coord",
+        "scope",
+        "depth",
+        "children"
+      ],
+      "properties": {
+        "coord": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Coordinate of this node in `group:artifact:version` form."
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Maven scope of this dependency relative to its parent (e.g. `compile`, `runtime`, `test`, `provided`, `import`)."
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Depth in the dependency tree from `root-coord` (the root itself is depth 0)."
+        },
+        "children": {
+          "type": "array",
+          "description": "Coordinates of direct children of this node, in resolution order.",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

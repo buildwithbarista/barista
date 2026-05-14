@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/output/v1/progress-event.json",
+  "title": "barista NDJSON progress event",
+  "description": "Schema for a single line of `barista … --output ndjson`. Each line of the stream is a self-contained JSON object validating against this schema. The `event` field discriminates the variant; per-variant required fields are enforced via `if`/`then` branches in `allOf`. The terminal `result` event embeds the full structured document (per `pull.json` / `grind-tree.json` / future schemas) in `payload`, so NDJSON consumers can recover the same data as `--output json` by keeping the final `result` line.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event",
+    "timestamp"
+  ],
+  "properties": {
+    "event": {
+      "type": "string",
+      "enum": [
+        "started",
+        "resolving",
+        "fetching",
+        "fetched",
+        "cached",
+        "writing-lockfile",
+        "completed",
+        "error",
+        "result"
+      ],
+      "description": "Discriminator. `started`/`completed` bookend a run; `resolving`, `fetching`, `fetched`, `cached`, `writing-lockfile` mark in-flight phases; `error` signals a failure; `result` is the terminal envelope carrying the full structured document in `payload`."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}(Z|[+-]\\d{2}:\\d{2})$",
+      "description": "RFC 3339 timestamp with millisecond precision (e.g. `2026-05-14T12:34:56.789Z`)."
+    },
+    "coord": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Maven coordinate the event refers to, in `group:artifact:version` form. Required for `fetching`, `fetched`, and `cached`; absent for run-level events."
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "resolve",
+        "fetch",
+        "lock-write",
+        "pour"
+      ],
+      "description": "Coarse-grained phase tag (`resolve`, `fetch`, `lock-write`, `pour`). Optional; useful for UIs that group events by phase."
+    },
+    "progress": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Optional progress percentage in `[0, 100]`. Typically attached to `fetching` for byte-level progress, or to `resolving` for resolved-node count."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Free-form per-event payload. For `result` events this MUST be the full structured document (pull/grind-tree/pour/...); for `error` events it carries diagnostic detail; for other events it is reserved for variant-specific extensions."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "fetching"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "coord"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "fetched"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "coord"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "cached"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "coord"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "result"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "payload"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "event"
+        ]
+      },
+      "then": {
+        "required": [
+          "payload"
+        ]
+      }
+    }
+  ]
+}
