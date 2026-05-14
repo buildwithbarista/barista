@@ -1,0 +1,186 @@
+# Workflow-file linting.
+#
+# Two complementary static analyzers cover the workflow files in this
+# directory:
+#
+#   zizmor      — GitHub-Actions security analyzer. Catches dangerous
+#                 patterns the action ecosystem keeps re-discovering:
+#                 `pull_request_target` + untrusted-PR checkout,
+#                 expression injection via `${{ github.event.* }}`,
+#                 unscoped `GITHUB_TOKEN` permissions, broken `if:`
+#                 short-circuiting, and so on.
+#   actionlint  — workflow syntax + shell-script linter. Different rule
+#                 set from zizmor (no security focus); the two
+#                 complement each other.
+#
+# Both binaries see every `.yml`/`.yaml` file in `.github/workflows/`.
+# The synthetic-fixture job (see below) proves zizmor's gate is wired
+# correctly: it scans an intentionally-vulnerable workflow file under
+# `tests/fixtures/workflow-lint/` and fails if zizmor doesn't flag it.
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers
+# can audit drift without external tools. When bumping, update both
+# the SHA and the comment.
+
+name: Workflow lint
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # zizmor — security-focused workflow analyzer. The official
+  # `zizmorcore/zizmor-action` wrapper pins the zizmor binary by version
+  # string and emits SARIF for the Security tab.
+  #
+  # Local reproduction (zizmor on PATH):
+  #   zizmor .github/workflows/
+  # ---------------------------------------------------------------------------
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run zizmor (production workflows)
+        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e # v0.5.3
+        with:
+          # Restrict the scan to actual workflow files. The synthetic
+          # fixture under `tests/fixtures/workflow-lint/` is scanned
+          # separately by the `zizmor-fixture` job below.
+          inputs: .github/workflows/
+          # Pin the zizmor binary version. `latest` is the action's
+          # default but would let the analyzer's behavior drift between
+          # PRs; pinning here makes the lint deterministic.
+          version: "1.24.1"
+          # `advanced-security: true` makes the action emit SARIF and
+          # upload it to GitHub code scanning under `category: zizmor`.
+          advanced-security: true
+          # Fail the job at Medium severity and above. Informational
+          # / Low findings are uploaded to the Security tab for triage
+          # but do not block merges — the noise floor on those is
+          # high enough that they're better reviewed asynchronously.
+          # Synthetic-failure coverage for the canonical pwn-request
+          # pattern lives in the `zizmor-fixture` job below; that job
+          # uses `--persona auditor` (broadest rule set) so it catches
+          # the pattern regardless of this severity floor.
+          min-severity: medium
+
+  # ---------------------------------------------------------------------------
+  # zizmor — synthetic-failure round-trip.
+  #
+  # Asserts that zizmor catches an intentionally-vulnerable workflow
+  # file at `tests/fixtures/workflow-lint/insecure_pull_request_target.yml`.
+  # The fixture combines `pull_request_target` (which runs in the
+  # base-repo context with read-write secrets) with a checkout of the
+  # PR head ref — the canonical "pwn request" anti-pattern that zizmor
+  # exists to catch.
+  #
+  # The fixture lives OUTSIDE `.github/workflows/` so GitHub doesn't
+  # actually schedule it. If this job ever passes without finding
+  # anything, the upstream `template-injection` / `dangerous-triggers`
+  # rules have regressed and we need to know.
+  # ---------------------------------------------------------------------------
+  zizmor-fixture:
+    name: zizmor synthetic-failure round-trip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Install zizmor
+        # zizmor ships platform wheels on PyPI that bundle the Rust
+        # binary; `pip install` puts `zizmor` on PATH. Pinning the
+        # version locks the analyzer's behavior to match the
+        # `zizmor-action` invocation in the primary job above.
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user "zizmor==1.24.1"
+          # Surface the binary location so failures are easier to debug.
+          USER_BASE="$(python3 -m site --user-base)"
+          echo "user-base: $USER_BASE"
+          export PATH="$USER_BASE/bin:$PATH"
+          echo "$USER_BASE/bin" >> "$GITHUB_PATH"
+          zizmor --version
+      - name: Run zizmor against the fixture (expect non-zero exit + findings)
+        run: |
+          set -euo pipefail
+          FIXTURE="tests/fixtures/workflow-lint/insecure_pull_request_target.yml"
+          OUT="zizmor-fixture.json"
+
+          # `--format json` emits a stable schema with one object per
+          # finding; we count results to assert at least one fired.
+          # `--offline` (a.k.a. no-online-audits) keeps the round-trip
+          # offline so the job doesn't depend on external services and
+          # stays fast.
+          # `--persona auditor` widens the rule set to the broadest
+          # zizmor persona so the canonical pwn-request pattern is
+          # caught regardless of confidence-tier defaults.
+          # Capture the exit code without tripping `set -e`.
+          set +e
+          zizmor \
+            --format json \
+            --offline \
+            --persona auditor \
+            "$FIXTURE" > "$OUT"
+          rc=$?
+          set -e
+          echo "zizmor exit code: $rc"
+
+          findings=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d) if isinstance(d, list) else len(d.get('findings', [])))" "$OUT")
+          echo "zizmor findings: $findings"
+
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::zizmor exited 0 on the synthetic insecure fixture; the round-trip is broken."
+            exit 1
+          fi
+          if [ "$findings" -lt 1 ]; then
+            echo "::error::zizmor reported $findings finding(s) on the synthetic insecure fixture; expected at least 1."
+            cat "$OUT"
+            exit 1
+          fi
+          echo "zizmor caught the synthetic pull_request_target + head-ref checkout anti-pattern."
+
+  # ---------------------------------------------------------------------------
+  # actionlint — workflow syntax + shell-script linter. Complements
+  # zizmor: actionlint targets correctness (typos in expressions, bad
+  # `runs-on` strings, shellcheck on inline `run:` blocks), zizmor
+  # targets security.
+  #
+  # Local reproduction (actionlint on PATH):
+  #   actionlint .github/workflows/*.yml
+  # ---------------------------------------------------------------------------
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run actionlint
+        uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
+        with:
+          files: '.github/workflows/*.yml'
