@@ -1,18 +1,33 @@
 //! NDJSON renderer — newline-delimited JSON, one event per line.
 //!
-//! M3.2 T1 establishes the writer plumbing: every `render_*` call
+//! M3.2 T1 established the writer plumbing: every `render_*` call
 //! produces exactly one compact `{"event":"result", …}` line followed
 //! by `\n`, and `render_error` produces one `{"event":"error", …}`
-//! line. Streaming progress events (`{"event":"fetching", …}`, etc.)
-//! land in T3 — this renderer is the substrate they'll plug into.
+//! line. M3.2 T3 adds the streaming progress-event API
+//! (`emit_started`, `emit_fetching`, `emit_cached`, …) — one method
+//! per `event` variant in `schema/output/v1/progress-event.json`.
+//! Each emit produces exactly one valid NDJSON line and conforms to
+//! the schema; per-variant required fields (`coord` on
+//! `fetching`/`fetched`/`cached`) are enforced by the method signatures.
 //!
 //! Every line carries an RFC 3339 millisecond-precision `timestamp`
-//! and a `payload` object, matching `schema/output/v1/progress-event.json`.
+//! and (for `result`/`error`) a `payload` object, matching
+//! `schema/output/v1/progress-event.json`.
 //!
 //! Why a separate format from JSON? NDJSON consumers stream-parse:
 //! they read until a `\n`, parse one event, repeat. They don't want
 //! a single pretty-printed document. The two formats share the
 //! same report types but emit different envelopes.
+//!
+//! # Hot-loop discipline
+//!
+//! On a 500-dep `barista pull` we emit one `cached` (or
+//! `fetched`/`fetching`) event per coordinate. The trait that drives
+//! emission ([`crate::output::progress::ProgressSink`]) takes
+//! `&str` rather than `String` so callers don't have to allocate at
+//! the call site, and the writer is flushed on `finish` (or
+//! coarse-grained pulses) — not after every line — so we don't pay a
+//! syscall per coord.
 
 use std::io::Write;
 use std::time::SystemTime;
@@ -58,6 +73,148 @@ impl NdjsonRenderer {
         serde_json::to_writer(&mut self.out, value)?;
         self.out.write_all(b"\n")?;
         Ok(())
+    }
+
+    // ----- progress-event API (M3.2 T3) ------------------------------------
+    //
+    // Every method below produces exactly one NDJSON line conforming
+    // to `schema/output/v1/progress-event.json`. The single private
+    // [`Self::emit`] helper stamps the timestamp and serializes the
+    // event; the public methods are thin wrappers that build a
+    // [`ProgressEvent`] value with the right variant-specific fields.
+    //
+    // Required-field invariants from the schema are encoded directly
+    // in the method signatures: `emit_fetching`/`emit_fetched`/
+    // `emit_cached` take a non-`Option` `coord: &str`, so it's a
+    // compile-time error to omit the coordinate from a variant that
+    // requires it.
+
+    /// Emit one `started` event. `phase` is a free-form label for the
+    /// run (e.g. `"pull"`); it is forwarded verbatim into the
+    /// envelope's optional `phase` field via [`ProgressEvent::phase`].
+    pub fn emit_started(&mut self, phase: &str) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "started",
+            timestamp: &ts,
+            phase: schema_phase_for(phase),
+            ..Default::default()
+        })
+    }
+
+    /// Emit one `resolving` event. `coord` and `progress` are
+    /// optional — pre-resolution we typically have neither; mid-walk
+    /// we may have a coord; with a known node count we can populate
+    /// a percentage.
+    pub fn emit_resolving(
+        &mut self,
+        coord: Option<&str>,
+        progress: Option<f64>,
+    ) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "resolving",
+            timestamp: &ts,
+            coord,
+            progress,
+            phase: Some("resolve"),
+        })
+    }
+
+    /// Emit one `fetching` event. `coord` is required by the schema
+    /// (`required: ["coord"]` in the `fetching` branch); `progress`
+    /// is an optional byte-percentage in `[0, 100]`.
+    pub fn emit_fetching(&mut self, coord: &str, progress: Option<f64>) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "fetching",
+            timestamp: &ts,
+            coord: Some(coord),
+            progress,
+            phase: Some("fetch"),
+        })
+    }
+
+    /// Emit one `fetched` event. `coord` is required by the schema.
+    pub fn emit_fetched(&mut self, coord: &str) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "fetched",
+            timestamp: &ts,
+            coord: Some(coord),
+            phase: Some("fetch"),
+            ..Default::default()
+        })
+    }
+
+    /// Emit one `cached` event. `coord` is required by the schema.
+    ///
+    /// In v0.1 the `--no-fetch` path uses this to surface each
+    /// pre-existing lockfile entry so streaming consumers see
+    /// per-coord progress at the same cadence the full-fetch path
+    /// will emit `fetched`.
+    pub fn emit_cached(&mut self, coord: &str) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "cached",
+            timestamp: &ts,
+            coord: Some(coord),
+            phase: Some("fetch"),
+            ..Default::default()
+        })
+    }
+
+    /// Emit one `writing-lockfile` event. Reserved for the v0.2
+    /// full-fetch path; included now so the trait surface is closed.
+    pub fn emit_writing_lockfile(&mut self) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "writing-lockfile",
+            timestamp: &ts,
+            phase: Some("lock-write"),
+            ..Default::default()
+        })
+    }
+
+    /// Emit one `completed` event. `phase` matches the `started` value.
+    pub fn emit_completed(&mut self, phase: &str) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&ProgressEvent {
+            event: "completed",
+            timestamp: &ts,
+            phase: schema_phase_for(phase),
+            ..Default::default()
+        })
+    }
+
+    /// Flush the underlying writer without consuming the renderer.
+    ///
+    /// Useful between coarse-grained batches in a long stream so
+    /// downstream consumers don't sit on a buffered pipe. Hot-loop
+    /// callers (per-coord) should NOT flush every iteration; flush
+    /// every N events or at a phase boundary instead.
+    pub fn flush(&mut self) -> RenderResult<()> {
+        self.out.flush()?;
+        Ok(())
+    }
+}
+
+/// Translate the free-form `phase` strings the commands hand us
+/// (`"pull"`) into the closed enum the schema's optional `phase`
+/// field accepts (`"resolve" | "fetch" | "lock-write" | "pour"`).
+///
+/// Run-level phases like `"pull"` don't map cleanly to the schema's
+/// fine-grained `phase` enum, so we drop the field rather than
+/// invent a value the schema would reject. The verb is preserved on
+/// the `event` discriminator; consumers that need to group by command
+/// can look at adjacent `started`/`completed` pairs.
+fn schema_phase_for(phase: &str) -> Option<&'static str> {
+    match phase {
+        "resolve" => Some("resolve"),
+        "fetch" => Some("fetch"),
+        "lock-write" => Some("lock-write"),
+        "pour" => Some("pour"),
+        _ => None,
     }
 }
 
@@ -129,6 +286,26 @@ struct ErrorEvent<'a> {
 #[derive(Debug, Serialize)]
 struct ErrorPayload {
     message: String,
+}
+
+/// In-flight progress event. Borrows everything it can (the event
+/// discriminator is `'static`, the coord and timestamp are borrowed
+/// from the caller) so the per-coord hot path doesn't allocate.
+///
+/// `Option` fields are `skip_serializing_if = Option::is_none` so an
+/// event only carries the keys the schema permits for its variant
+/// (e.g. a `started` event has no `coord`, no `progress`, no
+/// `payload`).
+#[derive(Debug, Default, Serialize)]
+struct ProgressEvent<'a> {
+    event: &'static str,
+    timestamp: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    coord: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<f64>,
 }
 
 // ---------------------------------------------------------------------
