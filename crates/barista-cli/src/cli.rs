@@ -279,6 +279,15 @@ pub struct PourArgs {
     /// (default: `~/.m2/repository`).
     #[arg(long, value_name = "DIR")]
     pub target: Option<PathBuf>,
+
+    /// Limit materialization to entries with this Maven scope.
+    /// Defaults to `compile`.
+    #[arg(long, value_enum, default_value_t = ScopeArg::Compile, value_name = "SCOPE")]
+    pub scope: ScopeArg,
+
+    /// Print what would be materialized without writing anything.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Arguments for `barista dial-in`.
@@ -341,7 +350,7 @@ pub fn dispatch(cli: Cli) -> i32 {
     match command {
         Command::Pull(args) => crate::cmd::pull::run(&global, &args),
         Command::Grind { subcommand } => crate::cmd::grind::run(&global, &subcommand),
-        Command::Pour(_) => stub("pour"),
+        Command::Pour(args) => crate::cmd::pour::run(&global, &args),
         Command::DialIn(_) => stub("dial-in"),
         Command::Shot(_) => stub("shot"),
         Command::Wrapper(_) => stub("wrapper"),
@@ -351,9 +360,7 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Compile(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Compile, &a)
         }
-        Command::Test(a) => {
-            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Test, &a)
-        }
+        Command::Test(a) => crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Test, &a),
         Command::Package(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Package, &a)
         }
@@ -366,9 +373,7 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Deploy(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Deploy, &a)
         }
-        Command::Site(a) => {
-            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Site, &a)
-        }
+        Command::Site(a) => crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Site, &a),
     }
 }
 
@@ -379,4 +384,3 @@ fn stub(cmd: &str) -> i32 {
     );
     2
 }
-

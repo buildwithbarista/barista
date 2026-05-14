@@ -237,10 +237,8 @@ pub fn record_sticky(root: &Path, home: Option<&Path>) -> Result<(), ResolveErro
         source: e,
     })?;
     let path = run_dir.join("last-project");
-    std::fs::write(&path, root.to_string_lossy().as_bytes()).map_err(|e| ResolveError::Io {
-        path,
-        source: e,
-    })?;
+    std::fs::write(&path, root.to_string_lossy().as_bytes())
+        .map_err(|e| ResolveError::Io { path, source: e })?;
     Ok(())
 }
 

@@ -54,9 +54,7 @@ pub fn run(global: &GlobalFlags, args: &PullArgs) -> i32 {
             0
         }
         Err(PullError::NotYetImplemented { detail }) => {
-            eprintln!(
-                "barista: pull (full-fetch path) is not yet wired in this build: {detail}"
-            );
+            eprintln!("barista: pull (full-fetch path) is not yet wired in this build: {detail}");
             2
         }
         Err(e) => {

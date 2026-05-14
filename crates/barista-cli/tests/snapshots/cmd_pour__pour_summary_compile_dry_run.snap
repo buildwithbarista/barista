@@ -1,0 +1,6 @@
+---
+source: crates/barista-cli/tests/cmd_pour.rs
+assertion_line: 615
+expression: dry_summary
+---
+dry-run: 2 of 3 entries (scope=compile) → <TARGET>
