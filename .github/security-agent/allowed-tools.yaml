@@ -1,0 +1,200 @@
+# Auto-remediation agent — tool restrictions.
+#
+# This file is the authoritative allowlist/denylist for what the
+# automated security-fix agent (`anthropics/claude-code-action`,
+# invoked from `.github/workflows/auto-remediate.yml`) can do. The
+# CLI consumes the `permissions:` and `env:` blocks below as its
+# `--settings` JSON; the surrounding `rationale:` blocks are inline
+# documentation for human reviewers, not consumed by the CLI.
+#
+# Editing this file changes what an autonomous agent can do in CI.
+# Any edit MUST come through a human-reviewed PR — the agent's own
+# prompt (`.github/security-agent/prompt.md`) explicitly forbids it
+# from editing its own configuration.
+#
+# Format note: Claude CLI tolerates additional top-level keys it
+# doesn't recognize, so the `rationale:` siblings of `permissions:`
+# are inert at runtime. If a future CLI version starts rejecting
+# unknown keys, move the rationale text into YAML comments instead.
+
+# ----- Permissions ---------------------------------------------------------
+# `permissions.allow` is an additive allowlist. Anything not matched
+# by an entry in `allow` is denied unless the CLI's built-in defaults
+# permit it. `permissions.deny` is a hard block — entries here win
+# over `allow` even if `allow` would otherwise match.
+#
+# Each entry is a tool name (e.g. `Read`) or a tool-scoped pattern
+# (e.g. `Bash(cargo *)`). Pattern shapes match the Claude CLI's
+# permission grammar.
+permissions:
+
+  allow:
+
+    # --- Read-only filesystem tools ---
+    # The agent must be able to read the repository to plan a fix.
+    # `Read`, `Grep`, `Glob` cannot modify the working tree.
+    - "Read"
+    - "Grep"
+    - "Glob"
+
+    # --- Edit tools ---
+    # `Edit` and `Write` modify files in the working tree. They are
+    # sandboxed by the action's own branch isolation: every change
+    # the agent makes lands on `security/auto-fix-<issue-number>`
+    # (per the prompt). The action does not push to `main` directly
+    # because the workflow's `permissions:` block only grants
+    # `contents: write` to a non-default branch via the action's PR
+    # opener; branch protection on `main` (when C.4 T6 lands) will
+    # additionally reject any direct push to `main` from this token.
+    - "Edit"
+    - "Write"
+
+    # --- Bash: build / test / git / gh / project xtask ---
+    # Cargo: required for `cargo xtask security`, `cargo update`,
+    # `cargo test`, `cargo build`. The wildcard is broad on purpose;
+    # cargo subcommands are numerous and additive scoping would
+    # produce a maintenance burden without security gain (cargo
+    # cannot escape the working tree without invoking `rm`).
+    - "Bash(cargo *)"
+
+    # Git: branching, committing, pushing to non-`main` branches.
+    # The denylist below blocks `git push --force` variants.
+    - "Bash(git *)"
+
+    # GitHub CLI: opening PRs, commenting on issues, querying the
+    # advisory database. The action's bundled `gh` is configured with
+    # the workflow's GITHUB_TOKEN, scoped by the `permissions:` block
+    # in `.github/workflows/auto-remediate.yml` (issues:write,
+    # pull-requests:write, contents:write).
+    - "Bash(gh *)"
+
+    # Maven: required for Java-side dep bumps and self-test
+    # (`mvn -f barback/pom.xml test`, `mvn versions:set`).
+    - "Bash(mvn *)"
+
+    # The project's local security suite (clippy + cargo-audit +
+    # cargo-deny + semgrep + gitleaks). The agent runs this as its
+    # primary self-test before opening a PR.
+    - "Bash(cargo xtask security*)"
+
+    # The gitleaks round-trip script. Mandatory secondary self-test;
+    # verifies the secret-scan config + allowlist mechanism are
+    # intact after any change the agent makes to `.gitleaksignore`.
+    - "Bash(bash scripts/test-secret-scan.sh*)"
+
+    # Common read-only inspection commands the agent needs to plan
+    # fixes (e.g., `ls`, `cat`, `head`, `tail`, `wc`, `find`).
+    # Scoped narrowly: each command is allow-listed by name.
+    - "Bash(ls *)"
+    - "Bash(cat *)"
+    - "Bash(head *)"
+    - "Bash(tail *)"
+    - "Bash(wc *)"
+    - "Bash(find *)"
+    - "Bash(grep *)"
+    - "Bash(rg *)"
+
+    # --- Sonatype MCP ---
+    # Mandatory queries before any dependency bump. The prompt
+    # requires these to be called in order:
+    #   1. getRecommendedComponentVersions (pick the target)
+    #   2. getComponentVersion (confirm malicious=false +
+    #      policyCompliance.compliant=true)
+    #   3. getLatestComponentVersion (informational, optional)
+    - "mcp__sonatype-mcp__getRecommendedComponentVersions"
+    - "mcp__sonatype-mcp__getComponentVersion"
+    - "mcp__sonatype-mcp__getLatestComponentVersion"
+
+    # --- Web ---
+    # `WebFetch` is allowed for advisory-database lookups (RustSec,
+    # GHSA, OSV) when the scanner's issue body cites a URL. The
+    # broader `WebSearch` is NOT allowed (see `deny:` below);
+    # advisory lookups are always direct fetches of a known URL.
+    - "WebFetch"
+
+  deny:
+
+    # --- Hard-blocked Bash patterns ---
+    # `rm -rf` and the recursive-force variant are the canonical
+    # foot-guns; deny outright. The agent should never need either
+    # — the action runs in an ephemeral runner that gets discarded.
+    - "Bash(rm -rf *)"
+    - "Bash(rm -fr *)"
+
+    # Force-push variants. Plain `git push origin
+    # security/auto-fix-<n>` is allowed by the `Bash(git *)` rule
+    # above; the deny list catches the force-mutating flag set.
+    - "Bash(git push --force*)"
+    - "Bash(git push -f *)"
+    - "Bash(git push --force-with-lease*)"
+
+    # Mutating `.git/` directly. The agent has no business reaching
+    # under git's plumbing — every legitimate git operation has a
+    # porcelain command.
+    - "Bash(* .git/hooks/*)"
+    - "Bash(* .git/config*)"
+
+    # Editing the agent's own configuration. The prompt also
+    # forbids this, but defense in depth is cheap.
+    - "Edit(.github/security-agent/**)"
+    - "Write(.github/security-agent/**)"
+
+    # Editing any workflow file. Workflow edits are routed through
+    # the human review path (PR + Dependabot for SHA bumps).
+    - "Edit(.github/workflows/**)"
+    - "Write(.github/workflows/**)"
+
+    # Editing branch-protection / CODEOWNERS.
+    - "Edit(.github/CODEOWNERS)"
+    - "Write(.github/CODEOWNERS)"
+    - "Edit(.github/branch-protection.yml)"
+    - "Write(.github/branch-protection.yml)"
+
+    # WebSearch — broader internet exposure than the agent needs.
+    # Advisory URLs are pointed at by the issue body; use WebFetch.
+    - "WebSearch"
+
+    # All other MCP surfaces — only Sonatype is allowed by name in
+    # the `allow:` list above. This wildcard denies anything else
+    # (e.g., Slack, Vercel, Supabase MCP servers a future workflow
+    # might wire up). The CLI evaluates deny ahead of allow, so the
+    # specific Sonatype tool names in `allow:` still take effect.
+    #
+    # Note: the wildcard pattern catches `mcp__*` entries that are
+    # not explicitly listed above. The three Sonatype tools are
+    # listed in `allow:` and remain accessible.
+    - "mcp__*"
+
+# ----- Environment ---------------------------------------------------------
+# Inherited from the workflow runner; the agent does not set
+# anything additional here. Kept as a stub so future tightening
+# (e.g., explicit PATH narrowing) has an obvious place to land.
+env: {}
+
+# ----- Rationale (documentation, not consumed by the CLI) ------------------
+# One-line rationale per allowed surface, for human reviewers
+# auditing this file. If the CLI starts to reject unknown top-level
+# keys, fold these into `# `-prefixed comments above each `allow:`
+# entry.
+rationale:
+  read_tools: "Read/Grep/Glob — cannot modify the tree; required for fix planning."
+  edit_tools: "Edit/Write — gated by the action's branch isolation and by the deny entries below."
+  bash_cargo: "Building, testing, lockfile updates. Cannot escape the working tree without `rm`."
+  bash_git: "Branching/committing/pushing to non-main branches. Force-push denied separately."
+  bash_gh: "PR creation + issue comments. Scoped by the workflow's GITHUB_TOKEN permissions."
+  bash_mvn: "Java side: tests + version bumps for `barback` dep findings."
+  bash_xtask_security: "Mandatory pre-PR self-test (clippy/deny/audit/semgrep/gitleaks)."
+  bash_secret_scan: "Mandatory secondary self-test (gitleaks round-trip script)."
+  bash_read_only: "ls/cat/head/tail/wc/find/grep/rg — read-only inspection only."
+  sonatype_recommended: "Required first call before any dep bump (target version selection)."
+  sonatype_get: "Required confirmation call after picking a target (malicious + compliance)."
+  sonatype_latest: "Informational comparison; do not blindly bump to latest."
+  web_fetch: "RustSec/GHSA/OSV advisory URL fetches cited in the issue body."
+  deny_rm_rf: "Recursive force-delete is a foot-gun with no legitimate agent use."
+  deny_force_push: "Force-push variants would invalidate review; prompt forbids the action."
+  deny_dot_git: "Reaching into git's plumbing has no legitimate porcelain-equivalent."
+  deny_self_edit: "The agent must not edit its own prompt, tool list, or PR template."
+  deny_workflows: "Workflow edits route through human review + Dependabot for SHA bumps."
+  deny_branch_protection: "Branch-protection / CODEOWNERS changes are human-only."
+  deny_websearch: "WebFetch suffices for advisory URLs; broader web surface not needed."
+  deny_other_mcp: "Only Sonatype is an authorized MCP surface for this agent."
