@@ -125,6 +125,10 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
         "telemetry.client-id".into(),
         format_opt_string(config.telemetry.client_id.as_deref()),
     ));
+    lines.push((
+        "telemetry.transport-enabled".into(),
+        config.telemetry.transport_enabled.to_string(),
+    ));
 
     // ---- compat ----
     lines.push((

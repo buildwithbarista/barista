@@ -42,6 +42,7 @@ fn settings_from_config(cfg: &Config) -> TelemetrySettings {
         enabled: cfg.telemetry.enabled,
         endpoint: cfg.telemetry.endpoint.clone(),
         client_id: cfg.telemetry.client_id.clone(),
+        transport_enabled: cfg.telemetry.transport_enabled,
     }
 }
 
@@ -176,6 +177,7 @@ fn enabled_path_reaches_sink() {
         enabled: true,
         endpoint: Some("https://example.test/ingest".into()),
         client_id: None,
+        transport_enabled: false,
     };
     let (sink, count) = CountingSink::new();
     let t = Telemetry::with_sink(&settings, sink);
@@ -216,6 +218,7 @@ client-id = "install-abc-123"
             enabled: true,
             endpoint: Some("https://telemetry.example/v1".into()),
             client_id: Some("install-abc-123".into()),
+            transport_enabled: false,
         }
     );
 

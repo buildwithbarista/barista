@@ -182,6 +182,18 @@ pub struct TelemetryConfig {
     /// Operators who want to correlate events across runs can pin
     /// a value via `~/.barista/config.toml`.
     pub client_id: Option<String>,
+    /// Master switch for the HTTP transport. Default: `false`.
+    ///
+    /// This is the **third independent guard** on outbound network
+    /// traffic — `enabled`, `endpoint.is_some()`, and
+    /// `transport-enabled` must **all** be true before any HTTP
+    /// request leaves the process. It exists so the privacy
+    /// posture (what we send, where, when) can be reviewed and
+    /// signed off before the transport is allowed to fire, even
+    /// for users who have set `enabled = true` and configured an
+    /// endpoint. Flip this on once the privacy doc lands and the
+    /// "v0.2" go-live is approved.
+    pub transport_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -318,6 +330,7 @@ pub struct PartialTelemetryConfig {
     pub enabled: Option<bool>,
     pub endpoint: Option<String>,
     pub client_id: Option<String>,
+    pub transport_enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -430,6 +443,10 @@ impl PartialConfig {
             if let Some(v) = &t.client_id {
                 target.telemetry.client_id = Some(v.clone());
                 touched.push("telemetry.client-id".into());
+            }
+            if let Some(v) = t.transport_enabled {
+                target.telemetry.transport_enabled = v;
+                touched.push("telemetry.transport-enabled".into());
             }
         }
         if let Some(c) = &self.compat {
