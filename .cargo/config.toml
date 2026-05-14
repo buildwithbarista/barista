@@ -1,0 +1,23 @@
+# Workspace-wide Cargo configuration.
+#
+# This file is read by every `cargo` invocation made anywhere inside the
+# workspace. It is intentionally limited to project-level conventions —
+# user preferences (e.g. terminal-color overrides, parallelism caps,
+# per-user registry tokens) belong in `~/.cargo/config.toml`, not here.
+#
+# Currently this file exists for one purpose: aliasing `cargo xtask` to
+# the `xtask` workspace member so that `cargo xtask security` works from
+# anywhere in the tree. See `xtask/Cargo.toml` and `xtask/src/security.rs`
+# for what the task actually runs.
+
+[alias]
+# `cargo xtask <subcommand>` → `cargo run -p xtask --release -- <subcommand>`
+#
+# `--release` keeps the orchestrator fast on repeat invocations: a debug
+# build of `xtask` would re-link every time a contributor reruns the
+# suite. The orchestrator itself is small (no proc-macros, three direct
+# deps) so the first compile is well under a minute.
+#
+# Sub-arguments to the xtask itself (e.g. `--strict`, `--check NAME`)
+# follow the `--` separator that cargo inserts after the alias body.
+xtask = "run --package xtask --release --"

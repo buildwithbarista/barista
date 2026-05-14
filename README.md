@@ -1,5 +1,19 @@
 # Barista
 
+[![Security scanning](https://img.shields.io/badge/security%20scanning-active-brightgreen?logo=github)](SECURITY.md)
+
+<!--
+  Badge target rationale: the link points to `SECURITY.md` (which ships
+  in this repo today) rather than the GitHub Security tab because the
+  public repository hasn't been published yet — badges that resolve to a
+  404 are worse than badges that link to a local file. When the repo
+  goes public, retarget the link to `../../security` so it surfaces the
+  GitHub Security tab. The shield image is a static shields.io badge;
+  swap it for a live workflow-status badge (e.g.,
+  `https://github.com/<org>/<repo>/actions/workflows/sast.yml/badge.svg`)
+  once the SAST workflow is running against a public repo.
+-->
+
 A fast, fully Maven-compatible build tool for the JVM ecosystem.
 
 ## Status
