@@ -461,7 +461,7 @@ mod tests {
         let err = Cas::open(&file_path).unwrap_err();
         match err {
             CasError::NotDirectory { .. } => {}
-            other => panic!("expected NotDirectory, got {:?}", other),
+            other => panic!("expected NotDirectory, got {other:?}"),
         }
     }
 

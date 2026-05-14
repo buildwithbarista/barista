@@ -69,7 +69,7 @@ fn version_cases_corpus() {
             let notes_suffix = case
                 .notes
                 .as_ref()
-                .map(|n| format!(" — notes: {:?}", n))
+                .map(|n| format!(" — notes: {n:?}"))
                 .unwrap_or_default();
             let msg = format!(
                 "case {} ({:?} vs {:?}): want {:?}, got {:?}{}",
@@ -94,14 +94,14 @@ fn version_cases_corpus() {
             tentative_failures.len(),
         );
         for m in &tentative_failures {
-            eprintln!("  {}", m);
+            eprintln!("  {m}");
         }
     }
 
     if !hard_failures.is_empty() {
         eprintln!("--- {} hard failure(s):", hard_failures.len());
         for m in &hard_failures {
-            eprintln!("  {}", m);
+            eprintln!("  {m}");
         }
         panic!(
             "{} non-tentative case(s) failed; see eprintln output above",

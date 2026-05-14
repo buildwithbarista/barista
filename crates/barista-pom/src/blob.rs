@@ -276,7 +276,7 @@ mod tests {
                 assert_eq!(&expected, BLOB_MAGIC);
                 assert_eq!(&got, b"not-");
             }
-            other => panic!("expected BadMagic, got {:?}", other),
+            other => panic!("expected BadMagic, got {other:?}"),
         }
     }
 
@@ -308,7 +308,7 @@ mod tests {
                 assert_eq!(expected, BLOB_SCHEMA_VERSION);
                 assert_eq!(got, 999);
             }
-            other => panic!("expected SchemaVersionMismatch, got {:?}", other),
+            other => panic!("expected SchemaVersionMismatch, got {other:?}"),
         }
     }
 

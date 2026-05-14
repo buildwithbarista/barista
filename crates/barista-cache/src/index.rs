@@ -522,7 +522,7 @@ mod tests {
     fn hex_repeat(b: u8) -> String {
         let mut s = String::with_capacity(64);
         for _ in 0..32 {
-            s.push_str(&format!("{:02x}", b));
+            s.push_str(&format!("{b:02x}"));
         }
         s
     }

@@ -1115,7 +1115,7 @@ mod tests {
             EffectiveError::UnresolvedPlaceholder { placeholder, .. } => {
                 assert_eq!(placeholder, "${nope}");
             }
-            other => panic!("expected UnresolvedPlaceholder, got {:?}", other),
+            other => panic!("expected UnresolvedPlaceholder, got {other:?}"),
         }
     }
 
@@ -1271,7 +1271,7 @@ mod tests {
         // Build 12 ancestors linked head-to-tail.
         let mut r = TestResolver::default();
         for i in 0..12u32 {
-            let mut p = pom("g", &format!("p{}", i), "1");
+            let mut p = pom("g", &format!("p{i}"), "1");
             if i + 1 < 12 {
                 p.parent = Some(parent_ref("g", &format!("p{}", i + 1), "1"));
             }
@@ -1310,7 +1310,7 @@ mod tests {
             EffectiveError::ParentResolution { coords, .. } => {
                 assert!(coords.contains("missing-parent"));
             }
-            other => panic!("expected ParentResolution, got {:?}", other),
+            other => panic!("expected ParentResolution, got {other:?}"),
         }
     }
 
