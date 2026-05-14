@@ -1,8 +1,13 @@
 //! The `barista` CLI entry point.
 //!
-//! Currently a scaffold — implementation lands in a subsequent
-//! milestone.
+//! Parses argv with `clap` and hands off to [`barista_cli::cli::dispatch`].
+//! The actual command implementations live in sibling modules under
+//! `barista_cli::cli` and are wired in piecemeal as later milestones land.
+
+use barista_cli::cli::{Cli, dispatch};
+use clap::Parser;
 
 fn main() {
-    println!("barista 0.1.0-alpha.0 (scaffold)");
+    let cli = Cli::parse();
+    std::process::exit(dispatch(cli));
 }

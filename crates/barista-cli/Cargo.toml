@@ -6,6 +6,15 @@ license.workspace = true
 description = "The barista CLI binary."
 publish = false
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "barista"
 path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive", "env"] }
+
+[dev-dependencies]
+insta = "1.47"

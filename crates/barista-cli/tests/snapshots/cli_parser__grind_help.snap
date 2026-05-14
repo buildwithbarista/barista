@@ -1,0 +1,66 @@
+---
+source: crates/barista-cli/tests/cli_parser.rs
+assertion_line: 306
+expression: "render_help(&[\"barista\", \"grind\", \"--help\"])"
+---
+Inspect the resolved dependency graph
+
+Usage: barista grind [OPTIONS] <COMMAND>
+
+Commands:
+  tree   Render the resolved dependency tree
+  diff   Compare two lockfiles
+  audit  Query the graph for security / version concerns
+  why    Explain why a coord is in the graph
+
+Options:
+      --output <FORMAT>
+          Output format. `human` (default), `json`, or `ndjson`
+
+          Possible values:
+          - human:  Human-readable text, ANSI-decorated on a tty
+          - json:   A single JSON document on stdout
+          - ndjson: Newline-delimited JSON; streams events as they happen
+          
+          [default: human]
+
+      --ci
+          CI shortcut: equivalent to `--frozen --output json --quiet`
+
+  -q, --quiet
+          Suppress non-essential output
+
+  -v, --verbose...
+          Increase verbosity (stackable: `-v`, `-vv`, `-vvv`)
+
+      --root <PATH>
+          Project root override; auto-detected from CWD if absent
+
+  -f, --file <POM>
+          Pom file override (alternate spelling of `--root <pom-dir>`)
+
+      --strict
+          Strict resolution (PubGrub): error on unresolvable conflicts instead of nearest-wins
+
+      --no-daemon
+          Force one-shot execution; bypass the barback daemon
+
+      --maven-compat <MODE>
+          Maven compatibility mode
+
+          Possible values:
+          - auto: Auto-detect from the project (default)
+          - 3.9:  Maven 3.9-compatible behavior
+          - 4.0:  Maven 4.0-compatible behavior
+
+      --config <PATH>
+          Override the project `barista.toml` path
+
+      --no-color
+          Disable ANSI colors (tty detection is on by default)
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
