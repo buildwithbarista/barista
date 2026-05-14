@@ -133,7 +133,14 @@ version = "0.1.0-alpha.0"
 name = "barista-lockfile"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "barista-pom",
+ "bincode",
  "insta",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]

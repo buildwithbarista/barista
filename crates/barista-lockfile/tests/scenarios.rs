@@ -109,7 +109,10 @@ fn scenario_jackson_plus_observability() {
         ("com.fasterxml.jackson.core", "jackson-databind"),
         ("com.fasterxml.jackson.datatype", "jackson-datatype-jdk8"),
         ("com.fasterxml.jackson.datatype", "jackson-datatype-jsr310"),
-        ("com.fasterxml.jackson.module", "jackson-module-parameter-names"),
+        (
+            "com.fasterxml.jackson.module",
+            "jackson-module-parameter-names",
+        ),
     ];
 
     let mut left = Vec::new();
@@ -159,10 +162,30 @@ fn scenario_junit_4_to_5() {
     let right = vec![
         mks("org.junit.jupiter", "junit-jupiter", "5.10.2", "test"),
         mks("org.junit.jupiter", "junit-jupiter-api", "5.10.2", "test"),
-        mks("org.junit.jupiter", "junit-jupiter-engine", "5.10.2", "test"),
-        mks("org.junit.jupiter", "junit-jupiter-params", "5.10.2", "test"),
-        mks("org.junit.platform", "junit-platform-commons", "1.10.2", "test"),
-        mks("org.junit.platform", "junit-platform-engine", "1.10.2", "test"),
+        mks(
+            "org.junit.jupiter",
+            "junit-jupiter-engine",
+            "5.10.2",
+            "test",
+        ),
+        mks(
+            "org.junit.jupiter",
+            "junit-jupiter-params",
+            "5.10.2",
+            "test",
+        ),
+        mks(
+            "org.junit.platform",
+            "junit-platform-commons",
+            "1.10.2",
+            "test",
+        ),
+        mks(
+            "org.junit.platform",
+            "junit-platform-engine",
+            "1.10.2",
+            "test",
+        ),
         mks("org.opentest4j", "opentest4j", "1.3.0", "test"),
         mks("org.apiguardian", "apiguardian-api", "1.1.2", "test"),
     ];

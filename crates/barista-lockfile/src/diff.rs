@@ -140,7 +140,11 @@ pub fn diff(left: &[LockEntry], right: &[LockEntry]) -> LockDiff {
 
     let mut out = LockDiff::default();
 
-    let mut all_gas: Vec<String> = left_by_ga.keys().chain(right_by_ga.keys()).cloned().collect();
+    let mut all_gas: Vec<String> = left_by_ga
+        .keys()
+        .chain(right_by_ga.keys())
+        .cloned()
+        .collect();
     all_gas.sort();
     all_gas.dedup();
 
@@ -164,7 +168,10 @@ pub fn diff(left: &[LockEntry], right: &[LockEntry]) -> LockDiff {
         let mut i = 0;
         while i < l.len() {
             let lc = (l[i].type_.clone(), l[i].classifier.clone());
-            if let Some(j) = r.iter().position(|e| (e.type_.clone(), e.classifier.clone()) == lc) {
+            if let Some(j) = r
+                .iter()
+                .position(|e| (e.type_.clone(), e.classifier.clone()) == lc)
+            {
                 let le = l.remove(i);
                 let re = r.remove(j);
                 if le.version != re.version {
@@ -435,7 +442,12 @@ mod tests {
 
     #[test]
     fn scope_change() {
-        let l = vec![ev("org.junit.jupiter", "junit-jupiter", "5.10.2", "compile")];
+        let l = vec![ev(
+            "org.junit.jupiter",
+            "junit-jupiter",
+            "5.10.2",
+            "compile",
+        )];
         let r = vec![ev("org.junit.jupiter", "junit-jupiter", "5.10.2", "test")];
         let d = diff(&l, &r);
         assert_eq!(d.rescoped.len(), 1);
@@ -463,7 +475,11 @@ mod tests {
         let r = vec![
             e("org.slf4j", "slf4j-api", "2.0.16"),
             e("com.fasterxml.jackson.core", "jackson-databind", "2.17.0"),
-            e("com.fasterxml.jackson.core", "jackson-annotations", "2.17.0"),
+            e(
+                "com.fasterxml.jackson.core",
+                "jackson-annotations",
+                "2.17.0",
+            ),
         ];
         let d = diff(&[], &r);
         let coords: Vec<String> = d.added.iter().map(|e| e.coords_key()).collect();

@@ -8,5 +8,14 @@ publish = false
 
 [lib]
 
+[dependencies]
+barista-pom = { path = "../barista-pom" }
+bincode = { version = "2.0", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+thiserror = "2"
+toml = "0.8"
+
 [dev-dependencies]
 insta = "1.47"
+tempfile = "3"
