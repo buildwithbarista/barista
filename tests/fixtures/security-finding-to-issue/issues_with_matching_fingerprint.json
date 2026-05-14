@@ -1,0 +1,13 @@
+[
+  {
+    "number": 17,
+    "state": "OPEN",
+    "title": "[security] semgrep: rust/unsafe-block in crates/barista-coords/src/lib.rs:142",
+    "body": "<!-- sec-fingerprint: 907fe95a082bec77eafcf8d04308c2324be161bb6c87659dd90c8acaf5fba402 -->\n\n## semgrep: `rust/unsafe-block`\n\n**Severity:** medium\n\nAlready-triaged issue body.\n",
+    "labels": [
+      {"name": "security"},
+      {"name": "security-bot"},
+      {"name": "semgrep"}
+    ]
+  }
+]
