@@ -43,6 +43,7 @@ use barista_pom::profile::{ActivationContext, ResolveError as PomResolveError, r
 use barista_pom::raw::{ParseError as PomParseError, RawParent, RawPom, parse_pom};
 
 use crate::cli::{GlobalFlags, PullArgs};
+use crate::output::progress::{ProgressSink, make_runtime_progress_sink};
 use crate::output::report::{LockfileStatus, PullReport};
 use crate::output::make_runtime_renderer;
 use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
@@ -58,7 +59,11 @@ use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
 ///   when called without `--no-fetch`.
 pub fn run(global: &GlobalFlags, args: &PullArgs) -> i32 {
     let mut renderer = make_runtime_renderer(global);
-    let exit = match run_inner(global, args) {
+    // Per-format progress sink. NDJSON streams real events; JSON and
+    // Human currently get the NullSink / HumanSink no-op (see
+    // `crate::output::progress` for the rationale).
+    let mut sink = make_runtime_progress_sink(global);
+    let exit = match run_inner(global, args, sink.as_mut()) {
         Ok(report) => {
             // `--quiet` suppresses the human-readable summary only:
             // JSON / NDJSON consumers (and the `--ci` shortcut) need
@@ -111,7 +116,17 @@ pub fn run(global: &GlobalFlags, args: &PullArgs) -> i32 {
 /// Library-friendly entry point used by [`run`] and integration
 /// tests. Drives the full pipeline and returns a structured report
 /// on success.
-pub fn run_inner(global: &GlobalFlags, args: &PullArgs) -> Result<PullReport, PullError> {
+///
+/// `sink` receives streaming progress events. Pass [`NullSink`] when
+/// you don't care; the production [`run`] entry point picks the
+/// right sink for the active `--output` format.
+pub fn run_inner(
+    global: &GlobalFlags,
+    args: &PullArgs,
+    sink: &mut dyn ProgressSink,
+) -> Result<PullReport, PullError> {
+    sink.started("pull");
+
     // -- 1. Project root ---------------------------------------------------
     let root = resolve_project_root(ResolveInputs {
         root: global.root.clone(),
@@ -141,9 +156,15 @@ pub fn run_inner(global: &GlobalFlags, args: &PullArgs) -> Result<PullReport, Pu
     })?;
     let raw_pom: RawPom = parse_pom(&pom_text)?;
 
+    // Now that we have a project coordinate, surface it on the stream.
+    let project_coord = pom_coords_for_summary(&raw_pom);
+    sink.resolving(Some(&project_coord), None);
+
     // -- 4. The two paths --------------------------------------------------
     if args.no_fetch {
-        return run_no_fetch(&root.root, &raw_pom, global, args);
+        let report = run_no_fetch(&root.root, &raw_pom, global, args, sink)?;
+        sink.completed("pull");
+        return Ok(report);
     }
 
     // Full-fetch path: run the effective-POM pipeline. POMs with a
@@ -194,11 +215,23 @@ fn run_no_fetch(
     raw_pom: &RawPom,
     global: &GlobalFlags,
     args: &PullArgs,
+    sink: &mut dyn ProgressSink,
 ) -> Result<PullReport, PullError> {
     let coords = pom_coords_for_summary(raw_pom);
     let lock_path = project_root.join("barista.lock");
     let (status, entries, signature) = if lock_path.exists() {
         let lf = Lockfile::read(&lock_path)?;
+        // Per-coord streaming. The schema requires `coord` on
+        // `cached`; we pass it borrowed from the entry so the loop
+        // doesn't allocate. We flush every 64 events to keep the
+        // pipe moving on long streams without paying a syscall per
+        // coord. (At 500 entries that's ~8 flushes, not 500.)
+        for (i, entry) in lf.entries.iter().enumerate() {
+            sink.cached(&entry.coords);
+            if (i + 1) % 64 == 0 {
+                sink.flush();
+            }
+        }
         let sig = short_sig(&lf.meta.project_signature);
         (LockfileStatus::Unchanged, lf.entries.len(), Some(sig))
     } else {

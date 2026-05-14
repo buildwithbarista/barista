@@ -49,6 +49,7 @@
 pub mod human;
 pub mod json;
 pub mod ndjson;
+pub mod progress;
 pub mod report;
 
 use std::io::{self, IsTerminal, Write};
@@ -56,6 +57,9 @@ use std::io::{self, IsTerminal, Write};
 pub use human::HumanRenderer;
 pub use json::JsonRenderer;
 pub use ndjson::NdjsonRenderer;
+pub use progress::{
+    HumanSink, NdjsonSink, NullSink, ProgressSink, make_progress_sink, make_runtime_progress_sink,
+};
 pub use report::{
     GrindTreeReport, LockfileStatus, PourReport, PullReport, ReactorModule, TreeNode,
 };
