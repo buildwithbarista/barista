@@ -145,6 +145,13 @@
                     <threshold>High</threshold>
                     <failOnError>true</failOnError>
                     <includeFilterFile>${project.basedir}/spotbugs-include.xml</includeFilterFile>
+                    <!--
+                      SARIF output for GitHub code scanning. The plugin
+                      emits `target/spotbugsSarif.json` when `sarifOutput`
+                      is true; the surrounding workflow uploads that file
+                      under `category: spotbugs`.
+                    -->
+                    <sarifOutput>true</sarifOutput>
                     <plugins>
                         <plugin>
                             <groupId>com.h3xstream.findsecbugs</groupId>

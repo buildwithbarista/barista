@@ -1,47 +1,73 @@
-# Software Composition Analysis — dependency vulnerability scanning.
+# Nightly SCA — fresh-DB dependency scan.
 #
-# Runs five overlapping scanners on every PR and every push to `main`.
-# Overlap is intentional: cargo-audit/cargo-deny lean on the
-# RustSec advisory database; OSV-Scanner uses the OSV.dev union; OWASP DC
-# uses the NVD; Trivy uses its own vulnerability metadata. The four
-# databases disagree on a non-trivial subset of advisories, so the union
-# catches more than any one scanner.
+# Re-runs the SCA suite (cargo-deny, cargo-audit, OSV-Scanner, OWASP
+# Dependency-Check, Trivy) every night against `main` with a *fresh*
+# advisory database for each scanner. The PR-time `sca.yml` workflow
+# may legitimately hit cached DB state (cargo-audit's local advisory
+# cache, the maven cache restored by `actions/cache`, the OSV-Scanner
+# action's in-image dataset, the OWASP NVD-data cache); this workflow
+# burns those caches by design so a newly-published CVE that lands
+# between PRs surfaces within ~24 hours.
 #
-# Coverage:
-#   Rust   — cargo-deny, cargo-audit, OSV-Scanner, Trivy
-#   Java   — OSV-Scanner, OWASP Dependency-Check, Trivy
-#   Other  — Trivy (lockfile types neither cargo-* nor OSV covers)
+# Coverage matches `sca.yml` exactly. The split is *cadence*, not
+# *content*: PR + push runs in `sca.yml` exist to gate merges; this
+# workflow exists to catch findings published after the last merge.
+#
+# Issue-filing path: this workflow's SARIF uploads (and the
+# code-scanning alerts they create) are picked up by
+# `security-finding-to-issue.yml` via its `workflow_run` trigger —
+# the dedup logic in `.github/scripts/security_finding_to_issue.py`
+# guarantees a net-new advisory results in exactly one new issue.
+# Findings already filed under `sca.yml` (same scanner, same fingerprint)
+# are deduped by the existing-issues check; this workflow only opens
+# new issues for *net-new* findings, which is the value-add over
+# the daily `sca.yml` run.
+#
+# Trigger:
+#   - schedule: 04:37 UTC nightly. Offset from `sca.yml`'s 04:17 (when
+#                that schedule was active; now removed in favor of this
+#                workflow) and `secret-scan.yml`'s 04:19 so the three
+#                security workflows don't contend for shared runners.
+#                Off-the-hour to dodge the GitHub cron storm.
+#   - workflow_dispatch: manual re-run on demand (e.g., after a known
+#                CVE drops and we want the issue filed before the next
+#                nightly tick).
 #
 # Every action is pinned to a commit SHA (not a floating tag). The
-# human-readable tag is recorded next to the SHA so future readers can audit
-# drift. When bumping, update both the SHA and the comment.
-#
-# Findings are uploaded to GitHub code scanning as SARIF where the scanner
-# supports it. Failures here block merges to `main`.
+# human-readable tag is recorded next to the SHA so future readers can
+# audit drift. When bumping, update both the SHA and the comment.
 
-name: SCA — dependency vulnerability scanning
+name: SCA nightly — fresh-DB dependency scan
 
 on:
-  pull_request:
-  push:
-    branches: [main]
-  # NOTE: the nightly fresh-DB scan lives in `sca-nightly.yml`. This
-  # workflow runs only on PR + push to `main` — those are the gates
-  # that must block merges. The nightly cadence (catching CVEs
-  # published between PRs) is owned by `sca-nightly.yml` and the
-  # issue-filing path that fires off its `workflow_run` completion.
+  schedule:
+    # 04:37 UTC nightly. Five+ minutes after sca.yml's old slot
+    # (04:17) and secret-scan.yml's slot (04:19); off-the-hour to
+    # dodge the top-of-hour cron storm on GitHub's shared schedulers.
+    - cron: "37 4 * * *"
+  workflow_dispatch:
 
 # Default-deny at the workflow level; each job opts in explicitly.
 permissions: {}
 
+# Serialize nightly runs so two consecutive ticks (or a tick + a
+# manual dispatch) can't race on the same advisory cache. Cancelling
+# an in-flight run is safe: every job is idempotent and the next run
+# re-scans from scratch.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
 
   # ---------------------------------------------------------------------------
-  # cargo-deny — advisories, license allowlist, banned crates, source allowlist.
-  # Config lives in deny.toml at the repo root.
+  # cargo-deny — advisories + bans + licenses + sources. Same config
+  # as `sca.yml`; the EmbarkStudios action always fetches the latest
+  # RustSec advisory DB on each run (no in-action cache to bust),
+  # so a fresh-DB pass is the default behavior here.
   # ---------------------------------------------------------------------------
   cargo-deny-check:
-    name: cargo-deny
+    name: cargo-deny (fresh DB)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,19 +81,11 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.12'
-      # The EmbarkStudios action is the gate (sets exit code).
-      # The SARIF emit + upload below runs even on failure so the
-      # findings show up in the Security tab under `category: cargo-deny`.
-      # `--format json` output is captured in a separate invocation so
-      # the action's pinning policy is preserved and the SARIF step is
-      # purely additive.
       - name: Run cargo-deny (gate)
         id: cargo-deny-gate
         continue-on-error: true
         uses: EmbarkStudios/cargo-deny-action@6c8f9facfa5047ec02d8485b6bf52b587b7777d1 # v2.0.18
         with:
-          # Run all four checks; the default is `check` with no further args,
-          # which expands to advisories + bans + licenses + sources.
           command: check
           arguments: --all-features
       - name: Install cargo-deny CLI (for SARIF emit)
@@ -79,9 +97,6 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          # `--format json` lands on stderr; tolerate non-zero exit so
-          # SARIF generation never masks a finding. The adapter handles
-          # an empty/partial stream gracefully.
           cargo deny check --format json --all-features 2> cargo-deny.json || true
           python3 .github/scripts/cargo-deny-to-sarif.py \
             < cargo-deny.json > cargo-deny.sarif
@@ -98,24 +113,18 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # cargo-audit — RustSec advisory scan against Cargo.lock. Overlaps with
-  # cargo-deny's [advisories] section by design: the two tools occasionally
-  # disagree on what an advisory means for a workspace and we want the
-  # broader signal.
-  #
-  # Local reproduction:
-  #   cargo install cargo-audit --locked
-  #   cargo audit
+  # cargo-audit — RustSec advisory scan against Cargo.lock. The
+  # `rustsec/audit-check` action fetches the advisory DB on every
+  # invocation, so the nightly run picks up advisories published in
+  # the last 24 hours without needing a cache-busting step.
   # ---------------------------------------------------------------------------
   cargo-audit-check:
-    name: cargo-audit
+    name: cargo-audit (fresh DB)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
-      # `rustsec/audit-check` opens issues on `push: main` failures by default;
-      # `issues: write` is the documented requirement.
-      security-events: write  # for the SARIF emit step below
+      security-events: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -125,10 +134,6 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.12'
-      # rustsec/audit-check is the gate (sets exit code; opens issues on
-      # `push: main` failures); the SARIF emit + upload below runs even on
-      # failure so findings show up in the Security tab under
-      # `category: cargo-audit`.
       - name: Run cargo-audit (gate)
         id: cargo-audit-gate
         continue-on-error: true
@@ -160,43 +165,34 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # OSV-Scanner — Cargo (Cargo.lock) + Maven (barback/pom.xml) coverage from
-  # the OSV.dev database union. SARIF is uploaded to code scanning via the
-  # reusable workflow's built-in step.
-  #
-  # We call the reusable workflow (not the action directly): the reusable
-  # version handles SARIF generation + upload, which the raw action does
-  # not.
+  # OSV-Scanner — runs the reusable workflow exactly as `sca.yml`
+  # does. The action image bundles the OSV.dev dataset at build time;
+  # the nightly pinning is to the same SHA on purpose so the analyzer
+  # behavior matches the PR-time run. Cadence (nightly) is the value-add.
   # ---------------------------------------------------------------------------
   osv-scanner:
-    name: OSV-Scanner
+    name: OSV-Scanner (fresh DB)
     permissions:
       contents: read
       security-events: write
       actions: read
-    # google/osv-scanner-action ships a reusable workflow that wraps the
-    # action + SARIF upload. Pinned to the same SHA as the action itself.
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
     with:
-      # `-r ./` recurses from the repo root, picking up both Cargo.lock and
-      # barback/pom.xml automatically. OSV-Scanner identifies lockfile types
-      # by filename.
       scan-args: |-
         -r
         --skip-git
         ./
 
   # ---------------------------------------------------------------------------
-  # OWASP Dependency-Check — Maven-side belt-and-suspenders alongside
-  # OSV-Scanner. OWASP DC uses the NVD vulnerability database, OSV uses the
-  # OSV.dev union; they disagree on a non-trivial subset of advisories.
-  #
-  # Configured in barback/pom.xml under the `dependency-check` profile so
-  # local builds don't pay the NVD-download cost on every `mvn verify`. Pass
-  # `-P dependency-check` (or `-Ddependency-check.skip=false`) to opt in.
+  # OWASP Dependency-Check — Maven-side scan. The plugin downloads
+  # the NVD vulnerability database on each run; this job intentionally
+  # does NOT restore the `actions/cache` of NVD data so a newly-published
+  # CVE is picked up immediately rather than waiting on the cache to
+  # expire. The trade-off is a slower run (~5 min of NVD download
+  # vs ~30s warm), which is fine on a nightly cadence.
   # ---------------------------------------------------------------------------
   barback-owasp-dc:
-    name: OWASP Dependency-Check (barback)
+    name: OWASP Dependency-Check (barback, fresh NVD)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -212,29 +208,14 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Cache OWASP Dependency-Check NVD data
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: owasp-dc-${{ runner.os }}-${{ hashFiles('barback/pom.xml') }}
-          restore-keys: |
-            owasp-dc-${{ runner.os }}-
+      # NOTE: deliberately no `actions/cache` step for the OWASP NVD
+      # data directory here. `sca.yml` caches it for PR latency; the
+      # nightly workflow burns the cache so a same-day CVE shows up.
       - name: Run dependency-check (verify phase, opt-in profile)
         env:
-          # Optional; if a contributor sets NVD_API_KEY as a repo secret the
-          # plugin uses the higher-rate-limited NVD API endpoint. The plugin
-          # still works (slower) without it.
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           mvn -f barback/pom.xml -B -P dependency-check verify
-      # The plugin's `<formats>` block in `barback/pom.xml` includes SARIF,
-      # so a SARIF report lands at `barback/target/dependency-check-report.sarif`
-      # on every run. Upload it so OWASP DC findings join the rest of the
-      # security suite in the Security tab under `category: owasp-dc`,
-      # matching the lowercase-tool-name convention used by every other
-      # scanner in this workflow (and across sast.yml / secret-scan.yml).
-      # `if: always()` so a failed mvn (the intended `failBuildOnCVSS=7`
-      # behavior) still surfaces the findings rather than hiding them.
       - name: Upload OWASP DC SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
@@ -243,16 +224,16 @@ jobs:
           category: owasp-dc
 
   # ---------------------------------------------------------------------------
-  # Trivy `fs` scan — cross-ecosystem catch-all. Picks up lockfile types and
-  # IaC misconfigurations that none of the language-specific scanners
-  # reliably cover.
+  # Trivy `fs` scan — cross-ecosystem catch-all. The aquasecurity
+  # action pulls a fresh vulnerability DB on every run (no in-image
+  # cache to bust on the nightly schedule), matching `sca.yml`'s
+  # behavior. Cadence is the value-add.
   #
-  # `secret` scanner is intentionally NOT enabled here — secret scanning is
-  # owned by the dedicated secret-scan workflow (gitleaks + trufflehog) so
-  # we don't double-report and so the allowlist semantics stay coherent.
+  # `secret` scanner remains intentionally OFF — owned by
+  # `secret-scan.yml`. Same rationale as `sca.yml`.
   # ---------------------------------------------------------------------------
   trivy-fs:
-    name: Trivy fs
+    name: Trivy fs (fresh DB)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -267,20 +248,13 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-          # `vuln` + `misconfig` only — `secret` is owned by the secret-scan
-          # workflow. Adding it here would create a parallel allowlist
-          # surface that drifts from .gitleaksignore.
           scanners: vuln,misconfig
           format: sarif
           output: trivy-results.sarif
-          # Surface High+ findings; the SARIF upload still records Low/Med.
           severity: CRITICAL,HIGH
-          # Fail the job on any finding at the configured severity.
           exit-code: '1'
           ignore-unfixed: false
       - name: Upload SARIF to code scanning
-        # Always upload, even when the scan step failed, so reviewers can
-        # inspect the findings in the Security tab.
         if: always()
         uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
         with:

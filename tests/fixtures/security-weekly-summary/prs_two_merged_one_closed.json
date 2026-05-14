@@ -1,0 +1,23 @@
+[
+  {
+    "number": 210,
+    "state": "MERGED",
+    "createdAt": "2026-05-09T10:00:00Z",
+    "mergedAt": "2026-05-10T09:00:00Z",
+    "closedAt": "2026-05-10T09:00:00Z"
+  },
+  {
+    "number": 211,
+    "state": "MERGED",
+    "createdAt": "2026-05-10T10:00:00Z",
+    "mergedAt": "2026-05-11T09:00:00Z",
+    "closedAt": "2026-05-11T09:00:00Z"
+  },
+  {
+    "number": 212,
+    "state": "CLOSED",
+    "createdAt": "2026-05-08T10:00:00Z",
+    "mergedAt": null,
+    "closedAt": "2026-05-09T09:00:00Z"
+  }
+]

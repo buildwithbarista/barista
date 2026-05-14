@@ -1,0 +1,20 @@
+[
+  {
+    "number": 900,
+    "state": "OPEN",
+    "title": "Security weekly summary — 2026-W19",
+    "labels": [{"name": "security"}, {"name": "weekly-summary"}],
+    "createdAt": "2026-05-04T13:00:00Z",
+    "closedAt": null,
+    "body": "Body of last week's summary.\n<!-- open-total: 2 -->\n<!-- iso-week: 2026-W19 -->"
+  },
+  {
+    "number": 800,
+    "state": "OPEN",
+    "title": "Security weekly summary — 2026-W05",
+    "labels": [{"name": "security"}, {"name": "weekly-summary"}],
+    "createdAt": "2026-01-26T13:00:00Z",
+    "closedAt": null,
+    "body": "Body of an old summary.\n<!-- open-total: 1 -->\n<!-- iso-week: 2026-W05 -->"
+  }
+]

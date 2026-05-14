@@ -48,6 +48,7 @@ on:  # zizmor: ignore[dangerous-triggers]
     # match the upstream workflow's top-level `name:` exactly.
     workflows:
       - "SCA — dependency vulnerability scanning"
+      - "SCA nightly — fresh-DB dependency scan"
       - "Secret scan — gitleaks + trufflehog"
       - "SAST — static analysis"
       - "CodeQL"
