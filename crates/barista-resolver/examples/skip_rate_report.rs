@@ -1,3 +1,15 @@
+// Integration-test / example / benchmark target — workspace security
+// lints are allowed here. Panic-on-misuse (`unwrap()`/`expect()`/`panic!`)
+// is the documented contract for failing a test loudly. This allow block
+// keeps the crate root's `#![allow(...)]` from being silently dropped by
+// the separate compilation unit each test file forms.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Report combined prune rates (nearest-wins + skipper) on a
 //! corpus of synthetic graphs and assert the milestone-level 60%
 //! target from PRD §5 on the fan-out 5x10 graph.

@@ -9,3 +9,6 @@ publish = false
 [[bin]]
 name = "roastery"
 path = "src/main.rs"
+
+[lints]
+workspace = true

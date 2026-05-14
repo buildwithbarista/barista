@@ -7,3 +7,6 @@ description = "Tap (remote-worker) registration and lifecycle management."
 publish = false
 
 [lib]
+
+[lints]
+workspace = true

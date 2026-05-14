@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs include filter for barback.
+
+  Scopes bytecode analysis to first-party classes. Without this filter,
+  SpotBugs walks every class on the compile classpath (test fixtures,
+  shaded dependencies, generated code) and produces noise.
+
+  Filter syntax: https://spotbugs.readthedocs.io/en/latest/filter.html
+-->
+<FindBugsFilter
+    xmlns="https://github.com/spotbugs/filter/3.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="https://github.com/spotbugs/filter/3.0.0 https://raw.githubusercontent.com/spotbugs/spotbugs/master/spotbugs/etc/findbugsfilter.xsd">
+    <Match>
+        <Class name="~com\.bluminal\.barista\.barback\..*"/>
+    </Match>
+</FindBugsFilter>

@@ -25,3 +25,6 @@ tempfile = "3"
 [[example]]
 name = "export-schema"
 path = "examples/export-schema.rs"
+
+[lints]
+workspace = true

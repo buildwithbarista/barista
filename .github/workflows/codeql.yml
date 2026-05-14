@@ -1,0 +1,97 @@
+# CodeQL Analysis — semantic SAST for Rust and Java.
+#
+# CodeQL builds a database of the source code's data-flow and
+# control-flow graphs, then runs queries against it. The default
+# `security-and-quality` query suite catches many things pattern-based
+# scanners miss (taint flows, sanitizer-missing call chains, dead
+# branches that hide bugs).
+#
+# Languages:
+#   rust — Cargo workspace (auto-built by the CodeQL action)
+#   java — `barback/` Maven project (auto-built via `mvn package`)
+#
+# Triggers:
+#   - pull_request          surface findings in PR review
+#   - push: main            ensure main stays clean
+#   - schedule: weekly      catch findings from new query releases
+#                           (CodeQL queries are updated continuously;
+#                           the weekly re-run picks up new detections
+#                           without requiring a code change)
+#
+# Findings are uploaded to GitHub code scanning as SARIF; the
+# `category` field distinguishes Rust from Java findings in the
+# Security tab.
+#
+# Every action is pinned to a commit SHA. The human-readable tag is
+# recorded next to the SHA; when bumping, update both.
+
+name: CodeQL
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # 03:00 UTC every Sunday. Off-the-hour to dodge the GitHub cron
+    # storm; weekly cadence to balance signal vs. compute cost.
+    - cron: "0 3 * * 0"
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            build-mode: autobuild
+          - language: java
+            build-mode: autobuild
+            # CodeQL's Java autobuilder runs `mvn package` from the
+            # workspace root by default. The `barback/` Maven project
+            # is the only Java code in the repo; the autobuilder
+            # detects the pom and builds it.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # Java needs a JDK on PATH for the autobuilder. Rust gets its
+      # toolchain from rust-toolchain.toml via the CodeQL action's
+      # pre-build hook.
+      - name: Set up JDK 21
+        if: matrix.language == 'java'
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # security-and-quality is the broader of the two default
+          # suites; the trade-off is more findings (some lower
+          # severity) for higher coverage. Tune to `security-extended`
+          # if the noise becomes a problem.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          # Distinct category per language so SARIF findings group
+          # correctly in the Security tab.
+          category: "/language:${{ matrix.language }}"

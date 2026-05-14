@@ -7,3 +7,6 @@ description = "Network-traffic capture harness for the resource-efficiency progr
 publish = false
 
 [lib]
+
+[lints]
+workspace = true

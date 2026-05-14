@@ -1,3 +1,14 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. Pre-existing parser internals in this crate are
+// allowed here while the codebase incrementally ratchets them down.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Layered configuration loader for Barista.
 //!
 //! Resolves the effective [`Config`] from six sources in increasing

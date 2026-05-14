@@ -1,0 +1,40 @@
+# Semgrep ignore file.
+#
+# Semgrep ships a default .semgrepignore that excludes broad swaths of
+# common test/build directories (including `tests/`, `node_modules/`,
+# `target/`, etc.). When this project file is present, Semgrep uses it
+# *instead* of the default — so we re-list the exclusions we still
+# want, and explicitly *don't* list `tests/fixtures/sast/` (the SAST
+# test inputs that the rules in `.semgrep/` are meant to scan).
+#
+# Patterns follow `.gitignore` syntax.
+
+# Build outputs.
+target/
+build/
+out/
+dist/
+
+# Vendored / generated.
+node_modules/
+.cargo/
+.gradle/
+
+# IDE and OS noise.
+.idea/
+.vscode/
+.DS_Store
+
+# Secret-scan fixtures (covered by gitleaks + trufflehog, not Semgrep;
+# Semgrep would rediscover the shaped-but-fake AWS key and add noise to
+# the SAST surface).
+tests/fixtures/secrets/
+
+# Corpus inputs for benchmarks/integration tests — large, generated,
+# and not meaningful targets for source-pattern matching.
+test-corpus/
+corpus/
+crates/barista-bench/corpus/
+
+# Do NOT add `tests/` here — the SAST fixtures at
+# `tests/fixtures/sast/` are required Semgrep inputs.

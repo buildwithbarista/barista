@@ -1,3 +1,11 @@
+// See `lib.rs` for the per-crate clippy security-lint allow rationale.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! The `barista` CLI entry point.
 //!
 //! Parses argv with `clap` and hands off to [`barista_cli::cli::dispatch`].

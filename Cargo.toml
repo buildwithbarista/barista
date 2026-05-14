@@ -35,4 +35,62 @@ version = "0.1.0-alpha.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
+# ---------------------------------------------------------------------------
+# Workspace-wide lint policy.
+#
+# These lints are configured workspace-wide and inherited by every crate via
+# `[lints] workspace = true` in each crate's `Cargo.toml`. The goal is to
+# elevate security-relevant clippy lints to first-class build gates so CI
+# (`cargo clippy --workspace --all-targets -- -D warnings`) blocks regressions.
+#
+# Severity rationale:
+#
+#   unwrap_used / expect_used / panic    warn  — surface accidental panics in
+#                                                non-test code; per-crate
+#                                                allows exist where a bounded
+#                                                panic is the documented
+#                                                contract (parser internals,
+#                                                CLI entry points). Test code
+#                                                is exempt via `#[cfg_attr(
+#                                                test, allow(...))]` or
+#                                                per-target overrides.
+#   mem_forget                           deny  — `mem::forget` is a footgun
+#                                                that disables Drop; no use
+#                                                in the workspace today and
+#                                                we never want one.
+#   as_conversions                       warn  — silent integer truncations
+#                                                are a classic source of
+#                                                security bugs (offset/length
+#                                                miscalc, sign confusion);
+#                                                prefer `From`/`TryFrom`.
+#   unsafe_code (rust lint)              warn  — surfaces every unsafe block
+#                                                in the crate; the two crates
+#                                                that legitimately need
+#                                                unsafe (`barista-cache`,
+#                                                `barista-pom`) allow it at
+#                                                the crate root with a
+#                                                documented justification.
+#
+# Per-crate overrides:
+#   - Crates with documented panic contracts (CLI entrypoints, parsers that
+#     panic on internal invariant violations) add `#![allow(clippy::unwrap_used,
+#     clippy::expect_used, clippy::panic)]` at the crate root with a one-line
+#     justification comment.
+#   - Crates with vetted `unsafe` blocks add `#![allow(unsafe_code)]` at the
+#     crate root next to a SAFETY-comment block referencing the invariants.
+#   - Test code (`#[cfg(test)]` modules + integration tests under `tests/`)
+#     is implicitly exempted by the `panic = "warn"` semantics for `#[test]`
+#     functions; explicit `#![cfg_attr(test, allow(...))]` is added at the
+#     crate root where needed.
+# ---------------------------------------------------------------------------
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+mem_forget = "deny"
+as_conversions = "warn"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
 [workspace.dependencies]

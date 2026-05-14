@@ -33,6 +33,17 @@
         -->
         <dependency-check-maven.version>12.1.0</dependency-check-maven.version>
         <dependency-check.skip>true</dependency-check.skip>
+        <!--
+          SpotBugs + FindSecBugs is wired up under the `sast` profile
+          below. Same pattern as dependency-check: skipped by default
+          so quick local builds (`mvn verify`) don't pay the analysis
+          cost; enable explicitly with:
+            mvn -P sast verify
+          The CI gate runs it on every PR.
+        -->
+        <spotbugs-maven-plugin.version>4.9.8.3</spotbugs-maven-plugin.version>
+        <findsecbugs-plugin.version>1.14.0</findsecbugs-plugin.version>
+        <spotbugs.skip>true</spotbugs.skip>
     </properties>
 
     <dependencyManagement>
@@ -106,6 +117,52 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <!--
+                  SpotBugs + FindSecBugs.
+
+                  SpotBugs is a Java bytecode static analyzer; FindSecBugs
+                  is a SpotBugs plugin that adds 130+ security-focused
+                  detectors (command injection, SQL injection, XXE,
+                  insecure deserialization, weak crypto, etc.).
+
+                  Bound to `verify` but skipped by default via the
+                  `spotbugs.skip` property. Activate via the `sast`
+                  profile (CI) or by setting the property to `false`.
+
+                  Severity gate: `failOnError=true` + `threshold=High`
+                  means a High-severity finding fails the build.
+                  `effort=Max` runs the full set of bug detectors; the
+                  trade-off is a slower analysis (~30s for the current
+                  barback codebase, scales linearly with class count).
+                -->
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>${spotbugs-maven-plugin.version}</version>
+                <configuration>
+                    <skip>${spotbugs.skip}</skip>
+                    <effort>Max</effort>
+                    <threshold>High</threshold>
+                    <failOnError>true</failOnError>
+                    <includeFilterFile>${project.basedir}/spotbugs-include.xml</includeFilterFile>
+                    <plugins>
+                        <plugin>
+                            <groupId>com.h3xstream.findsecbugs</groupId>
+                            <artifactId>findsecbugs-plugin</artifactId>
+                            <version>${findsecbugs-plugin.version}</version>
+                        </plugin>
+                    </plugins>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotbugs-check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -121,6 +178,19 @@
             <id>dependency-check</id>
             <properties>
                 <dependency-check.skip>false</dependency-check.skip>
+            </properties>
+        </profile>
+        <profile>
+            <!--
+              `sast` profile: flips the skip flag so the SpotBugs +
+              FindSecBugs plugin runs on `verify`. Used by CI and by
+              contributors who want to reproduce the scan locally:
+
+                mvn -f barback/pom.xml -P sast verify
+            -->
+            <id>sast</id>
+            <properties>
+                <spotbugs.skip>false</spotbugs.skip>
             </properties>
         </profile>
     </profiles>

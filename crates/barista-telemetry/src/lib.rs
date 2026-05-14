@@ -1,3 +1,14 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. Pre-existing transport-test scaffolding is
+// allowed here pending an incremental ratchet.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Opt-in telemetry transport for Barista.
 //!
 //! # Default-off

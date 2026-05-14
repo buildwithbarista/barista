@@ -1,3 +1,15 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. Pre-existing parser-internal invariants here
+// rely on bounded `expect()` calls that document parse contracts; allowed
+// pending an incremental ratchet that switches to typed-error returns.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Maven version comparison and ordering.
 //!
 //! This crate is a Rust port of Apache Maven's `ComparableVersion`

@@ -28,3 +28,6 @@ barista-test-fixtures = { path = "../barista-test-fixtures" }
 [[bench]]
 name = "walker"
 harness = false
+
+[lints]
+workspace = true

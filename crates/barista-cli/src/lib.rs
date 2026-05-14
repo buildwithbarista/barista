@@ -1,3 +1,16 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. Pre-existing uses in this crate's CLI dispatch
+// glue and tests are allowed here while the codebase incrementally
+// ratchets them down; new code in this crate should prefer `?` propagation
+// or typed errors over `unwrap()`/`expect()`.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Barista CLI library — used by the `barista` binary.
 //!
 //! The CLI surface is defined declaratively with `clap` derive

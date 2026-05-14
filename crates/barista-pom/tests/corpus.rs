@@ -1,3 +1,15 @@
+// Integration-test / example / benchmark target — workspace security
+// lints are allowed here. Panic-on-misuse (`unwrap()`/`expect()`/`panic!`)
+// is the documented contract for failing a test loudly. This allow block
+// keeps the crate root's `#![allow(...)]` from being silently dropped by
+// the separate compilation unit each test file forms.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Integration test: parse every pom.xml in the materialized test
 //! corpus. Skipped (with a clear `eprintln!`) when the corpus has not
 //! been materialized via `scripts/materialize-corpus.sh`.

@@ -7,3 +7,6 @@ description = "Client library for talking to a roastery cache server."
 publish = false
 
 [lib]
+
+[lints]
+workspace = true

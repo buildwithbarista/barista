@@ -7,3 +7,6 @@ description = "Benchmark harness for Barista."
 publish = false
 
 [lib]
+
+[lints]
+workspace = true

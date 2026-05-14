@@ -22,3 +22,6 @@ insta = "1.47"
 [[example]]
 name = "survey-extensions"
 path = "examples/survey-extensions.rs"
+
+[lints]
+workspace = true
