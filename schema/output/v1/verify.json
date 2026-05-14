@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/output/v1/verify.json",
+  "title": "barista verify — structured output (stub)",
+  "description": "Stub schema for the planned `barista verify` command. Reserves the document shape so consumers can begin coding against the discriminator and status enum ahead of the feature landing. stub — see PRD §9 / M5.x for implementation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "status",
+    "details"
+  ],
+  "properties": {
+    "command": {
+      "const": "verify",
+      "description": "Discriminator. Always the literal string `verify` for documents produced by `barista verify`."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed",
+        "not-yet-implemented"
+      ],
+      "description": "Overall verification result. `not-yet-implemented` is emitted while the command is a stub; once shipped it will only emit `ok` or `failed`."
+    },
+    "details": {
+      "type": "array",
+      "description": "Per-check details. Shape of array items is intentionally unconstrained for the stub; v2 of this schema will tighten it once the verification model is finalized.",
+      "items": true
+    }
+  }
+}

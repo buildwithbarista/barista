@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/output/v1/pull.json",
+  "title": "barista pull — structured output",
+  "description": "Top-level document emitted by `barista pull --output json`. Reports the outcome of dependency resolution, lockfile reconciliation, and artifact fetching for a project. All keys are kebab-case; the `command` field is a constant string discriminator that disambiguates this document from other Barista output documents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "project-root",
+    "lockfile-status",
+    "entries",
+    "fetched",
+    "no-fetch",
+    "strict"
+  ],
+  "properties": {
+    "command": {
+      "const": "pull",
+      "description": "Discriminator. Always the literal string `pull` for documents produced by `barista pull`."
+    },
+    "project-root": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path to the project root that was operated on (the directory holding `pom.xml`, or the wrapper-resolved root)."
+    },
+    "lockfile-status": {
+      "type": "string",
+      "enum": [
+        "unchanged",
+        "written",
+        "would-write",
+        "stale"
+      ],
+      "description": "Outcome of lockfile reconciliation: `unchanged` (lockfile matched the resolution), `written` (lockfile was rewritten on disk), `would-write` (a write was suppressed by `--check`/`--dry-run`), or `stale` (lockfile diverged from the project under strict mode and the command failed)."
+    },
+    "entries": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of resolved coords in the lockfile after this run."
+    },
+    "fetched": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of artifacts that were downloaded over the network during this run. Artifacts served from the local cache do not count."
+    },
+    "no-fetch": {
+      "type": "boolean",
+      "description": "Whether the command ran with `--no-fetch` (resolution-only, no network)."
+    },
+    "strict": {
+      "type": "boolean",
+      "description": "Whether strict mode was active. In strict mode a stale lockfile is an error rather than a regeneration trigger."
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Optional list of non-fatal warnings emitted during the run.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}
