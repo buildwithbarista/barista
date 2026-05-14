@@ -1,0 +1,132 @@
+# Dependabot configuration.
+#
+# Three ecosystems are tracked here:
+#   - github-actions  pinned-by-SHA workflow `uses:` lines under
+#                     .github/workflows/. Action bumps are batched into a
+#                     single weekly PR so review burden is bounded.
+#   - cargo           the Rust workspace lockfile (Cargo.lock). Security
+#                     updates open their own PRs (zero-batching) so they
+#                     can land fast; the rest are batched weekly.
+#   - maven           the barback Maven project at barback/pom.xml.
+#                     Security updates are split out the same way.
+#
+# When Dependabot opens a PR, the SHA in `uses:` flips to the new
+# commit and the inline `# vX.Y.Z` comment is rewritten by Dependabot
+# automatically (it understands the trailing-comment convention).
+#
+# Reviewer tip: a Dependabot PR that bumps an action must touch BOTH
+# the SHA and the comment. A PR that touches only one side is a bug.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # GitHub Actions — pinned-by-SHA `uses:` lines across all workflows.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "ci"
+      include: scope
+    groups:
+      # One PR per week with every action bump in it. Keeps review
+      # burden bounded; if a single bump is risky it can be split out
+      # by hand at review time.
+      actions:
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # Cargo — Rust workspace lockfile at the repo root.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - rust
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      # Security advisories land in their own PRs so they can be
+      # reviewed + merged ahead of routine bumps.
+      cargo-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      # Everything else batches into one weekly PR.
+      cargo-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # Maven (barback) — the embedder POM at barback/pom.xml.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: maven
+    directory: /barback
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - java
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      maven-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      maven-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # ---------------------------------------------------------------------------
+  # Maven (barback-bench) — the JMH benchmark harness at
+  # barback/bench/pom.xml. Standalone POM (no parent) so Dependabot needs
+  # its own entry.
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: maven
+    directory: /barback/bench
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - java
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      maven-bench-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      maven-bench-routine:
+        applies-to: version-updates
+        patterns:
+          - "*"

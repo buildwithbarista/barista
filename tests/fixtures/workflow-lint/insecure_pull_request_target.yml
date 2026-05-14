@@ -1,0 +1,48 @@
+# DELIBERATELY INSECURE — DO NOT MOVE THIS FILE INTO .github/workflows/.
+#
+# This file is a synthetic fixture for the workflow-lint round-trip test:
+# it combines `on: pull_request_target` (which runs in the BASE repo's
+# context with read-write secrets) with an `actions/checkout` of the PR
+# head ref (which checks out attacker-controlled code from the fork).
+#
+# The result is the canonical "pwn request" vulnerability: arbitrary
+# code from an untrusted PR runs inside the privileged base-repo
+# execution context. Real-world incidents using this pattern have
+# leaked CI secrets and tampered with downstream builds.
+#
+# zizmor's `dangerous-triggers` + `template-injection` rules MUST flag
+# this file. If they don't, the analyzer has regressed and the lint
+# gate is no longer trustworthy.
+#
+# This fixture is invoked by the `zizmor-fixture` job in
+# `.github/workflows/workflow-lint.yml`. It is intentionally NOT placed
+# under `.github/workflows/` so GitHub does not schedule it.
+
+name: insecure-pull-request-target-pwn-request
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  pwn-request:
+    runs-on: ubuntu-latest
+    steps:
+      # ANTI-PATTERN: checking out `github.event.pull_request.head.ref`
+      # (an attacker-controlled branch on a fork) while running with
+      # the base repo's secrets is the canonical "pwn request" flaw.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+      # ANTI-PATTERN: interpolating `github.event.pull_request.title`
+      # (attacker-controlled) directly into a shell `run:` block is a
+      # template-injection sink.
+      - name: Dangerous template injection
+        run: |
+          echo "Processing PR titled: ${{ github.event.pull_request.title }}"
+          ./scripts/run-tests.sh

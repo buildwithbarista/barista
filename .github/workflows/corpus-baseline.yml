@@ -6,6 +6,10 @@
 #
 # Runs on PRs that touch the corpus or its tooling, plus weekly to catch
 # upstream-tag churn (deleted tags, transitive-dep drift, etc.).
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers can
+# audit drift. When bumping, update both the SHA and the comment.
 
 name: corpus-baseline
 
@@ -18,14 +22,16 @@ on:
   schedule:
     - cron: '0 6 * * 1'
 
-permissions:
-  contents: read
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
 
 jobs:
   matrix-build:
     name: ${{ matrix.project }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +42,9 @@ jobs:
           - assertj-core
           - slf4j
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Read corpus.lock.toml
         id: lock
@@ -72,7 +80,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK ${{ steps.lock.outputs.jdk }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
         with:
           distribution: temurin
           java-version: ${{ steps.lock.outputs.jdk }}
@@ -106,7 +114,7 @@ jobs:
 
       - name: Upload build logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: corpus-${{ matrix.project }}-logs
           path: test-corpus/${{ matrix.project }}/checkout/**/target/*.log
