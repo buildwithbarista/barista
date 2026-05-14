@@ -153,6 +153,20 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           mvn -f barback/pom.xml -B -P dependency-check verify
+      # The plugin's `<formats>` block in `barback/pom.xml` includes SARIF,
+      # so a SARIF report lands at `barback/target/dependency-check-report.sarif`
+      # on every run. Upload it so OWASP DC findings join the rest of the
+      # security suite in the Security tab under `category: owasp-dc`,
+      # matching the lowercase-tool-name convention used by every other
+      # scanner in this workflow (and across sast.yml / secret-scan.yml).
+      # `if: always()` so a failed mvn (the intended `failBuildOnCVSS=7`
+      # behavior) still surfaces the findings rather than hiding them.
+      - name: Upload OWASP DC SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          sarif_file: barback/target/dependency-check-report.sarif
+          category: owasp-dc
 
   # ---------------------------------------------------------------------------
   # Trivy `fs` scan — cross-ecosystem catch-all. Picks up lockfile types and
