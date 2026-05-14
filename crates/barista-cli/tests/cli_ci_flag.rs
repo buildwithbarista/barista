@@ -136,6 +136,10 @@ fn run_ci_pull(dir: &std::path::Path) -> Vec<u8> {
     // surface a CI environment hits. Path is resolved relative to
     // the workspace's target/debug.
     let exe = barista_test_bin();
+    // `exe` is the canonical path to the just-built `barista` binary
+    // under `target/<profile>/`, resolved by `barista_test_bin()`.
+    // Workspace-controlled at compile time; no user input flows here.
+    // nosemgrep: barista-rust-unchecked-command-new
     let out = std::process::Command::new(&exe)
         .args([
             "--ci",

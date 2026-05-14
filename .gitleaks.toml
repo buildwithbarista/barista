@@ -71,3 +71,9 @@ paths = [
     '''Cargo\.lock$''',
     '''(^|/)target/''',
 ]
+
+[[allowlists]]
+description = "Materialized test corpus: external Maven projects checked out by scripts/materialize-corpus.sh into test-corpus/ for the M3.1 baseline scaffolding. These projects' own source contains whatever the upstream authors chose to embed (example error reporters, README examples, etc.). The directory is gitignored — it is never committed — so a finding here is by definition an external artifact, not a Barista credential."
+paths = [
+    '''(^|/)test-corpus/''',
+]

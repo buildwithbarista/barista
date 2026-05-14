@@ -276,6 +276,10 @@ fn generated_baristaw_version_boot_test() {
     }
 
     // Invoke the generated wrapper.
+    // The path is `baristaw` joined to the per-test `project` tempdir
+    // created by this same test function. No user input feeds either
+    // half — the join is fully test-controlled.
+    // nosemgrep: barista-rust-unchecked-command-new
     let output = Command::new(project.path().join("baristaw"))
         .arg("--version")
         .env("BARISTA_USER_HOME", home.path())

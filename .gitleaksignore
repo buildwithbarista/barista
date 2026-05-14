@@ -53,6 +53,14 @@
 # ---------------------------------------------------------------------------
 # Entries
 # ---------------------------------------------------------------------------
-# (No entries yet. Tests that depend on a temporarily-allowlisted fingerprint
-#  manage that state at runtime — see scripts/test-secret-scan.sh — so this
-#  file stays clean by default.)
+
+# tests/fixtures/secrets/synthetic_aws_key.txt — aws-access-token
+# Deliberately-shaped synthetic AWS access key used by the secret-scan
+# round-trip test (`scripts/test-secret-scan.sh`). The fixture is meant
+# to TRIP the upstream `aws-access-token` rule — that is the test's
+# pass condition — so it cannot be removed at source. The round-trip
+# test uses `--gitleaks-ignore-path` with its own temporary ignore
+# files, so it does not consume this entry; this entry exists so the
+# default `gitleaks detect` invocation used by `cargo xtask security`,
+# the pre-commit hook, and the CI workflow stay green. Added 2026-05-14.
+tests/fixtures/secrets/synthetic_aws_key.txt:aws-access-token:8

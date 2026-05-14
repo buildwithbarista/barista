@@ -156,7 +156,22 @@ const CHECKS: &[Check] = &[
         // on `tests/fixtures/sast/`; we mirror the workspace-wide
         // invocation here so a contributor sees the same findings CI
         // would. Honors `.semgrepignore` for any deliberate exclusions.
-        args: &["--config", ".semgrep/", "--error", "--quiet"],
+        // `--exclude` skips the SAST fixture directory. The fixtures
+        //   under `tests/fixtures/sast/` are deliberate violations
+        //   that the custom rules in `.semgrep/` are designed to fire
+        //   on — they're the inputs to the `semgrep-fixture-round-trip`
+        //   job in CI (which targets that directory explicitly to
+        //   prove the rules still catch them). Excluding them here
+        //   keeps `cargo xtask security` green on a clean tree while
+        //   the round-trip job continues to validate the rule pack.
+        args: &[
+            "--config",
+            ".semgrep/",
+            "--error",
+            "--quiet",
+            "--exclude",
+            "tests/fixtures/sast/",
+        ],
         requirement: Requirement::Optional,
         install_hint: "brew install semgrep   # or: pipx install semgrep",
     },
