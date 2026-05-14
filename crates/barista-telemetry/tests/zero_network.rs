@@ -20,8 +20,8 @@
 //!    preserves the three-field surface.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use barista_config::sources::EnvGetter;
 use barista_config::{Config, LoaderInputs, PartialConfig, load_effective_config};
@@ -231,8 +231,7 @@ made-up-knob = "nope"
 "#;
     let err = toml::from_str::<PartialConfig>(bad).unwrap_err();
     assert!(
-        err.to_string().contains("made-up-knob")
-            || err.to_string().contains("unknown field"),
+        err.to_string().contains("made-up-knob") || err.to_string().contains("unknown field"),
         "expected unknown-field rejection; got: {err}"
     );
 }

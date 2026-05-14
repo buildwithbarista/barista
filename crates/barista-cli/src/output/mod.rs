@@ -133,9 +133,7 @@ pub fn make_renderer(
     ansi: bool,
 ) -> Box<dyn Renderer> {
     match format {
-        OutputFormat::Human => {
-            Box::new(HumanRenderer::new(stdout, Box::new(io::stderr()), ansi))
-        }
+        OutputFormat::Human => Box::new(HumanRenderer::new(stdout, Box::new(io::stderr()), ansi)),
         OutputFormat::Json => Box::new(JsonRenderer::new(stdout, /* pretty: */ ansi)),
         OutputFormat::Ndjson => Box::new(NdjsonRenderer::new(stdout)),
     }

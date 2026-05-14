@@ -43,9 +43,9 @@ use barista_pom::profile::{ActivationContext, ResolveError as PomResolveError, r
 use barista_pom::raw::{ParseError as PomParseError, RawParent, RawPom, parse_pom};
 
 use crate::cli::{GlobalFlags, PullArgs};
+use crate::output::make_runtime_renderer;
 use crate::output::progress::{ProgressSink, make_runtime_progress_sink};
 use crate::output::report::{LockfileStatus, PullReport};
-use crate::output::make_runtime_renderer;
 use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
 
 /// Run `barista pull`.
@@ -89,9 +89,7 @@ pub fn run(global: &GlobalFlags, args: &PullArgs) -> i32 {
             // change. Renderer is still consulted for json/ndjson.
             let err = PullError::NotYetImplemented { detail };
             if matches!(global.output, crate::cli::OutputFormat::Human) {
-                eprintln!(
-                    "barista: pull (full-fetch path) is not yet wired in this build: {err}"
-                );
+                eprintln!("barista: pull (full-fetch path) is not yet wired in this build: {err}");
             } else if let Err(re) = renderer.render_error(&err) {
                 eprintln!("error: rendering error report failed: {re}");
             }

@@ -332,11 +332,7 @@ fn grind_tree_json_compact_snapshot() {
     let body = stdout.as_string();
     assert_eq!(body.matches('\n').count(), 1);
     let doc: Value = serde_json::from_str(&body).expect("compact grind-tree is valid JSON");
-    assert_valid(
-        &load("grind-tree.json"),
-        &doc,
-        "grind-tree json (compact)",
-    );
+    assert_valid(&load("grind-tree.json"), &doc, "grind-tree json (compact)");
     insta::assert_snapshot!("grind_tree_json_compact", body);
 }
 

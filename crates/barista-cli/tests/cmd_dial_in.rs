@@ -136,7 +136,11 @@ fn refuses_to_overwrite_without_force() {
 #[test]
 fn force_overwrites_existing() {
     let (td, opts) = opts_in_tmp(true);
-    fs::write(&opts.output_path, "garbage = \"not valid for our schema\"\n").unwrap();
+    fs::write(
+        &opts.output_path,
+        "garbage = \"not valid for our schema\"\n",
+    )
+    .unwrap();
 
     let mut prompter = ScriptedPrompter::all_defaults();
     let report = dial_in(opts, &mut prompter).expect("force should succeed");
@@ -195,10 +199,10 @@ fn concurrency_is_clamped() {
     let (td, opts) = opts_in_tmp(false);
 
     let answers = vec![
-        "".to_string(),       // mirror — default
-        "no".to_string(),     // no roastery
-        "64".to_string(),     // concurrency way above MAX_CONCURRENCY
-        "".to_string(),       // strict — default
+        "".to_string(),   // mirror — default
+        "no".to_string(), // no roastery
+        "64".to_string(), // concurrency way above MAX_CONCURRENCY
+        "".to_string(),   // strict — default
     ];
     let mut prompter = ScriptedPrompter::new(answers);
 
@@ -226,7 +230,10 @@ fn invalid_concurrency_errors_cleanly() {
     let mut prompter = ScriptedPrompter::new(answers);
 
     let err = dial_in(opts, &mut prompter).expect_err("bad number should fail");
-    assert!(matches!(err, DialInError::InvalidNumber { .. }), "got {err:?}");
+    assert!(
+        matches!(err, DialInError::InvalidNumber { .. }),
+        "got {err:?}"
+    );
 }
 
 /// Snapshot the TOML produced by a fully-defaulted run. The

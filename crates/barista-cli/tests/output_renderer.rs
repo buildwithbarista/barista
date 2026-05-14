@@ -210,11 +210,17 @@ fn json_renderer_pretty_emits_indented_document() {
     r.render_pull(&sample_pull_report()).unwrap();
     let body = stdout.as_string();
     // Pretty-printed JSON contains a newline between fields.
-    assert!(body.contains("\n  \""), "expected indentation; got:\n{body}");
+    assert!(
+        body.contains("\n  \""),
+        "expected indentation; got:\n{body}"
+    );
     // serde_json::to_writer_pretty does not append a newline; the
     // renderer does. Confirm exactly one trailing newline.
     assert!(body.ends_with('\n'));
-    assert!(!body.ends_with("\n\n"), "expected exactly one trailing newline");
+    assert!(
+        !body.ends_with("\n\n"),
+        "expected exactly one trailing newline"
+    );
     // Round-trip.
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["command"], "pull");
@@ -287,7 +293,9 @@ fn json_renderer_rejects_double_render() {
     let stdout = SharedBuf::new();
     let mut r = JsonRenderer::new(stdout.writer(), false);
     r.render_pull(&sample_pull_report()).unwrap();
-    let err = r.render_pull(&sample_pull_report()).expect_err("must reject");
+    let err = r
+        .render_pull(&sample_pull_report())
+        .expect_err("must reject");
     assert!(
         format!("{err}").contains("already emitted"),
         "expected double-emit error, got: {err}"
@@ -449,10 +457,7 @@ fn snapshot_pull_json_pretty() {
 fn snapshot_pour_ndjson_result_line() {
     let stdout = SharedBuf::new();
     // Pin the clock so the snapshot bytes are deterministic.
-    let mut r = NdjsonRenderer::with_fixed_timestamp(
-        stdout.writer(),
-        "2026-05-14T12:34:56.789Z",
-    );
+    let mut r = NdjsonRenderer::with_fixed_timestamp(stdout.writer(), "2026-05-14T12:34:56.789Z");
     r.render_pour(&sample_pour_report()).unwrap();
     insta::assert_snapshot!("pour_ndjson_result_line", stdout.as_string());
 }

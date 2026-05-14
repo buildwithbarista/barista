@@ -88,9 +88,7 @@ fn assert_line_valid(validator: &Validator, line: &str, index: usize) {
     let doc: Value = serde_json::from_str(line)
         .unwrap_or_else(|e| panic!("line {index} is not valid JSON: {e}\nline: {line}"));
     if let Err(error) = validator.validate(&doc) {
-        panic!(
-            "line {index} failed schema validation: {error}\nline: {line}"
-        );
+        panic!("line {index} failed schema validation: {error}\nline: {line}");
     }
 }
 
@@ -195,8 +193,7 @@ fn pull_500_dep_stream_validates_every_event_against_schema() {
         // Wire the sink and the renderer to the same shared buffer
         // so the event stream and the terminal `result` line land in
         // the same byte sequence the production stdout would carry.
-        let mut sink =
-            NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut sink = NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         let report = run_inner(&global, &args, &mut sink).expect("pull --no-fetch ok");
         let mut renderer =
             NdjsonRenderer::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
@@ -266,8 +263,7 @@ fn pull_stream_ordering_invariants() {
     };
 
     {
-        let mut sink =
-            NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut sink = NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         let report = run_inner(&global, &args, &mut sink).expect("pull --no-fetch ok");
         let mut renderer =
             NdjsonRenderer::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
@@ -320,8 +316,7 @@ fn per_variant_required_fields_are_present() {
     };
 
     {
-        let mut sink =
-            NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut sink = NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         let report = run_inner(&global, &args, &mut sink).expect("pull ok");
         let mut renderer =
             NdjsonRenderer::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
@@ -430,7 +425,10 @@ fn factory_dispatches_correct_sink_per_format() {
                 "ndjson sink should emit 4 events, got {}: {stdout_text}",
                 lines.len()
             );
-            assert!(stderr_text.is_empty(), "ndjson sink should not touch stderr");
+            assert!(
+                stderr_text.is_empty(),
+                "ndjson sink should not touch stderr"
+            );
         } else {
             assert!(
                 stdout_text.is_empty(),
@@ -466,8 +464,7 @@ fn ten_dep_stream_every_line_validates() {
     };
 
     {
-        let mut sink =
-            NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut sink = NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         let report = run_inner(&global, &args, &mut sink).expect("ok");
         let mut renderer =
             NdjsonRenderer::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");

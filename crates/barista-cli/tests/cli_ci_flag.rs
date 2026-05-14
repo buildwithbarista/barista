@@ -42,7 +42,11 @@ fn ci_macro_expands_to_frozen_json_quiet_nocolor() {
     assert!(g.frozen, "--ci should imply --frozen");
     assert!(g.quiet, "--ci should imply --quiet");
     assert!(g.no_color, "--ci should imply --no-color");
-    assert_eq!(g.output, OutputFormat::Json, "--ci should imply --output json");
+    assert_eq!(
+        g.output,
+        OutputFormat::Json,
+        "--ci should imply --output json"
+    );
 }
 
 #[test]
@@ -58,7 +62,14 @@ fn ci_macro_is_idempotent_when_user_also_passes_components() {
     // The user double-spells the macro by passing `--ci` AND the
     // individual flags. The result must be the same.
     let g = parse_and_apply(&[
-        "barista", "--ci", "--frozen", "--quiet", "--no-color", "--output", "json", "pull",
+        "barista",
+        "--ci",
+        "--frozen",
+        "--quiet",
+        "--no-color",
+        "--output",
+        "json",
+        "pull",
     ]);
     assert!(g.frozen && g.quiet && g.no_color);
     assert_eq!(g.output, OutputFormat::Json);
@@ -69,7 +80,11 @@ fn frozen_flag_is_independently_settable_without_ci() {
     let g = parse_and_apply(&["barista", "--frozen", "pull"]);
     assert!(g.frozen);
     assert!(!g.ci);
-    assert_eq!(g.output, OutputFormat::Human, "no --ci → human stays default");
+    assert_eq!(
+        g.output,
+        OutputFormat::Human,
+        "no --ci → human stays default"
+    );
 }
 
 #[test]
@@ -143,8 +158,7 @@ fn ci_pull_produces_byte_equal_output_across_runs() {
     let b = run_ci_pull(&proj);
 
     assert_eq!(
-        a,
-        b,
+        a, b,
         "two consecutive `barista --ci pull --no-fetch` runs should produce byte-equal stdout"
     );
 

@@ -299,8 +299,7 @@ mod tests {
     #[test]
     fn ndjson_sink_emits_one_line_per_event() {
         let buf = Buf::new();
-        let mut s =
-            NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut s = NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         s.started("pull");
         s.cached("com.example:a:1.0");
         s.cached("com.example:b:2.0");
@@ -318,8 +317,7 @@ mod tests {
     #[test]
     fn ndjson_sink_omits_optional_keys() {
         let buf = Buf::new();
-        let mut s =
-            NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut s = NdjsonSink::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         s.started("pull");
         let line = buf.text();
         // `started` has no coord, no progress, no payload. Verify

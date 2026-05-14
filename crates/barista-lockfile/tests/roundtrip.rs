@@ -735,7 +735,10 @@ fn build_fixtures() -> Vec<(&'static str, Lockfile)> {
         ("single_reactor", fx_single_reactor()),
         ("multi_reactor_3", fx_multi_reactor_3()),
         ("many_reactor_modules", fx_many_reactor_modules()),
-        ("reactor_with_snapshot_versions", fx_reactor_with_snapshot_versions()),
+        (
+            "reactor_with_snapshot_versions",
+            fx_reactor_with_snapshot_versions(),
+        ),
         // single-entry per scope (6)
         ("one_entry_compile", fx_one_entry_compile()),
         ("scope_compile", fx_scope("compile")),
@@ -757,7 +760,10 @@ fn build_fixtures() -> Vec<(&'static str, Lockfile)> {
         ("with_etag", fx_with_etag()),
         // http revalidation hints (2)
         ("with_last_modified", fx_with_last_modified()),
-        ("with_etag_and_last_modified", fx_with_etag_and_last_modified()),
+        (
+            "with_etag_and_last_modified",
+            fx_with_etag_and_last_modified(),
+        ),
         // from_path / depth (3)
         ("from_path_depth_1", fx_from_path_depth_1()),
         ("from_path_depth_3", fx_from_path_depth_3()),
@@ -767,7 +773,10 @@ fn build_fixtures() -> Vec<(&'static str, Lockfile)> {
         ("exclusions_many", fx_exclusions_many()),
         // snapshots (2)
         ("snapshot_resolution", fx_snapshot_resolution()),
-        ("snapshot_resolution_multiple", fx_snapshot_resolution_multiple()),
+        (
+            "snapshot_resolution_multiple",
+            fx_snapshot_resolution_multiple(),
+        ),
         // settings (4)
         ("settings_mirrors_only", fx_settings_mirrors_only()),
         ("settings_repos_only", fx_settings_repos_only()),
@@ -780,7 +789,10 @@ fn build_fixtures() -> Vec<(&'static str, Lockfile)> {
         ("combined_kitchen_sink", fx_combined_kitchen_sink()),
         // reactor + entries (2)
         ("reactor_plus_entries", fx_reactor_plus_entries()),
-        ("reactor_entries_and_settings", fx_reactor_entries_and_settings()),
+        (
+            "reactor_entries_and_settings",
+            fx_reactor_entries_and_settings(),
+        ),
         // stress shape (1)
         ("stress_100_entries", fx_stress_100_entries()),
         // edge cases (12)
@@ -789,7 +801,10 @@ fn build_fixtures() -> Vec<(&'static str, Lockfile)> {
         ("large_size_bytes", fx_large_size_bytes()),
         ("zero_size_bytes", fx_zero_size_bytes()),
         ("long_classifier", fx_long_classifier()),
-        ("url_with_query_and_fragment", fx_url_with_query_and_fragment()),
+        (
+            "url_with_query_and_fragment",
+            fx_url_with_query_and_fragment(),
+        ),
         ("versions_with_qualifiers", fx_versions_with_qualifiers()),
         ("deeply_nested_groups", fx_deeply_nested_groups()),
         ("etag_with_quotes", fx_etag_with_quotes()),
@@ -803,7 +818,10 @@ fn build_fixtures() -> Vec<(&'static str, Lockfile)> {
         ("entries_increasing_depth", fx_entries_increasing_depth()),
         ("all_optional_set", fx_all_optional_set()),
         // more (3)
-        ("repeated_coords_distinct_versions", fx_repeated_coords_distinct_versions()),
+        (
+            "repeated_coords_distinct_versions",
+            fx_repeated_coords_distinct_versions(),
+        ),
         ("single_module_one_dep", fx_single_module_one_dep()),
         ("no_reactor_with_entries", fx_no_reactor_with_entries()),
         ("single_entry_compile_minimal", fx_one_entry_compile()),

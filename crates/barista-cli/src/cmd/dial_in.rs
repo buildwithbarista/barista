@@ -251,9 +251,7 @@ pub enum DialInError {
     )]
     NoHome,
 
-    #[error(
-        "answer to {question:?} was {value:?}, but expected one of: {expected}"
-    )]
+    #[error("answer to {question:?} was {value:?}, but expected one of: {expected}")]
     BadAnswer {
         question: String,
         value: String,
@@ -326,7 +324,13 @@ pub fn dial_in(opts: DialInOpts, prompter: &mut dyn Prompter) -> Result<DialInRe
     let strict = prompter.ask_bool(PROMPT_STRICT, false)?;
 
     // Render and write.
-    let toml_text = render_toml(&mirror_url, use_roastery, roastery_url.as_deref(), concurrency, strict);
+    let toml_text = render_toml(
+        &mirror_url,
+        use_roastery,
+        roastery_url.as_deref(),
+        concurrency,
+        strict,
+    );
     write_atomically(&opts.output_path, &toml_text)?;
 
     Ok(DialInReport {

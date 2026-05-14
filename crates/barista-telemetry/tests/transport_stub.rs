@@ -239,8 +239,7 @@ fn invalid_url_returns_err_no_panic() {
 #[test]
 fn new_with_no_endpoint_succeeds_and_is_silent() {
     let settings = TelemetrySettings::default();
-    let sink =
-        HttpTelemetrySink::new(&settings).expect("no endpoint ⇒ constructor should succeed");
+    let sink = HttpTelemetrySink::new(&settings).expect("no endpoint ⇒ constructor should succeed");
     // It's a real sink that just happens to drop everything.
     for ev in every_event_variant() {
         sink.submit(ev);

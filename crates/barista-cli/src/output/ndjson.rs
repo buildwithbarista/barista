@@ -333,9 +333,7 @@ fn rfc3339_millis(t: SystemTime) -> String {
     let minute = (secs_of_day % 3600) / 60;
     let second = secs_of_day % 60;
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
 }
 
 /// Convert days-since-1970-01-01 to (year, month, day).

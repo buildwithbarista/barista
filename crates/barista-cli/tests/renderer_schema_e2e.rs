@@ -170,11 +170,7 @@ fn grind_tree_json_output_validates_against_grind_tree_schema() {
         r.render_grind_tree(&sample_grind_tree_report()).unwrap();
     }
     let doc: Value = serde_json::from_slice(&buf.bytes()).expect("renderer produced valid JSON");
-    assert_valid(
-        &load("grind-tree.json"),
-        &doc,
-        "grind tree --output json",
-    );
+    assert_valid(&load("grind-tree.json"), &doc, "grind tree --output json");
 }
 
 #[test]
@@ -200,8 +196,7 @@ where
 {
     let buf = SharedBuf::new();
     {
-        let mut r =
-            NdjsonRenderer::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
+        let mut r = NdjsonRenderer::with_fixed_timestamp(buf.writer(), "2026-05-14T12:34:56.789Z");
         render(&mut r);
     }
     let text = String::from_utf8(buf.bytes()).expect("ndjson is utf-8");
@@ -263,9 +258,5 @@ fn ndjson_error_event_validates_envelope() {
     let env = ndjson_for(|r| {
         r.render_error(&E("oops")).unwrap();
     });
-    assert_valid(
-        &load("progress-event.json"),
-        &env,
-        "error ndjson envelope",
-    );
+    assert_valid(&load("progress-event.json"), &env, "error ndjson envelope");
 }
