@@ -10,6 +10,7 @@ pub mod skipper;
 pub mod snapshot;
 pub mod source;
 pub mod strict;
+pub mod strict_format;
 pub mod version_spec;
 pub mod walker;
 
@@ -27,6 +28,7 @@ pub use source::{
 pub use strict::{
     DepEdge, ResolvedStrictDep, StrictDerivation, StrictError, StrictOutcome, resolve_strict,
 };
+pub use strict_format::{format_derivation, pubgrub_range_to_maven};
 pub use version_spec::{Bound, Interval, ParseError, SpecWarning, VersionSpec};
 pub use walker::{
     AuditEntry, FixtureSource, ResolvedDep, ResolvedGraph, Scope, WalkError, WalkOptions, walk,
