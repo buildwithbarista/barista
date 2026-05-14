@@ -1,3 +1,14 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. Pre-existing schema-serializer and diff-renderer
+// uses are allowed here pending an incremental ratchet.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! barista.lock parser, serializer, and diff renderer.
 //!
 //! The [`schema`] module defines the on-disk TOML format

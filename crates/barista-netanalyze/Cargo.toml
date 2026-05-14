@@ -7,3 +7,6 @@ description = "Network-capture analysis pipeline for the resource-efficiency pro
 publish = false
 
 [lib]
+
+[lints]
+workspace = true

@@ -1,0 +1,93 @@
+# Barista-specific Semgrep rules for Rust code.
+#
+# These rules cover anti-patterns the upstream `r/rust` rule pack doesn't
+# catch but that matter for the Barista codebase specifically:
+#
+#   - barista-rust-unchecked-command-new
+#       Raw `std::process::Command::new(...)` in the CLI without arg
+#       validation. The CLI shells out to external Maven/Java toolchains
+#       in several places, and every call site must either (a) pass a
+#       hard-coded program name (no interpolation) or (b) explicitly
+#       allowlist the program against the resolved-toolchain table in
+#       `barista-cli::project`. Bare interpolation of a user-controlled
+#       string into `Command::new` is the canonical command-injection
+#       footgun.
+#
+#   - barista-rust-string-from-utf8-unchecked
+#       `String::from_utf8_unchecked` is `unsafe` and bypasses UTF-8
+#       validation. Outside the cache hot path (where bytes have already
+#       been checksummed and validated upstream) this is never the right
+#       answer; `String::from_utf8` returns a typed error that is cheap
+#       enough for non-hot-path call sites.
+#
+#   - barista-rust-transmute
+#       `std::mem::transmute` (or `core::mem::transmute`) calls outside
+#       vetted content-addressed-storage code. The CAS layer occasionally
+#       needs aligned reinterpret-casts for performance; nothing else in
+#       Barista does. Surface every other call site for review.
+#
+# Trigger CI by adding any matching pattern to a tracked Rust file; the
+# `tests/fixtures/sast/` directory has synthetic violations + clean
+# counterparts that exercise these rules and the wider `r/rust` pack.
+
+rules:
+  - id: barista-rust-unchecked-command-new
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      `Command::new` invoked with a non-literal program name. Every external
+      process invocation in Barista must (a) use a hard-coded program name
+      or (b) resolve the program via the toolchain allowlist in
+      `barista-cli::project`. Bare interpolation is the canonical
+      command-injection footgun. If this call site is intentional, suppress
+      with `// nosemgrep: barista-rust-unchecked-command-new` and add a
+      review comment explaining why interpolation is safe here.
+    patterns:
+      - pattern-either:
+          - pattern: std::process::Command::new($X)
+          - pattern: process::Command::new($X)
+          - pattern: Command::new($X)
+      - pattern-not: std::process::Command::new("...")
+      - pattern-not: process::Command::new("...")
+      - pattern-not: Command::new("...")
+    paths:
+      include:
+        - "**/crates/barista-cli/**/*.rs"
+        - "**/tests/fixtures/sast/**/*.rs"
+
+  - id: barista-rust-string-from-utf8-unchecked
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `String::from_utf8_unchecked` bypasses UTF-8 validation and is
+      `unsafe`. Prefer `String::from_utf8` (returns `Result`) or
+      `String::from_utf8_lossy` (returns `Cow<str>`). Only use the
+      unchecked form on the cache-CAS hot path with a documented SAFETY
+      comment proving the bytes are already validated upstream.
+    patterns:
+      - pattern-either:
+          - pattern: String::from_utf8_unchecked(...)
+          - pattern: std::str::from_utf8_unchecked(...)
+          - pattern: core::str::from_utf8_unchecked(...)
+
+  - id: barista-rust-transmute
+    languages: [rust]
+    severity: WARNING
+    message: >-
+      `mem::transmute` reinterprets memory as a different type and is one
+      of the most powerful `unsafe` operations in Rust. The only vetted
+      Barista call sites are inside the cache CAS layer (`barista-cache`).
+      Outside that crate, prefer typed conversions (`From`/`TryFrom`,
+      `as`-cast for numerics, `bytemuck`/`zerocopy` for byte-level
+      reinterpretation with compile-time soundness proofs).
+    patterns:
+      - pattern-either:
+          - pattern: std::mem::transmute(...)
+          - pattern: core::mem::transmute(...)
+          - pattern: mem::transmute(...)
+          - pattern: std::mem::transmute::<$T, $U>(...)
+          - pattern: core::mem::transmute::<$T, $U>(...)
+          - pattern: mem::transmute::<$T, $U>(...)
+    paths:
+      exclude:
+        - "**/crates/barista-cache/**"

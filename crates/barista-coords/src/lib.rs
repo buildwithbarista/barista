@@ -1,3 +1,14 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. The coords crate's existing test-helper panics
+// and `as` conversions are allowed here pending an incremental ratchet.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Maven artifact coordinates.
 //!
 //! This crate models the three Maven identity tuples that appear throughout

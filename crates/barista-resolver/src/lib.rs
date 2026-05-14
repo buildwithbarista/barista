@@ -1,3 +1,14 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions) are warned on workspace-wide via
+// the root `Cargo.toml`. Pre-existing resolver internals are allowed here
+// pending an incremental ratchet.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Parallel dependency resolver (BFS+Skipper) for Maven artifacts.
 //!
 //! The resolver walks dependency graphs by querying a

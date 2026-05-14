@@ -31,3 +31,6 @@ insta = "1.47"
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"
 toml = "0.8"
+
+[lints]
+workspace = true

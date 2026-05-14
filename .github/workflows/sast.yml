@@ -1,0 +1,210 @@
+# Static Application Security Testing — source-pattern scanners.
+#
+# Runs four overlapping static analyses on every PR and every push to
+# `main`. Overlap is intentional: clippy's security-relevant lints,
+# Semgrep's rule packs (`r/rust`, `r/java`, `r/yaml`), the unsafe-line
+# ratchet, and the language-specific SpotBugs+FindSecBugs pass all see
+# the codebase from different angles and catch different things.
+#
+# Coverage:
+#   Rust   — clippy (workspace), Semgrep `r/rust` + custom rules, unsafe-line ratchet
+#   Java   — Semgrep `r/java`, SpotBugs + FindSecBugs (`barback`)
+#   YAML   — Semgrep `r/yaml`
+#
+# CodeQL (Rust + Java) runs in `codeql.yml` as its own workflow because
+# the CodeQL action's job-level config is different shape enough that
+# keeping it out of this file makes both easier to read.
+#
+# Every action and container image is pinned to a commit SHA or
+# manifest digest (not a floating tag). The human-readable tag is
+# recorded next to the SHA so future readers can audit drift. When
+# bumping, update both the SHA and the comment.
+#
+# Findings are uploaded to GitHub code scanning as SARIF where the
+# scanner supports it. Failures here block merges to `main`.
+
+name: SAST — static analysis
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # clippy — workspace lint pass with security-relevant lints elevated to
+  # `warn` (via `[workspace.lints.clippy]` in the root `Cargo.toml`) and
+  # `-D warnings` flipping every warning into a build failure.
+  #
+  # Local reproduction:
+  #   cargo clippy --workspace --all-targets -- -D warnings
+  # ---------------------------------------------------------------------------
+  clippy:
+    name: clippy (workspace, all-targets)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run clippy
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # ---------------------------------------------------------------------------
+  # unsafe-line ratchet — counts `unsafe` constructs per crate and fails
+  # when the count grows past `docs/ci/geiger-baseline.json`. The baseline
+  # is human-curated and must be bumped in the same PR that adds new
+  # `unsafe` code (the SAFETY comment is the receipt).
+  #
+  # Local reproduction:
+  #   python3 scripts/count-unsafe.py --check
+  # ---------------------------------------------------------------------------
+  unsafe-line-ratchet:
+    name: unsafe-line ratchet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Compare against baseline
+        run: |
+          python3 scripts/count-unsafe.py --check
+
+  # ---------------------------------------------------------------------------
+  # Semgrep OSS — rule packs `r/rust`, `r/java`, `r/yaml` from the
+  # registry, plus the Barista-specific custom rules in `.semgrep/`.
+  #
+  # The job runs inside the official `semgrep/semgrep` container so the
+  # binary version is pinned by digest. SARIF is uploaded to code
+  # scanning so findings show up in the Security tab.
+  #
+  # Local reproduction (semgrep on PATH):
+  #   semgrep --config p/rust --config p/java --config p/yaml --config .semgrep/ .
+  # ---------------------------------------------------------------------------
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    container:
+      # semgrep/semgrep:1.162.0 pinned by manifest digest.
+      image: semgrep/semgrep@sha256:9349edbadf90c3f3c0c3f55867625354e89680e6fa10d9034042af52fdb0e0d0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Run Semgrep (SARIF)
+        # `--config` accepts multiple values; we combine the registry
+        # rule packs with the local `.semgrep/` directory so custom
+        # rules and pack rules run in one pass.
+        run: |
+          semgrep scan \
+            --config p/rust \
+            --config p/java \
+            --config p/yaml \
+            --config .semgrep/ \
+            --sarif \
+            --sarif-output=semgrep.sarif \
+            --error \
+            --metrics=off
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ---------------------------------------------------------------------------
+  # Semgrep custom-rule round-trip — proves the custom rules in
+  # `.semgrep/barista-rust.yml` fire on the synthetic violation fixtures
+  # in `tests/fixtures/sast/` and do NOT fire on the clean counterparts.
+  # This is the SAST equivalent of the secret-scan round-trip test:
+  # if the rule pack ever regresses, this job fails before a real
+  # violation slips through.
+  # ---------------------------------------------------------------------------
+  semgrep-fixture-round-trip:
+    name: Semgrep custom-rule round-trip
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: semgrep/semgrep@sha256:9349edbadf90c3f3c0c3f55867625354e89680e6fa10d9034042af52fdb0e0d0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Assert custom rules fire on synthetic violations
+        # Three synthetic fixtures, three expected findings. We scan
+        # only the fixtures directory with only the custom rule file
+        # so the count is deterministic.
+        run: |
+          set -euo pipefail
+          findings=$(semgrep scan \
+            --config .semgrep/barista-rust.yml \
+            --json \
+            --metrics=off \
+            tests/fixtures/sast/ | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('results',[])))")
+          echo "custom-rule findings: $findings"
+          if [ "$findings" -ne 3 ]; then
+            echo "::error::Expected 3 findings from custom rules on the fixture set; got $findings."
+            exit 1
+          fi
+      - name: Assert custom rules do NOT fire on the clean fixture
+        run: |
+          set -euo pipefail
+          findings=$(semgrep scan \
+            --config .semgrep/barista-rust.yml \
+            --json \
+            --metrics=off \
+            tests/fixtures/sast/clean_command_new.rs | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('results',[])))")
+          echo "clean-fixture findings: $findings"
+          if [ "$findings" -ne 0 ]; then
+            echo "::error::Expected 0 findings on the clean fixture; got $findings."
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
+  # SpotBugs + FindSecBugs (barback) — Java-side bytecode analysis.
+  # Configured in `barback/pom.xml` under the `sast` profile; pass
+  # `-P sast` to opt in. `failOnError=true` + High-severity threshold
+  # means any qualifying finding fails the build.
+  #
+  # Local reproduction:
+  #   mvn -f barback/pom.xml -B -P sast verify
+  # ---------------------------------------------------------------------------
+  barback-spotbugs:
+    name: SpotBugs + FindSecBugs (barback)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up JDK 21
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Run SpotBugs + FindSecBugs
+        run: |
+          mvn -f barback/pom.xml -B -P sast verify

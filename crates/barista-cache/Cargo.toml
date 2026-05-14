@@ -30,3 +30,6 @@ tokio = { version = "1", features = ["sync", "fs", "macros", "rt", "rt-multi-thr
 tempfile = "3"
 tokio = { version = "1", features = ["sync", "fs", "macros", "rt", "rt-multi-thread", "time"] }
 wiremock = "=0.6.2"
+
+[lints]
+workspace = true

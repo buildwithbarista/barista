@@ -1,3 +1,18 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions, unsafe_code) are warned on
+// workspace-wide via the root `Cargo.toml`. `unsafe_code` is allowed here
+// because the effective-POM resolver (`src/effective.rs`) uses tightly
+// scoped `unsafe` blocks for set-environment side effects in a controlled
+// test-helper path; the invariants are documented inline. The other lints
+// are allowed pending an incremental ratchet of the existing parser code.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    unsafe_code
+)]
+
 //! POM (Project Object Model) parsing for Maven projects.
 //!
 //! Provides the raw parser ([`raw`] module) which deserializes

@@ -1,3 +1,15 @@
+// This crate is a test-only helper library. The workspace security lints
+// (clippy::unwrap_used, clippy::expect_used, clippy::panic) are explicitly
+// allowed because panic-on-misuse is the documented contract for fixture
+// loaders — a malformed test fixture is a developer error that should
+// loudly fail the test run.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Shared test fixtures and corpus indexing helpers.
 //!
 //! Exposes two corpora:

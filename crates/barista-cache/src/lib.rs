@@ -1,3 +1,18 @@
+// Workspace security lints (clippy::unwrap_used, clippy::expect_used,
+// clippy::panic, clippy::as_conversions, unsafe_code) are warned on
+// workspace-wide via the root `Cargo.toml`. `unsafe_code` is allowed here
+// because the file-locking implementation (`src/lock.rs`) holds a
+// short-lived `&'static mut` borrow whose lifetime invariants are
+// documented inline next to the `unsafe` block; the rest of the lints are
+// allowed pending an incremental ratchet of the existing call sites.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions,
+    unsafe_code
+)]
+
 //! Local content-addressed cache for Barista artifacts.
 //!
 //! The cache stores artifact bytes by SHA-256 digest under a

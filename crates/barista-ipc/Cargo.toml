@@ -7,3 +7,6 @@ description = "Worker-protocol IPC transport between the CLI and the barback dae
 publish = false
 
 [lib]
+
+[lints]
+workspace = true

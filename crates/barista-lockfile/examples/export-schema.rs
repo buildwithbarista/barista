@@ -1,3 +1,15 @@
+// Integration-test / example / benchmark target — workspace security
+// lints are allowed here. Panic-on-misuse (`unwrap()`/`expect()`/`panic!`)
+// is the documented contract for failing a test loudly. This allow block
+// keeps the crate root's `#![allow(...)]` from being silently dropped by
+// the separate compilation unit each test file forms.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::as_conversions
+)]
+
 //! Export the JSON Schema for `barista.lock` to stdout.
 //!
 //! Run:
