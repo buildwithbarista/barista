@@ -1,0 +1,40 @@
+# `xtask` — workspace-level developer task runner.
+#
+# This crate is the home for any task that doesn't belong inside a product
+# crate but that a contributor (or CI) needs to be able to run with a single
+# command. The first task it ships is `cargo xtask security`, which runs the
+# full locally-runnable security suite — see `src/security.rs`.
+#
+# Convention: `xtask` is invoked via the `[alias] xtask = ...` line in
+# `.cargo/config.toml` at the workspace root, so `cargo xtask <subcommand>`
+# works from anywhere inside the workspace. `publish = false` because this
+# is internal tooling, not a library or binary we'd ship to users.
+
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Workspace task runner for Barista (security suite, etc.)."
+publish = false
+
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+
+# Dependency rationale (Sonatype Developer Trust Score in parens — verified
+# via `mcp__sonatype-mcp__getRecommendedComponentVersions` against the
+# Sonatype OSS Index at the time these versions were pinned):
+#
+#   clap 4.6     argv parsing; already in the workspace at the same minor
+#                (see `crates/barista-cli/Cargo.toml`). MIT OR Apache-2.0.
+#                DTS 100, no advisories.
+#   which 8.0    PATH lookup for optional tools (semgrep, gitleaks, etc.)
+#                without shelling out to `which(1)` / `where.exe`. MIT.
+#                DTS 98, no advisories.
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+which = "8.0"
+
+[lints]
+workspace = true

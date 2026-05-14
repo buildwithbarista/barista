@@ -77,6 +77,10 @@ cheaper to run before you push.
   - macOS: `brew install gitleaks`
   - Linux: `apt install gitleaks` if your distro packages it, otherwise grab a release
     binary from <https://github.com/gitleaks/gitleaks/releases> and put it on your `PATH`.
+- **semgrep** — SAST scanner. The pre-commit hook runs only the curated Barista rule pack
+  under `.semgrep/` (kept fast on purpose); the heavier `r/rust` corp pack stays in CI.
+  - macOS: `brew install semgrep`
+  - Linux/anywhere with Python: `pip install semgrep` (or `pipx install semgrep`).
 - **pre-commit** — hook runner.
   - macOS: `brew install pre-commit`
   - Linux/anywhere with Python: `pip install pre-commit` (or `pipx install pre-commit`).
@@ -88,9 +92,19 @@ Run this once per fresh clone:
     pre-commit install
 
 That installs the git `pre-commit` hook. Every subsequent `git commit` will run the hooks
-configured in `.pre-commit-config.yaml` — currently gitleaks, a handful of language-agnostic
-hygiene checks, and `cargo fmt --check` / `cargo clippy --workspace -- -D warnings` for any
-staged Rust files.
+configured in `.pre-commit-config.yaml`:
+
+- **gitleaks** — secret scanning against `.gitleaks.toml`.
+- **semgrep** — the curated SAST rules under `.semgrep/`, capped at a 30-second per-rule
+  timeout and a 1 MB per-file size limit so the hook stays responsive.
+- A handful of **language-agnostic hygiene checks** — trailing whitespace, end-of-file
+  newlines, TOML/YAML validity, merge-conflict markers, accidental large-file commits.
+- **`cargo fmt --check`** and **`cargo clippy --workspace -- -D warnings`** for any
+  staged Rust files.
+
+For a one-shot run of every locally-runnable security check (including layers the
+pre-commit hook deliberately omits, like `cargo-deny` and `cargo-audit`), see
+[`cargo xtask security`](#one-shot-local-security-suite-cargo-xtask-security) below.
 
 ### Verify the secret-scan round-trip
 
@@ -119,6 +133,34 @@ The default move is **not** to allowlist. Before reaching for `.gitleaksignore`:
 
 The full allowlist-hygiene playbook (review cadence, audit process, who reaps stale
 entries) lives at `docs/ci/secret-scan-allowlist.md`.
+
+### One-shot local security suite (`cargo xtask security`)
+
+The pre-commit hook runs the fast subset of the security suite. For a single command
+that runs **every** locally-runnable check the project ships — including the heavier
+ones the pre-commit hook deliberately omits — use the `xtask`:
+
+    cargo xtask security
+
+It runs, in sequence:
+
+1. `cargo clippy --workspace --all-targets -- -D warnings` (required).
+2. `cargo deny check` (optional — `cargo install cargo-deny --locked`).
+3. `cargo audit` (optional — `cargo install cargo-audit --locked`).
+4. `semgrep --config .semgrep/ --error` (optional — see install instructions above).
+5. `gitleaks detect --no-git --redact` (optional — see install instructions above).
+
+A missing **optional** tool prints an install hint to stderr and is skipped without
+failing the run. Pass `--strict` to promote "missing optional tool" to a failure
+(CI invokes the command this way so the CI image is guaranteed to have every scanner
+present).
+
+You can also run a single check by name:
+
+    cargo xtask security --check clippy
+    cargo xtask security --check semgrep
+
+The full list of valid check names is printed by `cargo xtask security --help`.
 
 ## Coding conventions
 

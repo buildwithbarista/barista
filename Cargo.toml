@@ -28,6 +28,7 @@ members = [
     "crates/barista-test-fixtures",
     "crates/barista-version",
     "roastery",
+    "xtask",
 ]
 
 [workspace.package]

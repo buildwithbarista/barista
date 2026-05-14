@@ -88,3 +88,37 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+      # -----------------------------------------------------------------
+      # Semgrep — runs the curated Barista rule pack in `.semgrep/`
+      # against staged Rust files.
+      #
+      # Scope is intentionally narrow: only the project-local rules in
+      # `.semgrep/` run here, *not* the upstream `r/rust` pack. The full
+      # pack lights up dozens of rules whose collective wall-clock is
+      # too slow for a pre-commit hook; CI runs it via the SAST
+      # workflow. This hook is the fast-feedback subset.
+      #
+      #   --timeout=30           cap any single rule's analysis at 30s
+      #                          so a pathological rule cannot wedge a
+      #                          commit.
+      #   --max-target-bytes=1M  skip generated / vendored files larger
+      #                          than ~1 MB (snapshots, large fixtures).
+      #   --error                exit non-zero on any finding so the
+      #                          hook actually fails the commit; without
+      #                          this Semgrep only prints.
+      #   --quiet                suppress the banner / progress chatter
+      #                          on clean runs.
+      #
+      # Runs as `language: system` — pre-commit shells out to whatever
+      # `semgrep` is on PATH rather than installing its own copy via
+      # Docker or pip. CONTRIBUTING.md has the install instructions
+      # alongside the gitleaks ones.
+      # -----------------------------------------------------------------
+      - id: semgrep
+        name: semgrep (.semgrep/ rule pack)
+        description: Run the curated Semgrep rules over staged Rust files.
+        entry: semgrep --config .semgrep/ --error --timeout=30 --max-target-bytes=1000000 --quiet
+        language: system
+        types: [rust]
+        pass_filenames: false
