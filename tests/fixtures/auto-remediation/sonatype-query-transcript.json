@@ -1,0 +1,106 @@
+{
+  "$schema_note": "Reference transcript for the auto-remediation agent's Sonatype query order on a synthetic CVE issue. This fixture documents the EXPECTED shape and ORDERING of MCP calls the agent must make when responding to a dependency-vulnerability finding. End-to-end verification (running the real agent against a planted-CVE issue and capturing the live transcript) is gated on the auto-remediate.yml workflow firing in CI; this JSON is the reference the live transcript is diffed against.",
+
+  "scenario": {
+    "description": "Synthetic CVE issue: cargo-audit reports RUSTSEC-XXXX-YYYY against `bincode 2.0.1` (transitive). The agent is expected to bump `bincode` to a Sonatype-vetted target version.",
+    "trigger": {
+      "event": "issues.labeled",
+      "label": "security-bot",
+      "issue_number": 1234,
+      "issue_title": "[cargo-audit] RUSTSEC-XXXX-YYYY in bincode 2.0.1",
+      "issue_body_excerpt": {
+        "tool": "cargo-audit",
+        "rule_id": "RUSTSEC-XXXX-YYYY",
+        "severity": "high",
+        "path": "Cargo.lock",
+        "remediation_hint": "Upgrade to a patched version."
+      }
+    }
+  },
+
+  "expected_call_sequence": [
+    {
+      "step": 1,
+      "tool": "mcp__sonatype-mcp__getRecommendedComponentVersions",
+      "rationale": "Pick a safe target version. Must precede any edit to Cargo.toml or Cargo.lock.",
+      "request": {
+        "componentIdentifier": {
+          "format": "cargo",
+          "coordinates": {
+            "name": "bincode",
+            "version": "2.0.1"
+          }
+        }
+      },
+      "expected_response_shape": {
+        "recommendedVersions": [
+          {
+            "version": "2.0.2",
+            "reason": "patch — clears RUSTSEC-XXXX-YYYY"
+          },
+          {
+            "version": "2.1.0",
+            "reason": "minor — clears RUSTSEC-XXXX-YYYY"
+          }
+        ]
+      }
+    },
+    {
+      "step": 2,
+      "tool": "mcp__sonatype-mcp__getComponentVersion",
+      "rationale": "Confirm the chosen target version is non-malicious and policy-compliant before committing the bump.",
+      "request": {
+        "componentIdentifier": {
+          "format": "cargo",
+          "coordinates": {
+            "name": "bincode",
+            "version": "2.0.2"
+          }
+        }
+      },
+      "expected_response_shape": {
+        "version": "2.0.2",
+        "malicious": false,
+        "policyCompliance": {
+          "compliant": true
+        },
+        "vulnerabilities": []
+      },
+      "must_satisfy": {
+        "malicious": false,
+        "policyCompliance.compliant": true
+      }
+    }
+  ],
+
+  "expected_action_after_calls": {
+    "description": "Only after both calls succeed AND the must_satisfy invariants hold may the agent edit Cargo.toml / Cargo.lock.",
+    "ordered_actions": [
+      "Edit Cargo.toml to pin bincode to the chosen target version (or update the dep entry).",
+      "Run `cargo update -p bincode --precise 2.0.2` to materialize the bump in Cargo.lock.",
+      "Run `cargo xtask security` as the primary self-test.",
+      "Run `bash scripts/test-secret-scan.sh` as the secondary self-test.",
+      "Open a PR with `gh pr create` using the body template at `.github/security-agent/pr-template.md`, including the verbatim getComponentVersion response under the `Sonatype verification` heading, with `Fixes #1234` in the body."
+    ]
+  },
+
+  "forbidden_orderings": [
+    {
+      "name": "edit_before_query",
+      "description": "Any Edit or Write call against Cargo.toml / Cargo.lock that precedes step 1 is a violation — the agent must never bump a dep without first asking Sonatype which version to bump to."
+    },
+    {
+      "name": "skip_confirmation",
+      "description": "Calling step 1 but not step 2 before the edit is a violation — Sonatype's recommendation list is necessary but not sufficient; the per-version confirmation is the malicious/compliance check."
+    },
+    {
+      "name": "blind_latest",
+      "description": "Calling `getLatestComponentVersion` and bumping to that version without first running `getRecommendedComponentVersions` is a violation — latest is not necessarily clean or non-major."
+    }
+  ],
+
+  "verification_notes": {
+    "local": "This JSON fixture is the reference. End-to-end verification requires running the agent against a planted-CVE branch via workflow_dispatch and asserting the live tool-call transcript matches `expected_call_sequence` in order.",
+    "ci": "The acceptance test should diff the agent's live transcript against this fixture, allowing additional read-only calls (Read, Grep, Glob) between steps but asserting (a) step 1 precedes any Edit/Write on Cargo.* files; (b) step 2 follows step 1 and precedes the same; (c) `expected_response_shape` keys are present in the live responses (values may differ across Sonatype index updates)."
+  }
+}

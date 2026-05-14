@@ -223,6 +223,38 @@ ecosystem-vulnerability source for the recommended target version rather
 than auto-bumping to the latest; the goal is to land on a version with no
 open advisories.
 
+### Dependency bumps — Sonatype as the canonical source
+
+For any dependency change (Rust crate, Maven artifact, or GitHub Action
+SHA), look up the target version's safety profile **before** committing
+the bump. The project standardises on Sonatype's OSS Index data as the
+canonical recommendation source because it's the same surface the
+auto-remediation agent uses, which keeps human and automated bumps on the
+same evidence.
+
+There are two paths to that data:
+
+- **Sonatype MCP** (preferred, if your editor has it). The three relevant
+  tools are `getRecommendedComponentVersions` (returns the list of safe
+  upgrade targets given a component + current version),
+  `getComponentVersion` (per-version malicious / policy-compliance
+  booleans), and `getLatestComponentVersion` (informational only — do not
+  bump blindly to latest). Call `getRecommendedComponentVersions` first,
+  pick the smallest non-major bump that clears the advisory, then call
+  `getComponentVersion` on the chosen target to confirm
+  `malicious: false` and `policyCompliance.compliant: true`.
+
+- **Sonatype OSS Index web UI** (no MCP required). Look the component up
+  at <https://ossindex.sonatype.org/> and use the version-comparison page
+  to check the same fields.
+
+Whichever surface you use, **record the result in the PR description**.
+For dependency-bump PRs, include the component name, the version you
+landed on, and the cleared advisory IDs. Reviewers rely on that record to
+audit the bump without re-running the query themselves; the same
+information populates the `Sonatype verification` slot in the
+auto-remediation PR template.
+
 ## Reporting bugs and requesting features
 
 Bug reports and feature requests go in [GitHub Issues](../../issues). Issue templates live
