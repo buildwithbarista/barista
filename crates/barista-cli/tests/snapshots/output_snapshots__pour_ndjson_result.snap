@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: body
+---
+{"event":"result","timestamp":"2026-05-14T12:34:56.789Z","payload":{"command":"pour","target":"/m2","scope":"compile","considered":3,"planned":2,"materialized":2,"dry-run":false,"planned-paths":["/m2/com/example/a/1.0/a-1.0.jar","/m2/com/example/b/2.0/b-2.0.jar"]}}

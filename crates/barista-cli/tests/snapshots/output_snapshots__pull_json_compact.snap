@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: body
+---
+{"command":"pull","project-root":"/proj","lockfile-status":"unchanged","entries":5,"fetched":0,"project-signature":"deadbeefcafe","coords":"com.example:demo:1.0.0","no-fetch":true,"strict":false}

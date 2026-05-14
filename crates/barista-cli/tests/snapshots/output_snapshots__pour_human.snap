@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: stderr.as_string()
+---
+pour: 2 of 3 entries (scope=compile) → /m2

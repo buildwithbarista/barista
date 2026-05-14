@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: body
+---
+{"event":"result","timestamp":"2026-05-14T12:34:56.789Z","payload":{"command":"grind-tree","schema-version":1,"reactor":[{"coords":"com.example:demo","version":"1.0.0","relative-path":"pom.xml"}],"nodes":[{"coords":"org.slf4j:slf4j-api","version":"2.0.13","scope":"compile","depth":1,"from-path":[]},{"coords":"ch.qos.logback:logback-classic","version":"1.5.6","scope":"compile","depth":2,"from-path":["org.slf4j:slf4j-api"]}]}}
