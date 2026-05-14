@@ -1,0 +1,44 @@
+# A BOM (bill-of-materials) imported via dependencyManagement
+# pins org.example:lib at [1.0]. The root also declares lib directly
+# at [2.0]. Strict resolver must surface the conflict between the
+# BOM-managed version and the direct declaration.
+#
+# In this fixture we model the BOM as a node whose dependencies
+# represent the version constraints it imports.
+
+id = "14-bom-import-narrowing"
+description = "BOM-imported version pin conflicts with a direct declaration."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:bom:1.0.0"
+to    = "org.example:lib"
+range = "[1.0]"
+
+[[expected_edges]]
+from  = "org.example:root:1.0.0"
+to    = "org.example:lib"
+range = "[2.0]"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:bom", version = "1.0.0", scope = "import" },
+    { coords = "org.example:lib", version = "[2.0]" },
+]
+
+[[node]]
+coords = "org.example:bom"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0]" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"

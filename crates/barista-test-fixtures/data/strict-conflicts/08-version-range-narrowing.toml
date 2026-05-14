@@ -1,0 +1,48 @@
+# Two parents request the same leaf with overlapping ranges that
+# narrow to [2.0,3.0). The registry has versions across the union;
+# strict resolver should pick the highest version inside the narrowed
+# intersection.
+
+id = "08-version-range-narrowing"
+description = "Two ranges intersect to [2.0,3.0); resolver picks highest matching."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root" = "1.0.0"
+"org.example:a"    = "1.0.0"
+"org.example:b"    = "1.0.0"
+"org.example:lib"  = "2.5.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0,3.0)" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[2.0,4.0)" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.5.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.5.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "3.5.0"

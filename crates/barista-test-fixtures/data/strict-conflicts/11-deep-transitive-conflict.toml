@@ -1,0 +1,61 @@
+# Depth-5 chain (root -> l1 -> l2 -> l3 -> l4 -> lib) conflicts with
+# a shallow declaration at the root level. Strict resolver must walk
+# the full chain and surface both edges in the derivation tree.
+
+id = "11-deep-transitive-conflict"
+description = "A depth-5 transitive chain pin conflicts with a shallow root pin."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:root:1.0.0"
+to    = "org.example:lib"
+range = "[1.0]"
+
+[[expected_edges]]
+from  = "org.example:l4:1.0.0"
+to    = "org.example:lib"
+range = "[2.0]"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:l1",  version = "1.0.0" },
+    { coords = "org.example:lib", version = "[1.0]" },
+]
+
+[[node]]
+coords = "org.example:l1"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:l2", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:l2"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:l3", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:l3"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:l4", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:l4"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[2.0]" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"

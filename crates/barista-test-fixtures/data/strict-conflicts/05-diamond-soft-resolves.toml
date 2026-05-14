@@ -1,0 +1,39 @@
+# Same shape as 04 but the two paths request the leaf with SOFT
+# requirements (no brackets). Both paths request "1.0.0" — strict
+# resolver should agree and resolve cleanly.
+
+id = "05-diamond-soft-resolves"
+description = "Diamond with soft version requirements that agree; resolves cleanly."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root" = "1.0.0"
+"org.example:a"    = "1.0.0"
+"org.example:b"    = "1.0.0"
+"org.example:lib"  = "1.0.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"

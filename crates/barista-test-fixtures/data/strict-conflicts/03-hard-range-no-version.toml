@@ -1,0 +1,31 @@
+# Root demands a hard range that has no satisfying version in the
+# registry. Strict resolver must surface the root edge as the
+# conflict source.
+
+id = "03-hard-range-no-version"
+description = "Hard range [99.0,100.0) with no satisfying version available."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:root:1.0.0"
+to    = "org.example:lib"
+range = "[99.0,100.0)"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[99.0,100.0)" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "3.0.0"

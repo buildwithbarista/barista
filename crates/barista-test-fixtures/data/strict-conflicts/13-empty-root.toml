@@ -1,0 +1,13 @@
+# Root has no declared dependencies. Strict resolver must produce an
+# empty resolution graph rather than an error.
+
+id = "13-empty-root"
+description = "Root with zero dependencies; trivially resolves to an empty graph."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root" = "1.0.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"

@@ -1,0 +1,47 @@
+# One path requires a -SNAPSHOT version; another requires a -GA
+# release on the same coords. Strict mode should not silently
+# upgrade/downgrade across the snapshot/release boundary.
+
+id = "10-snapshot-vs-release"
+description = "Two paths pin the same coord at -SNAPSHOT and -GA respectively."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:a:1.0.0"
+to    = "org.example:lib"
+range = "[1.0.0-SNAPSHOT]"
+
+[[expected_edges]]
+from  = "org.example:b:1.0.0"
+to    = "org.example:lib"
+range = "[1.0.0-GA]"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0.0-SNAPSHOT]" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0.0-GA]" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0-SNAPSHOT"
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0-GA"

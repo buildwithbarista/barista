@@ -1,0 +1,30 @@
+# Baseline. Root pulls one direct dep; that dep pulls one transitive
+# dep. No conflict possible. Used as a sanity check that the strict
+# resolver does not over-report.
+
+id = "01-clean-no-conflict"
+description = "Two-level tree with a single transitive dep; trivially resolves."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root" = "1.0.0"
+"org.example:lib"  = "1.0.0"
+"org.example:util" = "1.0.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:util", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:util"
+version = "1.0.0"

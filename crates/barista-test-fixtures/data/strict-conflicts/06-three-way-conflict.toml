@@ -1,0 +1,64 @@
+# Three different transitive paths each pin org.example:lib at a
+# different hard version. Strict resolver must report all three
+# offending edges.
+
+id = "06-three-way-conflict"
+description = "Three independent paths each pin the leaf at a different hard version."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:a:1.0.0"
+to    = "org.example:lib"
+range = "[1.0]"
+
+[[expected_edges]]
+from  = "org.example:b:1.0.0"
+to    = "org.example:lib"
+range = "[2.0]"
+
+[[expected_edges]]
+from  = "org.example:c:1.0.0"
+to    = "org.example:lib"
+range = "[3.0]"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+    { coords = "org.example:c", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0]" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[2.0]" },
+]
+
+[[node]]
+coords = "org.example:c"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[3.0]" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "3.0.0"

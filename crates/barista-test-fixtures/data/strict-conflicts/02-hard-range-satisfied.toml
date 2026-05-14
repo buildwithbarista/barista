@@ -1,0 +1,30 @@
+# A single hard range [1.0,2.0) with exactly one matching version
+# in the registry. Strict resolver must pick that version without
+# emitting a conflict.
+
+id = "02-hard-range-satisfied"
+description = "Hard range [1.0,2.0) satisfied by exactly one available version."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root" = "1.0.0"
+"org.example:lib"  = "1.5.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0,2.0)" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "0.9.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "1.5.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"

@@ -1,0 +1,47 @@
+# An optional transitive dependency, IF traversed, would create a
+# conflict. Maven semantics say optional transitives are not pulled
+# in by downstream consumers. Strict resolver must skip the optional
+# edge and resolve cleanly.
+
+id = "15-optional-pulls-conflict"
+description = "An optional dependency would conflict but must be skipped per Maven semantics."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root" = "1.0.0"
+"org.example:a"    = "1.0.0"
+"org.example:b"    = "1.0.0"
+"org.example:lib"  = "1.0.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0]" },
+]
+
+# `b` declares lib at a CONFLICTING hard version, but marks it
+# optional. Per Maven semantics, optional transitives are not
+# inherited, so this edge does not contribute to root's resolution.
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[2.0]", optional = true },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"

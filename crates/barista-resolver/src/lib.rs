@@ -9,6 +9,7 @@
 pub mod skipper;
 pub mod snapshot;
 pub mod source;
+pub mod strict;
 pub mod version_spec;
 pub mod walker;
 
@@ -22,6 +23,9 @@ pub use snapshot::{
 pub use source::{
     FetchOrigin, GaMetadata, MetadataError, MetadataSource, NullMetadataSource, ResolveKey,
     VersionString,
+};
+pub use strict::{
+    DepEdge, ResolvedStrictDep, StrictDerivation, StrictError, StrictOutcome, resolve_strict,
 };
 pub use version_spec::{Bound, Interval, ParseError, SpecWarning, VersionSpec};
 pub use walker::{

@@ -1,0 +1,58 @@
+# Two parents request the leaf with ranges whose intersection is
+# exactly the singleton {2.0.0}, but 2.0.0 does NOT exist in the
+# registry. Only 1.x and 3.x versions are published. Strict resolver
+# must report a conflict — there is no satisfying concrete version.
+
+id = "09-excluded-version-via-multiple-ranges"
+description = "Two ranges intersect on a version that does not exist in the registry."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:a:1.0.0"
+to    = "org.example:lib"
+range = "[1.0,2.0]"
+
+[[expected_edges]]
+from  = "org.example:b:1.0.0"
+to    = "org.example:lib"
+range = "[2.0,3.0]"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0,2.0]" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[2.0,3.0]" },
+]
+
+# Note the gap: no 2.0.0 published. The two ranges' intersection is
+# only {2.0}, which is empty in the registry.
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "1.9.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.1.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "3.0.0"

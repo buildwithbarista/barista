@@ -1,0 +1,47 @@
+# Classic diamond. Root depends on A and B; both pull org.example:lib
+# but at incompatible hard versions. Strict resolver must surface
+# both incoming edges in the derivation tree.
+
+id = "04-diamond-hard-conflict"
+description = "Two-path diamond with incompatible hard-range pins on the leaf."
+expected_outcome = "Conflict"
+
+[[expected_edges]]
+from  = "org.example:a:1.0.0"
+to    = "org.example:lib"
+range = "[1.0]"
+
+[[expected_edges]]
+from  = "org.example:b:1.0.0"
+to    = "org.example:lib"
+range = "[2.0]"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[1.0]" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib", version = "[2.0]" },
+]
+
+[[node]]
+coords = "org.example:lib"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib"
+version = "2.0.0"

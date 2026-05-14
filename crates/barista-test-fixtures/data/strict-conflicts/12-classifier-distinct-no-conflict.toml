@@ -1,0 +1,45 @@
+# Two paths request the same groupId:artifactId at the same version
+# but with different classifiers (e.g. `linux-x86_64` and
+# `windows-x86_64`). Maven treats these as distinct artifacts; the
+# strict resolver must NOT report a conflict.
+
+id = "12-classifier-distinct-no-conflict"
+description = "Same g:a:v at different classifiers; treated as distinct, no conflict."
+expected_outcome = "Resolved"
+
+[expected_versions]
+"org.example:root"                       = "1.0.0"
+"org.example:a"                          = "1.0.0"
+"org.example:b"                          = "1.0.0"
+"org.example:lib:jar:linux-x86_64"       = "1.0.0"
+"org.example:lib:jar:windows-x86_64"     = "1.0.0"
+
+[[node]]
+coords = "org.example:root"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:a", version = "1.0.0" },
+    { coords = "org.example:b", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:a"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib:jar:linux-x86_64", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:b"
+version = "1.0.0"
+dependencies = [
+    { coords = "org.example:lib:jar:windows-x86_64", version = "1.0.0" },
+]
+
+[[node]]
+coords = "org.example:lib:jar:linux-x86_64"
+version = "1.0.0"
+
+[[node]]
+coords = "org.example:lib:jar:windows-x86_64"
+version = "1.0.0"
