@@ -35,6 +35,7 @@ project-extensions.modules.overrides                   = []
 project-extensions.plugins.classloader-cache-overrides = ["org.example:other=Cache", "org.example:plugin=NoCache"]
 project-extensions.project                             = <unset>
 project-extensions.taps                                = ["acme", "internal"]
+telemetry.client-id                                    = <unset>
 telemetry.enabled                                      = false
 telemetry.endpoint                                     = <unset>
 

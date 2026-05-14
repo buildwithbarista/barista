@@ -426,6 +426,7 @@ const ENV_VARS: &[(&str, EnvKind)] = &[
     ("BARISTA_LOGGING__MAVEN_SHAPE", EnvKind::LogShape),
     ("BARISTA_TELEMETRY__ENABLED", EnvKind::TelemEnabled),
     ("BARISTA_TELEMETRY__ENDPOINT", EnvKind::TelemEndpoint),
+    ("BARISTA_TELEMETRY__CLIENT_ID", EnvKind::TelemClientId),
     ("BARISTA_PATHS__CACHE_DIR", EnvKind::PathCache),
     ("BARISTA_PATHS__USER_CONFIG_DIR", EnvKind::PathUserCfg),
     ("BARISTA_PATHS__SETTINGS_XML", EnvKind::PathSettings),
@@ -449,6 +450,7 @@ enum EnvKind {
     LogShape,
     TelemEnabled,
     TelemEndpoint,
+    TelemClientId,
     PathCache,
     PathUserCfg,
     PathSettings,
@@ -560,6 +562,10 @@ fn apply_env(
             EnvKind::TelemEndpoint => {
                 target.telemetry.endpoint = Some(raw);
                 touched.push("telemetry.endpoint".into());
+            }
+            EnvKind::TelemClientId => {
+                target.telemetry.client_id = Some(raw);
+                touched.push("telemetry.client-id".into());
             }
             EnvKind::PathCache => {
                 target.paths.cache_dir = expand_tilde(Path::new(&raw), home);
