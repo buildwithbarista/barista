@@ -272,6 +272,59 @@ impl Journal {
         })
     }
 
+    /// Like [`Self::iter_entries`] but also tracks the file byte
+    /// offset just past the most recently decoded record. Useful for
+    /// crash-recovery code that wants to truncate the journal at the
+    /// last known-good record boundary.
+    ///
+    /// The returned iterator is the same as `iter_entries` but
+    /// callers can read `last_good_offset()` after iteration ends to
+    /// learn where to cut.
+    pub fn iter_entries_with_positions(&self) -> Result<JournalIter, JournalError> {
+        let mut file = File::open(&self.path).map_err(|e| JournalError::Io {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        validate_header(&mut file, &self.path, JOURNAL_VERSION)?;
+        Ok(JournalIter {
+            path: self.path.clone(),
+            reader: BufReader::new(file),
+            position: HEADER_LEN,
+            done: false,
+        })
+    }
+
+    /// Truncate the journal to `offset` bytes — chops off any
+    /// corrupted / truncated tail records past that point. The
+    /// caller is responsible for choosing an offset that lands on a
+    /// record boundary (typically the value returned by
+    /// [`JournalIter::last_good_offset`]).
+    ///
+    /// `offset` must be at least [`HEADER_LEN`]; smaller values are
+    /// clamped up so the file header is never destroyed.
+    pub fn truncate_to(&self, offset: u64) -> Result<(), JournalError> {
+        let target = offset.max(HEADER_LEN);
+        let mut guard = self.write_handle.lock().expect("journal mutex poisoned");
+        guard.flush().map_err(|e| JournalError::Io {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        let file = guard.get_mut();
+        file.set_len(target).map_err(|e| JournalError::Io {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        file.seek(SeekFrom::End(0)).map_err(|e| JournalError::Io {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        file.sync_all().map_err(|e| JournalError::Io {
+            path: self.path.clone(),
+            source: e,
+        })?;
+        Ok(())
+    }
+
     /// Truncate the file back to a bare header. Called after a
     /// successful snapshot rewrite.
     pub fn truncate(&self) -> Result<(), JournalError> {
@@ -369,11 +422,24 @@ fn decode_payload(bytes: &[u8], offset: u64) -> Result<JournalEntry, JournalErro
     Ok(entry)
 }
 
-struct JournalIter {
+/// Iterator over journal records.
+///
+/// Exposed (rather than hidden behind `impl Iterator`) so crash-
+/// recovery code can call [`JournalIter::last_good_offset`] after
+/// iteration to learn where the corrupted tail begins.
+pub struct JournalIter {
     path: PathBuf,
     reader: BufReader<File>,
     position: u64,
     done: bool,
+}
+
+impl JournalIter {
+    /// Byte offset just past the last successfully decoded record.
+    /// Equals [`HEADER_LEN`] if no records were read.
+    pub fn last_good_offset(&self) -> u64 {
+        self.position
+    }
 }
 
 impl Iterator for JournalIter {

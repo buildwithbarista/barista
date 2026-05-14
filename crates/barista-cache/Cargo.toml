@@ -9,8 +9,13 @@ publish = false
 [lib]
 
 [dependencies]
+async-trait = "0.1"
+barista-config = { path = "../barista-config" }
 barista-coords = { path = "../barista-coords" }
+barista-pom = { path = "../barista-pom" }
+barista-resolver = { path = "../barista-resolver" }
 bincode = { version = "2", features = ["serde"] }
+quick-xml = "0.40"
 bytes = "1"
 crc32fast = "1"
 fd-lock = "4"

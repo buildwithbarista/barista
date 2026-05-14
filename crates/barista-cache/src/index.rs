@@ -177,11 +177,51 @@ struct IndexState {
     journal_entries_since_compact: u64,
 }
 
+/// Outcome of [`Index::open_with_recovery`].
+#[derive(Debug, Default, Clone)]
+pub struct OpenReport {
+    /// True iff the journal had to be truncated to recover from a
+    /// corrupted or partially-written tail record.
+    pub journal_truncated: bool,
+    /// Byte offset at which the journal was truncated, if applicable.
+    pub journal_truncated_at: Option<u64>,
+}
+
 impl Index {
     /// Open (creating if needed) the index rooted at
     /// `<cache_root>/index/`. Loads the snapshot then replays the
     /// journal tail.
+    ///
+    /// Errors on any journal corruption. For production startup,
+    /// prefer [`Self::open_with_recovery`], which silently truncates
+    /// recoverable tail damage and reports it via [`OpenReport`].
     pub fn open(cache_root: &Path) -> Result<Self, IndexError> {
+        let (index, _) = Self::open_inner(cache_root, false)?;
+        Ok(index)
+    }
+
+    /// Open with recovery information. Returns the [`Index`] and an
+    /// [`OpenReport`] describing any journal truncation that
+    /// occurred.
+    ///
+    /// If the journal has a corrupted or partially-written tail
+    /// record (e.g. a SIGKILL between write and fsync), this method
+    /// truncates the journal at the last known-good record and
+    /// continues with the partial state. Fatal errors (bad magic,
+    /// unsupported version, lower-level I/O) still surface as
+    /// [`IndexError`].
+    ///
+    /// Callers should typically follow up with
+    /// [`crate::recovery::scan_and_recover`] to identify orphan CAS
+    /// blobs and dangling index entries.
+    pub fn open_with_recovery(cache_root: &Path) -> Result<(Self, OpenReport), IndexError> {
+        Self::open_inner(cache_root, true)
+    }
+
+    fn open_inner(
+        cache_root: &Path,
+        recover: bool,
+    ) -> Result<(Self, OpenReport), IndexError> {
         let index_dir = cache_root.join("index");
         std::fs::create_dir_all(&index_dir).map_err(|e| IndexError::Io {
             path: index_dir.clone(),
@@ -198,31 +238,53 @@ impl Index {
         };
 
         let journal = Journal::open(&journal_path)?;
-        for record in journal.iter_entries()? {
-            match record? {
-                JournalEntry::Put { key, entry } => {
+        let mut report = OpenReport::default();
+
+        let mut iter = journal.iter_entries_with_positions()?;
+        let mut bad_tail: Option<JournalError> = None;
+        for record in iter.by_ref() {
+            match record {
+                Ok(JournalEntry::Put { key, entry }) => {
                     state.entries.insert(key, entry);
                     state.journal_entries_since_compact += 1;
                 }
-                JournalEntry::Remove { key } => {
+                Ok(JournalEntry::Remove { key }) => {
                     state.entries.remove(&key);
                     state.journal_entries_since_compact += 1;
                 }
-                JournalEntry::Touch { key, atime_unix } => {
+                Ok(JournalEntry::Touch { key, atime_unix }) => {
                     if let Some(e) = state.entries.get_mut(&key) {
                         e.atime_unix = atime_unix;
                     }
                     state.journal_entries_since_compact += 1;
                 }
+                Err(e) => {
+                    bad_tail = Some(e);
+                    break;
+                }
             }
         }
 
-        Ok(Self {
-            inner: Arc::new(RwLock::new(state)),
-            journal: Arc::new(journal),
-            snapshot_path,
-            compact_threshold: Arc::new(RwLock::new(DEFAULT_COMPACT_THRESHOLD)),
-        })
+        if let Some(err) = bad_tail {
+            if recover && crate::recovery::is_recoverable(&err) {
+                let cut_at = iter.last_good_offset();
+                journal.truncate_to(cut_at)?;
+                report.journal_truncated = true;
+                report.journal_truncated_at = Some(cut_at);
+            } else {
+                return Err(err.into());
+            }
+        }
+
+        Ok((
+            Self {
+                inner: Arc::new(RwLock::new(state)),
+                journal: Arc::new(journal),
+                snapshot_path,
+                compact_threshold: Arc::new(RwLock::new(DEFAULT_COMPACT_THRESHOLD)),
+            },
+            report,
+        ))
     }
 
     /// Insert or replace an entry. The mutation is journaled before

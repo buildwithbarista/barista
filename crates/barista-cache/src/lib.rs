@@ -12,13 +12,21 @@
 pub mod cas;
 pub mod checksum;
 pub mod fetch;
+pub mod gc;
 pub mod index;
 pub mod journal;
 pub mod lock;
+pub mod recovery;
+pub mod source;
 
 pub use cas::{Cas, CasError, ContentHash};
 pub use checksum::{Algorithm, ChecksumError, ChecksumExpected, Verification, verify};
 pub use fetch::{ConditionalHeaders, FetchConfig, FetchError, FetchOutcome, Fetcher};
-pub use index::{DEFAULT_COMPACT_THRESHOLD, Index, IndexEntry, IndexError, IndexKey, Origin};
+pub use gc::{GcConfig, GcError, GcStats, run_gc};
+pub use index::{
+    DEFAULT_COMPACT_THRESHOLD, Index, IndexEntry, IndexError, IndexKey, OpenReport, Origin,
+};
 pub use journal::{Journal, JournalEntry, JournalError};
 pub use lock::{CoordLockGuard, CoordLockMap, CoordVersionKey, FilesystemLock, LockError, lock_path};
+pub use recovery::{RecoveryError, RecoveryReport, is_recoverable, scan_and_recover};
+pub use source::CacheSource;

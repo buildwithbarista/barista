@@ -79,11 +79,16 @@ version = "0.1.0-alpha.0"
 name = "barista-cache"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "async-trait",
+ "barista-config",
  "barista-coords",
+ "barista-pom",
+ "barista-resolver",
  "bincode",
  "bytes",
  "crc32fast",
  "fd-lock",
+ "quick-xml",
  "reqwest",
  "serde",
  "sha1",
