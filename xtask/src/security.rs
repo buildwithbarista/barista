@@ -141,6 +141,23 @@ const CHECKS: &[Check] = &[
         install_hint: "cargo install cargo-audit --locked",
     },
     Check {
+        // The unsafe-line ratchet introduced by M C.3 Task 2. Compares
+        // the current `unsafe`-construct count per crate against the
+        // baseline checked in at `docs/ci/geiger-baseline.json`. Fails
+        // when a crate grows past its allowance — the workspace-wide
+        // policy is "no new unsafe outside the cache CAS layer," with
+        // `barista-cache` and `barista-pom` carrying the only sanctioned
+        // baselines today. Treated as Required because the script ships
+        // in the repo (no external install) and the policy is the same
+        // gate CI enforces in `sast.yml`'s `unsafe-ratchet` job.
+        name: "unsafe",
+        label: "unsafe-line ratchet",
+        program: "python3",
+        args: &["scripts/count-unsafe.py", "--check"],
+        requirement: Requirement::Required,
+        install_hint: "",
+    },
+    Check {
         name: "semgrep",
         label: "semgrep (.semgrep/)",
         program: "semgrep",
@@ -434,14 +451,14 @@ mod tests {
     /// Clean tree, every optional tool installed, every check passes → exit 0.
     #[test]
     fn all_checks_pass_returns_zero() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "semgrep", "gitleaks"]);
+        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"]);
         assert_eq!(run_with_env(&args_default(), &env), 0);
     }
 
     /// Required check fails → exit 1 even though everything else is fine.
     #[test]
     fn failing_required_check_returns_one() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "semgrep", "gitleaks"])
+        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"])
             .with_exit_code("cargo", 1);
         assert_eq!(run_with_env(&args_default(), &env), 1);
     }
@@ -449,7 +466,7 @@ mod tests {
     /// Failing optional check (tool present, exits non-zero) → exit 1.
     #[test]
     fn failing_optional_check_returns_one() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "semgrep", "gitleaks"])
+        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"])
             .with_exit_code("semgrep", 1);
         assert_eq!(run_with_env(&args_default(), &env), 1);
     }
@@ -458,8 +475,11 @@ mod tests {
     /// This is the formal `[T]` for the skip-gracefully contract.
     #[test]
     fn missing_optional_tool_skips_gracefully() {
-        // Only `cargo` (required for clippy) is installed.
-        let env = FakeEnv::new(&["cargo"]);
+        // Only the required tools (`cargo` for clippy + `python3` for
+        // the unsafe-line ratchet) are installed. Optional tools
+        // (cargo-deny, cargo-audit, semgrep, gitleaks) are absent and
+        // must be skipped, not failed.
+        let env = FakeEnv::new(&["cargo", "python3"]);
         let code = run_with_env(&args_default(), &env);
         assert_eq!(
             code, 0,
@@ -470,7 +490,7 @@ mod tests {
     /// Optional tool missing in `--strict` mode → treated as failure.
     #[test]
     fn missing_optional_tool_strict_returns_one() {
-        let env = FakeEnv::new(&["cargo"]);
+        let env = FakeEnv::new(&["cargo", "python3"]);
         let args = Args {
             strict: true,
             check: Vec::new(),
@@ -492,7 +512,7 @@ mod tests {
     /// `--check clippy` only runs clippy; other checks are filter-skipped.
     #[test]
     fn check_filter_runs_only_named_check() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "semgrep", "gitleaks"])
+        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"])
             // Force every other check to exit non-zero — they should never run.
             .with_exit_code("cargo-deny", 1)
             .with_exit_code("cargo-audit", 1)
