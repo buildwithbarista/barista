@@ -149,6 +149,8 @@ version = "0.1.0-alpha.0"
 dependencies = [
  "clap",
  "insta",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

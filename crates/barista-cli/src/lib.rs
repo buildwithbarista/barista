@@ -8,3 +8,8 @@
 //! process.
 
 pub mod cli;
+pub mod project;
+
+pub use project::{
+    record_sticky, resolve_project_root, ProjectRoot, ResolveError, ResolveInputs, RootSource,
+};
