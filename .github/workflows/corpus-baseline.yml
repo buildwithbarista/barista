@@ -86,9 +86,16 @@ jobs:
           java-version: ${{ steps.lock.outputs.jdk }}
 
       - name: Install Maven ${{ steps.lock.outputs.maven_version }}
+        env:
+          # Pass the lockfile output through the env block rather than
+          # interpolating ${{ ... }} directly into the run script. This
+          # is the zizmor-recommended pattern for avoiding template-
+          # injection (even though the value comes from awk-on-TOML at
+          # the start of the same job, the env-var path is the safer
+          # default and lets zizmor's template-injection check stay clean).
+          MV: ${{ steps.lock.outputs.maven_version }}
         run: |
           set -euo pipefail
-          MV="${{ steps.lock.outputs.maven_version }}"
           if [[ "$MV" == 4.* ]]; then
             SERIES=4
           else
@@ -110,7 +117,12 @@ jobs:
 
       - name: Build
         working-directory: test-corpus/${{ matrix.project }}/checkout
-        run: ${{ steps.lock.outputs.build_cmd }}
+        env:
+          # Run the build command through bash -c $VAR rather than
+          # interpolating ${{ ... }} directly into `run:`. Same template-
+          # injection hardening as the Maven-install step above.
+          BUILD_CMD: ${{ steps.lock.outputs.build_cmd }}
+        run: bash -c "$BUILD_CMD"
 
       - name: Upload build logs on failure
         if: failure()
