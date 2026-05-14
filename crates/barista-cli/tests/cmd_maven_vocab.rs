@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 
 use barista_cli::cli::{Cli, GlobalFlags, MavenVocabArgs};
-use barista_cli::cmd::{maven_vocab, MavenPhase};
+use barista_cli::cmd::{MavenPhase, maven_vocab};
 use clap::Parser;
 use tempfile::tempdir;
 
@@ -190,12 +190,18 @@ fn message_names_barback_daemon_without_internal_ids() {
     let g = empty_globals();
     let out = maven_vocab::render(&g, MavenPhase::Compile, &no_args());
 
-    assert!(out.contains("barback daemon"), "expected 'barback daemon' in:\n{out}");
+    assert!(
+        out.contains("barback daemon"),
+        "expected 'barback daemon' in:\n{out}"
+    );
     assert!(
         out.contains("subsequent milestone"),
         "expected 'subsequent milestone' in:\n{out}"
     );
-    assert!(!out.contains("Phase 4"), "must not leak 'Phase 4' into:\n{out}");
+    assert!(
+        !out.contains("Phase 4"),
+        "must not leak 'Phase 4' into:\n{out}"
+    );
     assert!(!out.contains("M3.1"), "must not leak 'M3.1' into:\n{out}");
 }
 

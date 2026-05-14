@@ -1,0 +1,6 @@
+---
+source: crates/barista-cli/tests/cmd_pour.rs
+assertion_line: 603
+expression: summary
+---
+2 of 3 entries (scope=compile) → <TARGET>

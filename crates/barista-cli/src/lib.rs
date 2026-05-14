@@ -12,5 +12,5 @@ pub mod cmd;
 pub mod project;
 
 pub use project::{
-    record_sticky, resolve_project_root, ProjectRoot, ResolveError, ResolveInputs, RootSource,
+    ProjectRoot, ResolveError, ResolveInputs, RootSource, record_sticky, resolve_project_root,
 };

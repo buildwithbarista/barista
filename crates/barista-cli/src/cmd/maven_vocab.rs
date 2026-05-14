@@ -15,7 +15,7 @@
 //! about what works today and what doesn't.
 
 use crate::cli::{GlobalFlags, MavenVocabArgs};
-use crate::project::{resolve_project_root, ResolveInputs};
+use crate::project::{ResolveInputs, resolve_project_root};
 
 /// Known Maven lifecycle phases that barista exposes as
 /// top-level subcommands.
