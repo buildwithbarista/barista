@@ -1,0 +1,47 @@
+[
+  {
+    "number": 101,
+    "state": "OPEN",
+    "title": "[security] cargo-audit: RUSTSEC-2025-0141 in Cargo.lock:1 (critical)",
+    "labels": [{"name": "security"}, {"name": "security-bot"}, {"name": "cargo-audit"}],
+    "createdAt": "2026-04-01T10:00:00Z",
+    "closedAt": null,
+    "body": "Body referencing severity: critical, no severity label.\n<!-- sec-fingerprint: aaaa -->"
+  },
+  {
+    "number": 102,
+    "state": "OPEN",
+    "title": "[security] semgrep: rust/unwrap-used in crates/x.rs:42 (high)",
+    "labels": [{"name": "security"}, {"name": "security-bot"}, {"name": "semgrep"}],
+    "createdAt": "2026-05-05T10:00:00Z",
+    "closedAt": null,
+    "body": "Body mentions high severity inline.\n<!-- sec-fingerprint: bbbb -->"
+  },
+  {
+    "number": 103,
+    "state": "OPEN",
+    "title": "[security] gitleaks: aws-access-key in src/foo.rs:3 (medium)",
+    "labels": [{"name": "security"}, {"name": "security-bot"}, {"name": "gitleaks"}],
+    "createdAt": "2026-05-08T10:00:00Z",
+    "closedAt": null,
+    "body": "Medium severity.\n<!-- sec-fingerprint: cccc -->"
+  },
+  {
+    "number": 104,
+    "state": "OPEN",
+    "title": "[security] trivy-fs: misconfig low",
+    "labels": [{"name": "security"}, {"name": "security-bot"}, {"name": "trivy-fs"}],
+    "createdAt": "2026-05-10T10:00:00Z",
+    "closedAt": null,
+    "body": "low severity finding\n<!-- sec-fingerprint: dddd -->"
+  },
+  {
+    "number": 105,
+    "state": "CLOSED",
+    "title": "[security] cargo-audit: RUSTSEC-2024-0001 in Cargo.lock:1 (high)",
+    "labels": [{"name": "security"}, {"name": "security-bot"}, {"name": "cargo-audit"}],
+    "createdAt": "2026-04-15T10:00:00Z",
+    "closedAt": "2026-04-20T10:00:00Z",
+    "body": "Resolved.\n<!-- sec-fingerprint: eeee -->"
+  }
+]
