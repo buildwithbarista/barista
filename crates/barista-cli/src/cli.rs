@@ -334,31 +334,41 @@ pub struct MavenVocabArgs {
 /// replace the stubs with real impls in subsequent batches.
 pub fn dispatch(cli: Cli) -> i32 {
     // The `--ci` shortcut expands to `--frozen --output json
-    // --quiet` once `--frozen` lands. We still bind `cli.global`
-    // here so that the (future) per-command dispatchers can read
-    // it; the field is intentionally unused for now.
-    let _global = &cli.global;
+    // --quiet` once `--frozen` lands. Per-command dispatchers that
+    // need global flags take `&cli.global` directly.
+    let Cli { global, command } = cli;
 
-    match cli.command {
-        Command::Pull(_) => stub("pull"),
-        Command::Grind { subcommand } => match subcommand {
-            GrindCommand::Tree(_) => stub("grind tree"),
-            GrindCommand::Diff(_) => stub("grind diff"),
-            GrindCommand::Audit(_) => stub("grind audit"),
-            GrindCommand::Why(_) => stub("grind why"),
-        },
+    match command {
+        Command::Pull(args) => crate::cmd::pull::run(&global, &args),
+        Command::Grind { subcommand } => crate::cmd::grind::run(&global, &subcommand),
         Command::Pour(_) => stub("pour"),
         Command::DialIn(_) => stub("dial-in"),
         Command::Shot(_) => stub("shot"),
         Command::Wrapper(_) => stub("wrapper"),
-        Command::Clean(_) => stub_maven("clean"),
-        Command::Compile(_) => stub_maven("compile"),
-        Command::Test(_) => stub_maven("test"),
-        Command::Package(_) => stub_maven("package"),
-        Command::Verify(_) => stub_maven("verify"),
-        Command::Install(_) => stub_maven("install"),
-        Command::Deploy(_) => stub_maven("deploy"),
-        Command::Site(_) => stub_maven("site"),
+        Command::Clean(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Clean, &a)
+        }
+        Command::Compile(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Compile, &a)
+        }
+        Command::Test(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Test, &a)
+        }
+        Command::Package(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Package, &a)
+        }
+        Command::Verify(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Verify, &a)
+        }
+        Command::Install(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Install, &a)
+        }
+        Command::Deploy(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Deploy, &a)
+        }
+        Command::Site(a) => {
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Site, &a)
+        }
     }
 }
 
@@ -370,11 +380,3 @@ fn stub(cmd: &str) -> i32 {
     2
 }
 
-fn stub_maven(phase: &str) -> i32 {
-    eprintln!(
-        "barista: maven-vocabulary command `{phase}` is not yet \
-         executable — daemon support lands in a later phase. \
-         For now, run `mvn {phase}` to execute the phase."
-    );
-    2
-}

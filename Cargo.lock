@@ -147,8 +147,16 @@ dependencies = [
 name = "barista-cli"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "barista-cache",
+ "barista-config",
+ "barista-coords",
+ "barista-lockfile",
+ "barista-pom",
+ "barista-resolver",
  "clap",
  "insta",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]

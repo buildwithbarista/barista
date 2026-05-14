@@ -1,0 +1,9 @@
+---
+source: crates/barista-cli/tests/cmd_grind.rs
+expression: text
+---
+com.example:app:1.0.0
+├── org.apache.commons:commons-lang3:3.14.0  [compile]
+├── com.fasterxml.jackson.core:jackson-core:2.18.0  [compile]
+└── org.slf4j:slf4j-api:2.0.16  [compile]
+    └── org.slf4j:slf4j-jdk14:2.0.16  [runtime]

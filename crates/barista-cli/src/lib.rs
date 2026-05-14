@@ -8,6 +8,7 @@
 //! process.
 
 pub mod cli;
+pub mod cmd;
 pub mod project;
 
 pub use project::{

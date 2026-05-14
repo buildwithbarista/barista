@@ -1,0 +1,46 @@
+---
+source: crates/barista-cli/tests/cmd_grind.rs
+expression: "&json"
+---
+{
+  "schema_version": 1,
+  "reactor": [
+    {
+      "coords": "com.example:app",
+      "version": "1.0.0",
+      "relative_path": "pom.xml"
+    }
+  ],
+  "nodes": [
+    {
+      "coords": "org.apache.commons:commons-lang3",
+      "version": "3.14.0",
+      "scope": "compile",
+      "depth": 0,
+      "from_path": []
+    },
+    {
+      "coords": "com.fasterxml.jackson.core:jackson-core",
+      "version": "2.18.0",
+      "scope": "compile",
+      "depth": 0,
+      "from_path": []
+    },
+    {
+      "coords": "org.slf4j:slf4j-api",
+      "version": "2.0.16",
+      "scope": "compile",
+      "depth": 0,
+      "from_path": []
+    },
+    {
+      "coords": "org.slf4j:slf4j-jdk14",
+      "version": "2.0.16",
+      "scope": "runtime",
+      "depth": 1,
+      "from_path": [
+        "org.slf4j:slf4j-api"
+      ]
+    }
+  ]
+}
