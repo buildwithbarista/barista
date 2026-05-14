@@ -330,8 +330,25 @@ pub struct ShotArgs {
 pub struct WrapperArgs {
     /// Barista version to pin in the wrapper. Defaults to the
     /// current binary's version.
-    #[arg(long)]
+    #[arg(long, value_name = "VERSION")]
     pub version: Option<String>,
+
+    /// Download-URL template recorded in `wrapper.properties`.
+    ///
+    /// `{version}` and `{target}` placeholders are substituted by
+    /// the launcher script at run time. Defaults to the upstream
+    /// GitHub releases URL.
+    #[arg(long, value_name = "URL")]
+    pub distribution_url: Option<String>,
+
+    /// Optional SHA-256 of the release archive. Recorded into
+    /// `wrapper.properties` so the launcher can verify the download.
+    #[arg(long, value_name = "SHA256")]
+    pub checksum: Option<String>,
+
+    /// Overwrite an existing wrapper without prompting.
+    #[arg(long)]
+    pub force: bool,
 }
 
 /// Pass-through arguments for the Maven-vocabulary commands.
@@ -366,7 +383,7 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Pour(args) => crate::cmd::pour::run(&global, &args),
         Command::DialIn(args) => crate::cmd::dial_in::run(&global, &args),
         Command::Shot(_) => stub("shot"),
-        Command::Wrapper(_) => stub("wrapper"),
+        Command::Wrapper(args) => crate::cmd::wrapper::run(&global, &args),
         Command::Clean(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Clean, &a)
         }

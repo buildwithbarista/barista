@@ -9,5 +9,6 @@ pub mod grind;
 pub mod maven_vocab;
 pub mod pour;
 pub mod pull;
+pub mod wrapper;
 
 pub use maven_vocab::MavenPhase;

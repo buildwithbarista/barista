@@ -1,0 +1,12 @@
+---
+source: crates/barista-cli/tests/cmd_wrapper.rs
+expression: render_properties(&p)
+---
+# baristaw wrapper configuration.
+# Edit `version` to change the pinned barista release.
+# {version} and {target} in `distribution_url` are
+# substituted by the launcher script at run time.
+
+version = "0.1.0-alpha.0"
+distribution_url = "https://github.com/buildwithbarista/barista/releases/download/v{version}/barista-{target}.tar.gz"
+checksum_sha256 = ""
