@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# .gitleaksignore — per-finding secret-scan waivers
+# ---------------------------------------------------------------------------
+#
+# Purpose
+#   This file tells gitleaks to ignore a specific finding by its
+#   fingerprint. Use it when a documented, intentional, non-secret value
+#   trips a default rule (e.g., a synthetic AWS-shaped key in a test
+#   fixture, or an example token embedded in user-facing documentation).
+#
+# Format
+#   One fingerprint per line. Blank lines and lines beginning with `#`
+#   are ignored. A fingerprint takes one of two shapes:
+#
+#     # In-tree (no-git) findings — what `gitleaks detect --no-git` emits:
+#     path/to/file:rule-id:line
+#
+#     # History findings — what a full repo scan emits:
+#     <commit-sha>:path/to/file:rule-id:line
+#
+#   The exact fingerprint string is printed in the JSON report under the
+#   key `Fingerprint`. Copy it verbatim — gitleaks compares string-equal.
+#
+# Hygiene playbook (summary)
+#   Every entry in this file must satisfy *all* of:
+#     1. The flagged value is documented and not a real credential.
+#     2. The PR that adds the entry explains why the value cannot or should
+#        not be removed/redacted at source.
+#     3. A code-owning reviewer (security area) approved the entry.
+#     4. A comment on the entry — placed on the line immediately above —
+#        names the file, the rule, and the rationale, so a future reader
+#        can audit without spelunking history.
+#
+#   If the fixture or document the entry waives is rotated, refactored, or
+#   removed, the corresponding entry here must also be deleted — stale
+#   entries are a smell that the original threat-model trade-off no longer
+#   applies.
+#
+#   The full allowlist-hygiene playbook (review cadence, who owns audits,
+#   how entries are reaped) is published in
+#   `docs/ci/secret-scan-allowlist.md`.
+#
+# When the hook fires on something you believe is a false positive
+#   Do not add an entry here as your first move. Instead:
+#     a. Confirm the value is not a real secret. Rotate it now if it is.
+#     b. Try to remove or redact the value at source. The best waiver is
+#        no waiver.
+#     c. If (b) is impossible (e.g., a deliberately-shaped test fixture),
+#        capture the fingerprint from the gitleaks JSON report, add it
+#        here with a comment, and reference the rationale in the PR
+#        description.
+#
+# ---------------------------------------------------------------------------
+# Entries
+# ---------------------------------------------------------------------------
+# (No entries yet. Tests that depend on a temporarily-allowlisted fingerprint
+#  manage that state at runtime — see scripts/test-secret-scan.sh — so this
+#  file stays clean by default.)

@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+# Pre-commit framework configuration
+# ---------------------------------------------------------------------------
+#
+# Run all hooks against staged changes:
+#   pre-commit run
+#
+# Run all hooks against the entire repo (used by CI):
+#   pre-commit run --all-files
+#
+# Install the git hook (one-time, per-clone):
+#   pre-commit install
+#
+# Every `rev:` below pins to a specific commit SHA. Floating tags are
+# rejected on principle — a tag being moved or a release being re-cut
+# must not silently change what runs on a developer's machine. Bumping a
+# pinned hook is a normal PR: replace the SHA, regenerate any baselines,
+# and explain the upgrade in the commit body.
+#
+# To bump a hook safely:
+#   1. Find the new tag at the upstream repo's releases page.
+#   2. Resolve the tag to a commit SHA:
+#        git ls-remote --tags <repo-url> <tag>
+#   3. Replace both `rev:` and the comment naming the tag below.
+#   4. Run `pre-commit autoupdate --freeze` to verify pre-commit agrees,
+#      then `pre-commit run --all-files` locally before opening the PR.
+# ---------------------------------------------------------------------------
+
+minimum_pre_commit_version: "3.5.0"
+
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
+repos:
+  # -------------------------------------------------------------------------
+  # Secret scanning — see .gitleaks.toml for rules and .gitleaksignore for
+  # per-finding waivers.
+  # -------------------------------------------------------------------------
+  - repo: https://github.com/gitleaks/gitleaks
+    # v8.30.1
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e
+    hooks:
+      - id: gitleaks
+
+  # -------------------------------------------------------------------------
+  # Generic hygiene — small, fast, language-agnostic checks.
+  # -------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    # v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c
+    hooks:
+      - id: trailing-whitespace
+        # Cargo.lock and snapshot test outputs are managed by tooling that
+        # rewrites them verbatim; trimming whitespace there causes churn.
+        exclude: '(?x)^(Cargo\.lock|.*\.snap)$'
+      - id: end-of-file-fixer
+        exclude: '(?x)^(Cargo\.lock|.*\.snap)$'
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  # -------------------------------------------------------------------------
+  # Rust toolchain hygiene — fast, locally-runnable subset of the same gates
+  # CI enforces. These run as `language: system` (i.e., they shell out to
+  # `cargo` on PATH) so they pick up the toolchain pinned in
+  # `rust-toolchain.toml`. Heavier checks (full test suite, workspace clippy
+  # with all features) stay in CI to keep pre-commit responsive.
+  # -------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        description: Verify Rust formatting is clean.
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy --workspace -- -D warnings
+        description: Lint the Rust workspace and fail on warnings.
+        entry: cargo clippy --workspace --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

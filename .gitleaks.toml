@@ -1,0 +1,73 @@
+# ---------------------------------------------------------------------------
+# gitleaks configuration for the Barista monorepo
+# ---------------------------------------------------------------------------
+#
+# What is gitleaks?
+#   gitleaks is a secret-scanner that walks source files (and git history)
+#   looking for high-confidence credential shapes — cloud keys, OAuth tokens,
+#   private-key blocks, generic high-entropy strings, etc. It runs in three
+#   places in this repo:
+#
+#     1. Locally as a pre-commit hook (see `.pre-commit-config.yaml`).
+#     2. In CI on `pull_request`, `push: main`, and a nightly `schedule`
+#        (see `.github/workflows/secret-scan.yml`).
+#     3. Manually via `scripts/test-secret-scan.sh`, which proves the
+#        configuration + allowlist round-trip works against a known fixture.
+#
+# What does this file control?
+#   - Which rule pack is loaded. We extend the upstream default rules so the
+#     project always inherits the latest curated secret patterns when the
+#     gitleaks binary is bumped.
+#   - Repo-specific allowlists (paths and rule-id pairings) that are part of
+#     the *configuration* — i.e., facts that are stable across all branches
+#     and reviewers. Per-finding waivers belong in `.gitleaksignore`, not
+#     here.
+#
+# Proposing changes
+#   - Adding a path/extension/rule allowlist that affects every contributor
+#     is a configuration change. Open a PR that touches this file, explain
+#     the threat-model trade-off in the PR description, and tag a reviewer
+#     from the security area-CODEOWNERS group.
+#   - Allowlisting a single finding (e.g., a documented synthetic credential
+#     in a test fixture) is a fingerprint operation; use `.gitleaksignore`
+#     instead.
+#   - Loosening upstream defaults (e.g., disabling a rule globally) should
+#     be a last resort and must come with a written rationale.
+#
+# Reference: https://github.com/gitleaks/gitleaks#configuration
+# ---------------------------------------------------------------------------
+
+[extend]
+# Pull in the upstream default rule pack as the base. Repo-local rules and
+# allowlists below augment, but never silently replace, the defaults.
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Repo-wide allowlist
+# ---------------------------------------------------------------------------
+#
+# The `tests/fixtures/secrets/` directory contains deliberately-shaped but
+# fake credentials used as inputs to secret-scan integration tests
+# (`scripts/test-secret-scan.sh` and the CI secret-scan workflow). The
+# fixtures must trip gitleaks rules — that is precisely what the tests
+# assert — so we do NOT allowlist the directory at the configuration level.
+#
+# Instead, per-fixture waivers live in `.gitleaksignore` (fingerprint-based)
+# so that:
+#   (a) the synthetic credential still proves the scanner works locally,
+#   (b) the waiver is reviewable as a discrete line in `.gitleaksignore`,
+#       and
+#   (c) rotating or replacing the fixture invalidates the waiver
+#       automatically, forcing a fresh review.
+#
+# If a future fixture genuinely needs configuration-level allowlisting
+# (e.g., a large generated test corpus where fingerprints are unstable),
+# add a `[[rules.allowlists]]` block here with a clear rationale comment.
+# ---------------------------------------------------------------------------
+
+[[allowlists]]
+description = "Vendored Cargo build artifacts and lockfiles are not source-of-truth for secrets; gitleaks finds frequent false positives in lockfile hashes."
+paths = [
+    '''Cargo\.lock$''',
+    '''(^|/)target/''',
+]
