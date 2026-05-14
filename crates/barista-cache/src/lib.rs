@@ -11,6 +11,14 @@
 
 pub mod cas;
 pub mod checksum;
+pub mod fetch;
+pub mod index;
+pub mod journal;
+pub mod lock;
 
 pub use cas::{Cas, CasError, ContentHash};
 pub use checksum::{Algorithm, ChecksumError, ChecksumExpected, Verification, verify};
+pub use fetch::{ConditionalHeaders, FetchConfig, FetchError, FetchOutcome, Fetcher};
+pub use index::{DEFAULT_COMPACT_THRESHOLD, Index, IndexEntry, IndexError, IndexKey, Origin};
+pub use journal::{Journal, JournalEntry, JournalError};
+pub use lock::{CoordLockGuard, CoordLockMap, CoordVersionKey, FilesystemLock, LockError, lock_path};
