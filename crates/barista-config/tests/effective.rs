@@ -215,7 +215,7 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
     out.push_str("=== effective config ===\n");
     let width = lines.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
     for (k, v) in &lines {
-        out.push_str(&format!("{k:<width$} = {v}\n", k = k, v = v, width = width));
+        out.push_str(&format!("{k:<width$} = {v}\n"));
     }
 
     out.push_str("\n=== audit ===\n");
