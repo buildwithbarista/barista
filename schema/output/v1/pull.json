@@ -27,12 +27,13 @@
     "lockfile-status": {
       "type": "string",
       "enum": [
+        "absent",
         "unchanged",
         "written",
         "would-write",
         "stale"
       ],
-      "description": "Outcome of lockfile reconciliation: `unchanged` (lockfile matched the resolution), `written` (lockfile was rewritten on disk), `would-write` (a write was suppressed by `--check`/`--dry-run`), or `stale` (lockfile diverged from the project under strict mode and the command failed)."
+      "description": "Outcome of lockfile reconciliation: `absent` (no lockfile existed; expected under v0.1 `--no-fetch` on a fresh project), `unchanged` (lockfile matched the resolution), `written` (lockfile was rewritten on disk), `would-write` (a write was suppressed by `--check`/`--dry-run`), or `stale` (lockfile diverged from the project under strict mode and the command failed)."
     },
     "entries": {
       "type": "integer",
@@ -51,6 +52,16 @@
     "strict": {
       "type": "boolean",
       "description": "Whether strict mode was active. In strict mode a stale lockfile is an error rather than a regeneration trigger."
+    },
+    "project-signature": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional truncated project signature (e.g. lockfile hash) that lets downstream tooling tie this run to a specific lockfile generation."
+    },
+    "coords": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional human-readable Maven coordinate of the project being pulled. Echoed by renderers; absent under `--quiet`."
     },
     "warnings": {
       "type": "array",

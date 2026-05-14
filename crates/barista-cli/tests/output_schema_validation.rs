@@ -99,19 +99,28 @@ fn grind_tree_happy_path_validates() {
     let validator = load("grind-tree.json");
     let doc = json!({
         "command": "grind-tree",
-        "root-coord": "com.example:app:1.0.0",
+        "schema-version": 1,
+        "reactor": [
+            {
+                "coords": "com.example:app",
+                "version": "1.0.0",
+                "relative-path": ""
+            }
+        ],
         "nodes": [
             {
-                "coord": "com.example:app:1.0.0",
-                "scope": "compile",
-                "depth": 0,
-                "children": ["org.slf4j:slf4j-api:2.0.13"]
-            },
-            {
-                "coord": "org.slf4j:slf4j-api:2.0.13",
+                "coords": "org.slf4j:slf4j-api",
+                "version": "2.0.13",
                 "scope": "compile",
                 "depth": 1,
-                "children": []
+                "from-path": []
+            },
+            {
+                "coords": "ch.qos.logback:logback-classic",
+                "version": "1.5.6",
+                "scope": "compile",
+                "depth": 2,
+                "from-path": ["org.slf4j:slf4j-api"]
             }
         ]
     });

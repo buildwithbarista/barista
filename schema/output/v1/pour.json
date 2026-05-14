@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/output/v1/pour.json",
+  "title": "barista pour — structured output",
+  "description": "Top-level document emitted by `barista pour --output json`. Reports the outcome of materializing locked artifacts into a target directory (default: `~/.m2/repository`). Under `--dry-run` no files are written and `materialized` is `0`; the `planned-paths` array still lists every destination that would have been created so callers can predict the filesystem effect.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "target",
+    "scope",
+    "considered",
+    "planned",
+    "materialized",
+    "dry-run",
+    "planned-paths"
+  ],
+  "properties": {
+    "command": {
+      "const": "pour",
+      "description": "Discriminator. Always the literal string `pour` for documents produced by `barista pour`."
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Absolute path of the directory artifacts were (or would be) materialized into."
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Scope filter that was applied (e.g. `compile`, `runtime`, `test`). Entries with other scopes were skipped."
+    },
+    "considered": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of entries in the lockfile, before scope filtering."
+    },
+    "planned": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries selected after scope filtering. Equal to the length of `planned-paths`."
+    },
+    "materialized": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of entries actually materialized into `target`. `0` under `--dry-run`. In real runs, equals `planned` on success."
+    },
+    "dry-run": {
+      "type": "boolean",
+      "description": "Whether this was a `--dry-run`. When `true`, no files were created and `materialized` is `0`."
+    },
+    "planned-paths": {
+      "type": "array",
+      "description": "Destination paths that were (or would be) written, in planning order. Length equals `planned`.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

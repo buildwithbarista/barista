@@ -2,12 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://barista.build/schema/output/v1/grind-tree.json",
   "title": "barista grind tree — structured output",
-  "description": "Top-level document emitted by `barista grind tree --format json`. Encodes the resolved dependency tree rooted at the project's pom. Coordinate strings use Maven `group:artifact:version` notation (`gA:gV:gC`); classifier/type when present are appended per Maven convention.",
+  "description": "Top-level document emitted by `barista grind tree --format json`. Encodes the resolved dependency tree as a flat list of entries (mirroring the lockfile's flat structure) plus a reactor-module summary. Each entry carries its `from-path` — the chain of coordinates that brought it into the graph — so consumers can reconstruct parent/child links by joining entries on coordinate string. Coordinate strings use Maven `group:artifact[:version[:classifier[:type]]]` notation.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "command",
-    "root-coord",
+    "schema-version",
+    "reactor",
     "nodes"
   ],
   "properties": {
@@ -15,49 +16,82 @@
       "const": "grind-tree",
       "description": "Discriminator. Always the literal string `grind-tree` for documents produced by `barista grind tree`."
     },
-    "root-coord": {
-      "type": "string",
-      "minLength": 1,
-      "pattern": "^[^: ]+:[^: ]+:[^: ]+(:[^: ]*){0,2}$",
-      "description": "Coordinate of the root node — the project being resolved — in `group:artifact:version` form (optionally followed by `:classifier` and `:type`)."
+    "schema-version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Stable monotonic version of this document's shape. v1 ↔ the schema-version 1 document defined here. Breaking changes bump this and require a new `/v2/` schema directory."
+    },
+    "reactor": {
+      "type": "array",
+      "description": "Project modules participating in this resolution. For a single-module project this contains one entry; for a multi-module reactor it lists every module in lockfile order.",
+      "items": {
+        "$ref": "#/$defs/reactor-module"
+      }
     },
     "nodes": {
       "type": "array",
-      "description": "Flat list of nodes in the resolved tree. Order is unspecified; consumers should index by `coord` and walk via the `children` arrays starting from `root-coord`.",
+      "description": "Flat list of resolved entries in lockfile order. To reconstruct the tree, group by `coords` and link parent → child via `from-path`.",
       "items": {
         "$ref": "#/$defs/node"
       }
     }
   },
   "$defs": {
+    "reactor-module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coords", "version", "relative-path"],
+      "properties": {
+        "coords": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Coordinate of this reactor module in `group:artifact` form (version is carried separately)."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Resolved version of this reactor module."
+        },
+        "relative-path": {
+          "type": "string",
+          "description": "Path of this module relative to the reactor root. `\"\"` for the root module."
+        }
+      }
+    },
     "node": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "coord",
+        "coords",
+        "version",
         "scope",
         "depth",
-        "children"
+        "from-path"
       ],
       "properties": {
-        "coord": {
+        "coords": {
           "type": "string",
           "minLength": 1,
-          "description": "Coordinate of this node in `group:artifact:version` form."
+          "description": "Coordinate of this node in `group:artifact` form (version is carried separately)."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Resolved version of this node."
         },
         "scope": {
           "type": "string",
           "minLength": 1,
-          "description": "Maven scope of this dependency relative to its parent (e.g. `compile`, `runtime`, `test`, `provided`, `import`)."
+          "description": "Maven scope of this dependency relative to its nearest reactor module (e.g. `compile`, `runtime`, `test`, `provided`, `import`)."
         },
         "depth": {
           "type": "integer",
           "minimum": 0,
-          "description": "Depth in the dependency tree from `root-coord` (the root itself is depth 0)."
+          "description": "Depth in the dependency tree from the owning reactor module (the module itself is depth 0)."
         },
-        "children": {
+        "from-path": {
           "type": "array",
-          "description": "Coordinates of direct children of this node, in resolution order.",
+          "description": "Chain of coordinate strings from the owning reactor module to this node, exclusive of the node itself. Empty for direct dependencies (depth 1).",
           "items": {
             "type": "string",
             "minLength": 1

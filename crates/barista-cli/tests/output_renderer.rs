@@ -317,22 +317,27 @@ fn ndjson_renderer_emits_one_line_per_call() {
         assert!(v.is_object(), "line {i} is not an object: {line}");
     }
 
-    // Lines 0..3 are `event=result`, line 3 is `event=error`.
+    // Every emitted line carries an RFC 3339 millis timestamp and
+    // a `payload` (matches schema/output/v1/progress-event.json).
     let v0: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(v0["event"], "result");
-    assert_eq!(v0["data"]["command"], "pull");
+    assert_eq!(v0["payload"]["command"], "pull");
+    assert!(v0["timestamp"].is_string(), "timestamp missing: {lines:?}");
 
     let v1: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
     assert_eq!(v1["event"], "result");
-    assert_eq!(v1["data"]["command"], "grind-tree");
+    assert_eq!(v1["payload"]["command"], "grind-tree");
+    assert!(v1["timestamp"].is_string());
 
     let v2: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
     assert_eq!(v2["event"], "result");
-    assert_eq!(v2["data"]["command"], "pour");
+    assert_eq!(v2["payload"]["command"], "pour");
+    assert!(v2["timestamp"].is_string());
 
     let v3: serde_json::Value = serde_json::from_str(lines[3]).unwrap();
     assert_eq!(v3["event"], "error");
-    assert_eq!(v3["message"], "boom: ndjson-err");
+    assert_eq!(v3["payload"]["message"], "boom: ndjson-err");
+    assert!(v3["timestamp"].is_string());
 }
 
 #[test]
@@ -443,7 +448,11 @@ fn snapshot_pull_json_pretty() {
 #[test]
 fn snapshot_pour_ndjson_result_line() {
     let stdout = SharedBuf::new();
-    let mut r = NdjsonRenderer::new(stdout.writer());
+    // Pin the clock so the snapshot bytes are deterministic.
+    let mut r = NdjsonRenderer::with_fixed_timestamp(
+        stdout.writer(),
+        "2026-05-14T12:34:56.789Z",
+    );
     r.render_pour(&sample_pour_report()).unwrap();
     insta::assert_snapshot!("pour_ndjson_result_line", stdout.as_string());
 }
