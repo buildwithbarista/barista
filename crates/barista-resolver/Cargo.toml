@@ -23,6 +23,7 @@ barista-version = { path = "../barista-version" }
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 criterion = { version = "0.8", default-features = false, features = ["plotters", "cargo_bench_support"] }
+barista-test-fixtures = { path = "../barista-test-fixtures" }
 
 [[bench]]
 name = "walker"

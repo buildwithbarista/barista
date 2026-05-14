@@ -247,13 +247,7 @@ mod tests {
         Coords::new("<root>", "<root>").expect("valid coords")
     }
 
-    fn edge(
-        from: Coords,
-        from_v: &str,
-        to: Coords,
-        range: &str,
-        available: &[&str],
-    ) -> DepEdge {
+    fn edge(from: Coords, from_v: &str, to: Coords, range: &str, available: &[&str]) -> DepEdge {
         DepEdge {
             from_coords: from,
             from_version: from_v.to_string(),
@@ -322,7 +316,9 @@ mod tests {
         let s = format_derivation(&d);
         // Both edges appear under a single "conflicting requirements
         // on `org.example:lib`" header.
-        let header_count = s.matches("conflicting requirements on `org.example:lib`").count();
+        let header_count = s
+            .matches("conflicting requirements on `org.example:lib`")
+            .count();
         assert_eq!(header_count, 1);
         assert!(s.contains("org.example:a:1.0.0"));
         assert!(s.contains("org.example:b:1.0.0"));
@@ -489,13 +485,7 @@ mod tests {
 
         let with_edge = StrictDerivation {
             root_cause: "x".to_string(),
-            contributing_edges: vec![edge(
-                co("g", "a"),
-                "1",
-                co("g", "b"),
-                "1",
-                &["1"],
-            )],
+            contributing_edges: vec![edge(co("g", "a"), "1", co("g", "b"), "1", &["1"])],
         };
         let s = format_derivation(&with_edge);
         assert!(s.contains("hints:"));
@@ -525,13 +515,7 @@ mod tests {
     fn single_edge_skips_no_version_summary() {
         let d = StrictDerivation {
             root_cause: "x".to_string(),
-            contributing_edges: vec![edge(
-                co("g", "a"),
-                "1",
-                co("g", "b"),
-                "1",
-                &["1"],
-            )],
+            contributing_edges: vec![edge(co("g", "a"), "1", co("g", "b"), "1", &["1"])],
         };
         let s = format_derivation(&d);
         assert!(!s.contains("no version of"));

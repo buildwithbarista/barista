@@ -173,6 +173,7 @@ dependencies = [
  "barista-config",
  "barista-coords",
  "barista-pom",
+ "barista-test-fixtures",
  "barista-version",
  "criterion",
  "pubgrub",
