@@ -245,13 +245,13 @@ impl CacheSource {
         // check and the lock acquisition; re-check after taking the
         // fs lock so we don't double-fetch.
         let lock_root = self.lock_root();
-        let _fs_lock = FilesystemLock::acquire(&lock_root, &lock_key).await.map_err(|e| {
-            MetadataError::Transport {
+        let _fs_lock = FilesystemLock::acquire(&lock_root, &lock_key)
+            .await
+            .map_err(|e| MetadataError::Transport {
                 coords: format!("{}:{}", coords.group, coords.artifact),
                 version: version.to_string(),
                 detail: format!("filesystem lock: {e}"),
-            }
-        })?;
+            })?;
 
         if let Some(entry) = self.inner.index.get(&index_key) {
             let bytes = self
@@ -353,12 +353,13 @@ impl MetadataSource for CacheSource {
         let (bytes, origin) = self
             .get_or_fetch_artifact(coords, version, index_key, lock_key, "pom", None, None)
             .await?;
-        let pom = parse_pom(&String::from_utf8_lossy(&bytes)).map_err(|e| MetadataError::Parse {
-            what: "pom.xml",
-            coords: format!("{}:{}", coords.group, coords.artifact),
-            version: version.to_string(),
-            detail: format!("{e}"),
-        })?;
+        let pom =
+            parse_pom(&String::from_utf8_lossy(&bytes)).map_err(|e| MetadataError::Parse {
+                what: "pom.xml",
+                coords: format!("{}:{}", coords.group, coords.artifact),
+                version: version.to_string(),
+                detail: format!("{e}"),
+            })?;
         Ok((pom, origin))
     }
 
@@ -370,7 +371,12 @@ impl MetadataSource for CacheSource {
             coords: coords.clone(),
             version: METADATA_SENTINEL_VERSION.to_string(),
         };
-        let index_key = IndexKey::new(coords.clone(), METADATA_SENTINEL_VERSION, "maven-metadata.xml", None);
+        let index_key = IndexKey::new(
+            coords.clone(),
+            METADATA_SENTINEL_VERSION,
+            "maven-metadata.xml",
+            None,
+        );
         let url = self
             .inner
             .fetcher
@@ -387,7 +393,9 @@ impl MetadataSource for CacheSource {
             )
             .await
             .map_err(|e| match e {
-                MetadataError::NotFound { coords, .. } => MetadataError::MetadataNotFound { coords },
+                MetadataError::NotFound { coords, .. } => {
+                    MetadataError::MetadataNotFound { coords }
+                }
                 other => other,
             })?;
         let xml = String::from_utf8_lossy(&bytes);
@@ -413,8 +421,7 @@ impl MetadataSource for CacheSource {
             coords: coords.clone(),
             version: sentinel.clone(),
         };
-        let index_key =
-            IndexKey::new(coords.clone(), sentinel, "maven-metadata.xml", None);
+        let index_key = IndexKey::new(coords.clone(), sentinel, "maven-metadata.xml", None);
         // The per-version snapshot metadata lives at
         // <group>/<artifact>/<version>/maven-metadata.xml.
         let base = self
@@ -423,7 +430,10 @@ impl MetadataSource for CacheSource {
             .url_for_metadata(None, &coords.group, &coords.artifact);
         // Replace the trailing `/maven-metadata.xml` with
         // `/<version>/maven-metadata.xml`.
-        let url = base.replace("/maven-metadata.xml", &format!("/{version}/maven-metadata.xml"));
+        let url = base.replace(
+            "/maven-metadata.xml",
+            &format!("/{version}/maven-metadata.xml"),
+        );
         let (bytes, origin) = self
             .get_or_fetch_artifact(
                 coords,
@@ -613,11 +623,7 @@ mod tests {
             .await;
     }
 
-    async fn mount_status(
-        server: &MockServer,
-        url_path: &str,
-        status: u16,
-    ) {
+    async fn mount_status(server: &MockServer, url_path: &str, status: u16) {
         Mock::given(method("GET"))
             .and(path(url_path.to_string()))
             .respond_with(ResponseTemplate::new(status))
@@ -880,7 +886,10 @@ mod tests {
             .fetch_metadata(&coords("org.example", "lib"))
             .await
             .expect_err("404");
-        assert!(matches!(err, MetadataError::MetadataNotFound { .. }), "got {err:?}");
+        assert!(
+            matches!(err, MetadataError::MetadataNotFound { .. }),
+            "got {err:?}"
+        );
     }
 
     // 12. AuthRequired on 401.
@@ -895,6 +904,9 @@ mod tests {
             .fetch_pom(&coords("org.example", "lib"), "1.0")
             .await
             .expect_err("401");
-        assert!(matches!(err, MetadataError::AuthRequired { .. }), "got {err:?}");
+        assert!(
+            matches!(err, MetadataError::AuthRequired { .. }),
+            "got {err:?}"
+        );
     }
 }

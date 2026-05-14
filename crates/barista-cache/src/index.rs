@@ -70,9 +70,7 @@ pub const DEFAULT_COMPACT_THRESHOLD: u64 = 10_000;
 /// stricter version-parse invariants — the cache records whatever
 /// the fetcher pulled, even if some other layer would later reject
 /// it.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct IndexKey {
     /// Maven `(group, artifact)`.
     pub coords: Coords,
@@ -218,10 +216,7 @@ impl Index {
         Self::open_inner(cache_root, true)
     }
 
-    fn open_inner(
-        cache_root: &Path,
-        recover: bool,
-    ) -> Result<(Self, OpenReport), IndexError> {
+    fn open_inner(cache_root: &Path, recover: bool) -> Result<(Self, OpenReport), IndexError> {
         let index_dir = cache_root.join("index");
         std::fs::create_dir_all(&index_dir).map_err(|e| IndexError::Io {
             path: index_dir.clone(),
@@ -308,7 +303,8 @@ impl Index {
     /// The journal record is appended unconditionally so replay sees
     /// the intent even if the in-memory map disagrees.
     pub fn remove(&self, key: &IndexKey) -> Result<bool, IndexError> {
-        self.journal.append(&JournalEntry::Remove { key: key.clone() })?;
+        self.journal
+            .append(&JournalEntry::Remove { key: key.clone() })?;
         let removed = {
             let mut guard = self.inner.write().expect("index lock poisoned");
             guard.journal_entries_since_compact += 1;
@@ -348,7 +344,11 @@ impl Index {
 
     /// Current entry count.
     pub fn len(&self) -> usize {
-        self.inner.read().expect("index lock poisoned").entries.len()
+        self.inner
+            .read()
+            .expect("index lock poisoned")
+            .entries
+            .len()
     }
 
     /// Whether the index is empty.
@@ -416,10 +416,11 @@ fn load_snapshot(path: &Path) -> Result<IndexState, IndexError> {
         source: e,
     })?;
     validate_header(&mut file, path, SNAPSHOT_VERSION)?;
-    file.seek(SeekFrom::Start(HEADER_LEN)).map_err(|e| IndexError::Io {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    file.seek(SeekFrom::Start(HEADER_LEN))
+        .map_err(|e| IndexError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
     let mut buf = Vec::new();
     BufReader::new(file)
         .read_to_end(&mut buf)
@@ -743,8 +744,7 @@ mod tests {
         let e = entry(0xAB);
         let cfg = bincode::config::standard();
         let bytes = bincode::serde::encode_to_vec(&e, cfg).unwrap();
-        let (decoded, _): (IndexEntry, _) =
-            bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
+        let (decoded, _): (IndexEntry, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
         assert_eq!(decoded, e);
     }
 
@@ -767,7 +767,10 @@ mod tests {
         idx.put(k_main.clone(), entry(1)).unwrap();
         idx.put(k_sources.clone(), entry(2)).unwrap();
         assert_eq!(idx.len(), 2);
-        assert_ne!(idx.get(&k_main).unwrap().hash, idx.get(&k_sources).unwrap().hash);
+        assert_ne!(
+            idx.get(&k_main).unwrap().hash,
+            idx.get(&k_sources).unwrap().hash
+        );
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod gc;
 pub mod index;
 pub mod journal;
 pub mod lock;
+pub mod m2;
 pub mod recovery;
 pub mod source;
 
@@ -27,6 +28,9 @@ pub use index::{
     DEFAULT_COMPACT_THRESHOLD, Index, IndexEntry, IndexError, IndexKey, OpenReport, Origin,
 };
 pub use journal::{Journal, JournalEntry, JournalError};
-pub use lock::{CoordLockGuard, CoordLockMap, CoordVersionKey, FilesystemLock, LockError, lock_path};
+pub use lock::{
+    CoordLockGuard, CoordLockMap, CoordVersionKey, FilesystemLock, LockError, lock_path,
+};
+pub use m2::{MirrorError, m2_path, materialize};
 pub use recovery::{RecoveryError, RecoveryReport, is_recoverable, scan_and_recover};
 pub use source::CacheSource;

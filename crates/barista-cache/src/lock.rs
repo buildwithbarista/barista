@@ -25,8 +25,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex as SyncMutex;
 use std::sync::Arc;
+use std::sync::Mutex as SyncMutex;
 use std::time::Duration;
 
 use sha1::{Digest, Sha1};
@@ -52,7 +52,10 @@ impl CoordVersionKey {
 
     /// Canonical string form: `group:artifact:version`.
     pub fn canonical(&self) -> String {
-        format!("{}:{}:{}", self.coords.group, self.coords.artifact, self.version)
+        format!(
+            "{}:{}:{}",
+            self.coords.group, self.coords.artifact, self.version
+        )
     }
 }
 
@@ -65,9 +68,7 @@ pub enum LockError {
         #[source]
         source: std::io::Error,
     },
-    #[error(
-        "filesystem lock at {path:?} is held by another process; timed out after {seconds}s"
-    )]
+    #[error("filesystem lock at {path:?} is held by another process; timed out after {seconds}s")]
     Timeout { path: PathBuf, seconds: u64 },
 }
 
@@ -321,7 +322,10 @@ mod tests {
         let h = tokio::spawn(async move {
             let _g2 = map2.lock(&k2).await;
             // Must observe the first guard as already dropped.
-            assert!(flag.load(Ordering::SeqCst), "second locked before first dropped");
+            assert!(
+                flag.load(Ordering::SeqCst),
+                "second locked before first dropped"
+            );
         });
 
         // Give the spawned task a moment to attempt acquisition.
@@ -473,12 +477,8 @@ mod tests {
         let k = key("org.example", "lib", "1.0");
         let _held = FilesystemLock::acquire(tmp.path(), &k).await.unwrap();
 
-        let result = FilesystemLock::acquire_with_timeout(
-            tmp.path(),
-            &k,
-            Duration::from_millis(200),
-        )
-        .await;
+        let result =
+            FilesystemLock::acquire_with_timeout(tmp.path(), &k, Duration::from_millis(200)).await;
         assert!(matches!(result, Err(LockError::Timeout { .. })));
     }
 
@@ -492,10 +492,7 @@ mod tests {
         assert_eq!(p1, p2);
         // And matches a known prefix layout.
         assert!(p1.starts_with(root));
-        assert_eq!(
-            p1.extension().and_then(|s| s.to_str()),
-            Some("lock")
-        );
+        assert_eq!(p1.extension().and_then(|s| s.to_str()), Some("lock"));
     }
 
     // 13. lock_path differs for different coords/versions.
@@ -530,7 +527,12 @@ mod tests {
         for comp in &components {
             let s = comp.as_os_str().to_string_lossy();
             assert!(
-                s.chars().all(|c| c.is_ascii_hexdigit() || c == '.' || c == 'l' || c == 'o' || c == 'c' || c == 'k'),
+                s.chars().all(|c| c.is_ascii_hexdigit()
+                    || c == '.'
+                    || c == 'l'
+                    || c == 'o'
+                    || c == 'c'
+                    || c == 'k'),
                 "unsafe char in component: {s}"
             );
         }

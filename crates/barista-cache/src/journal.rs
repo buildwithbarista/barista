@@ -240,13 +240,10 @@ impl Journal {
                 path: self.path.clone(),
                 source: e,
             })?;
-        guard
-            .get_ref()
-            .sync_data()
-            .map_err(|e| JournalError::Io {
-                path: self.path.clone(),
-                source: e,
-            })?;
+        guard.get_ref().sync_data().map_err(|e| JournalError::Io {
+            path: self.path.clone(),
+            source: e,
+        })?;
 
         Ok(offset)
     }
@@ -338,10 +335,11 @@ impl Journal {
             path: self.path.clone(),
             source: e,
         })?;
-        file.seek(SeekFrom::Start(0)).map_err(|e| JournalError::Io {
-            path: self.path.clone(),
-            source: e,
-        })?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|e| JournalError::Io {
+                path: self.path.clone(),
+                source: e,
+            })?;
         write_header(file, JOURNAL_VERSION).map_err(|e| JournalError::Io {
             path: self.path.clone(),
             source: e,
@@ -374,10 +372,11 @@ pub(crate) fn validate_header(
     path: &Path,
     expected_version: u32,
 ) -> Result<(), JournalError> {
-    file.seek(SeekFrom::Start(0)).map_err(|e| JournalError::Io {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| JournalError::Io {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
     let mut header = [0u8; 10];
     file.read_exact(&mut header).map_err(|e| JournalError::Io {
         path: path.to_path_buf(),
@@ -413,12 +412,13 @@ fn encode_payload(entry: &JournalEntry, offset: u64) -> Result<Vec<u8>, JournalE
 
 fn decode_payload(bytes: &[u8], offset: u64) -> Result<JournalEntry, JournalError> {
     let cfg = bincode::config::standard();
-    let (entry, _) = bincode::serde::decode_from_slice::<JournalEntry, _>(bytes, cfg).map_err(
-        |e| JournalError::Bincode {
-            offset,
-            detail: e.to_string(),
-        },
-    )?;
+    let (entry, _) =
+        bincode::serde::decode_from_slice::<JournalEntry, _>(bytes, cfg).map_err(|e| {
+            JournalError::Bincode {
+                offset,
+                detail: e.to_string(),
+            }
+        })?;
     Ok(entry)
 }
 
@@ -606,7 +606,10 @@ mod tests {
             .unwrap();
         assert_eq!(entries.len(), 4);
         assert!(matches!(entries[0], JournalEntry::Put { .. }));
-        assert!(matches!(entries[1], JournalEntry::Touch { atime_unix: 42, .. }));
+        assert!(matches!(
+            entries[1],
+            JournalEntry::Touch { atime_unix: 42, .. }
+        ));
         assert!(matches!(entries[2], JournalEntry::Put { .. }));
         assert!(matches!(entries[3], JournalEntry::Remove { .. }));
     }
@@ -636,7 +639,9 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let err = Journal::open(&path).unwrap_err();
         match err {
-            JournalError::UnsupportedVersion { version, expected, .. } => {
+            JournalError::UnsupportedVersion {
+                version, expected, ..
+            } => {
                 assert_eq!(version, 999);
                 assert_eq!(expected, JOURNAL_VERSION);
             }
@@ -764,5 +769,4 @@ mod tests {
             .unwrap();
         assert_eq!(entries.len(), 2);
     }
-
 }

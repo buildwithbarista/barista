@@ -231,7 +231,7 @@ mod tests {
         let (hash, _path) = fx.cas.put(bytes).unwrap();
         let k = key(artifact);
         let entry = IndexEntry {
-            hash: hash.clone(),
+            hash,
             size_bytes,
             sha1_hex: None,
             origin: Origin {
@@ -305,7 +305,13 @@ mod tests {
         // (After one eviction total=800; `800 < 800` is false, so
         // we keep going.)
         for (i, atime) in [100u64, 200, 300, 400, 500].iter().enumerate() {
-            seed(&fx, &format!("a{i}"), format!("p{i}").as_bytes(), *atime, 200);
+            seed(
+                &fx,
+                &format!("a{i}"),
+                format!("p{i}").as_bytes(),
+                *atime,
+                200,
+            );
         }
         let stats = run_gc(&fx.cas, &fx.index, &small_cap(1_000)).unwrap();
         assert!(stats.reached_target);
@@ -317,8 +323,7 @@ mod tests {
     #[test]
     fn hardlinked_entries_are_skipped() {
         let fx = fixture();
-        let (k_pinned, hash_pinned) =
-            seed(&fx, "pinned", b"pinned-bytes", 50, 600);
+        let (k_pinned, hash_pinned) = seed(&fx, "pinned", b"pinned-bytes", 50, 600);
         let (k_loose, _) = seed(&fx, "loose", b"loose-bytes", 100, 400);
 
         // Simulate the ~/.m2 mirror by hardlinking the pinned blob.
@@ -336,8 +341,7 @@ mod tests {
     #[test]
     fn hardlinked_entries_evict_when_keep_hardlinked_is_off() {
         let fx = fixture();
-        let (k_pinned, hash_pinned) =
-            seed(&fx, "pinned", b"pinned-bytes", 50, 600);
+        let (k_pinned, hash_pinned) = seed(&fx, "pinned", b"pinned-bytes", 50, 600);
         let _ = seed(&fx, "other", b"other-bytes", 9_000, 400);
 
         let link_target = fx._dir.path().join("m2-link");
@@ -373,8 +377,7 @@ mod tests {
     #[test]
     fn handles_orphaned_index_entry_when_blob_is_missing() {
         let fx = fixture();
-        let (k_orphan, hash_orphan) =
-            seed(&fx, "orphan", b"orphan-bytes", 50, 600);
+        let (k_orphan, hash_orphan) = seed(&fx, "orphan", b"orphan-bytes", 50, 600);
         let (k_keep, _) = seed(&fx, "keep", b"keep-bytes", 9_000, 400);
 
         // Out-of-band corruption: blob vanished but index still
@@ -416,8 +419,7 @@ mod tests {
     fn gc_stats_report_all_counters_correctly() {
         let fx = fixture();
         // Mix: one pinned (hardlinked, old) + two evictable.
-        let (_k_pin, hash_pin) =
-            seed(&fx, "pin", b"pin-bytes", 10, 400);
+        let (_k_pin, hash_pin) = seed(&fx, "pin", b"pin-bytes", 10, 400);
         let (_k_old, _) = seed(&fx, "old", b"old-bytes", 50, 400);
         let (_k_mid, _) = seed(&fx, "mid", b"mid-bytes", 100, 400);
 

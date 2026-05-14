@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use reqwest::header::{
-    HeaderMap, HeaderValue, CONTENT_TYPE, ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
+    CONTENT_TYPE, ETAG, HeaderMap, HeaderValue, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED,
 };
 use reqwest::{Client, ClientBuilder};
 use tokio::sync::Semaphore;
@@ -262,9 +262,7 @@ impl Fetcher {
             Some(c) => format!("-{c}"),
             None => String::new(),
         };
-        format!(
-            "{base}/{group_path}/{artifact}/{version}/{artifact}-{version}{suffix}.{extension}"
-        )
+        format!("{base}/{group_path}/{artifact}/{version}/{artifact}-{version}{suffix}.{extension}")
     }
 
     /// Compose the URL for an artifact's `maven-metadata.xml`:
@@ -294,8 +292,8 @@ impl Fetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc as StdArc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use wiremock::matchers::{header, header_exists, method, path};
     use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
@@ -328,7 +326,10 @@ mod tests {
 
         let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
         let out = f
-            .fetch(&format!("{}/blob", server.uri()), &ConditionalHeaders::default())
+            .fetch(
+                &format!("{}/blob", server.uri()),
+                &ConditionalHeaders::default(),
+            )
             .await
             .unwrap();
         match out {
@@ -352,7 +353,10 @@ mod tests {
 
         let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
         let out = f
-            .fetch(&format!("{}/e", server.uri()), &ConditionalHeaders::default())
+            .fetch(
+                &format!("{}/e", server.uri()),
+                &ConditionalHeaders::default(),
+            )
             .await
             .unwrap();
         match out {
@@ -378,7 +382,10 @@ mod tests {
 
         let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
         let out = f
-            .fetch(&format!("{}/lm", server.uri()), &ConditionalHeaders::default())
+            .fetch(
+                &format!("{}/lm", server.uri()),
+                &ConditionalHeaders::default(),
+            )
             .await
             .unwrap();
         match out {
@@ -528,7 +535,10 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            matches!(err, FetchError::Timeout { .. } | FetchError::Transport { .. }),
+            matches!(
+                err,
+                FetchError::Timeout { .. } | FetchError::Transport { .. }
+            ),
             "expected Timeout or Transport, got {err:?}"
         );
     }
@@ -553,12 +563,10 @@ mod tests {
                 // Update peak monotonically.
                 let mut prev = self.peak.load(Ordering::SeqCst);
                 while now > prev {
-                    match self.peak.compare_exchange(
-                        prev,
-                        now,
-                        Ordering::SeqCst,
-                        Ordering::SeqCst,
-                    ) {
+                    match self
+                        .peak
+                        .compare_exchange(prev, now, Ordering::SeqCst, Ordering::SeqCst)
+                    {
                         Ok(_) => break,
                         Err(actual) => prev = actual,
                     }
@@ -669,14 +677,7 @@ mod tests {
     #[test]
     fn url_for_artifact_trims_trailing_slash() {
         let f = Fetcher::new(FetchConfig::default()).unwrap();
-        let u = f.url_for_artifact(
-            Some("https://example.test/m2/"),
-            "a",
-            "b",
-            "1",
-            None,
-            "jar",
-        );
+        let u = f.url_for_artifact(Some("https://example.test/m2/"), "a", "b", "1", None, "jar");
         assert_eq!(u, "https://example.test/m2/a/b/1/b-1.jar");
     }
 
