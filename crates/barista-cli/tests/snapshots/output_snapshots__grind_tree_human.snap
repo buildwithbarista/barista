@@ -1,0 +1,7 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: stdout.as_string()
+---
+com.example:demo:1.0.0
+└── org.slf4j:slf4j-api:2.0.13  [compile]
+    └── ch.qos.logback:logback-classic:1.5.6  [compile]

@@ -1,0 +1,17 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: body
+---
+{
+  "command": "pour",
+  "target": "/m2",
+  "scope": "compile",
+  "considered": 3,
+  "planned": 2,
+  "materialized": 2,
+  "dry-run": false,
+  "planned-paths": [
+    "/m2/com/example/a/1.0/a-1.0.jar",
+    "/m2/com/example/b/2.0/b-2.0.jar"
+  ]
+}

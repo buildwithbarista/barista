@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_snapshots.rs
+expression: stderr.as_string()
+---
+pull: --no-fetch: com.example:demo:1.0.0: existing barista.lock has 5 entries (signature deadbeefcafe)
