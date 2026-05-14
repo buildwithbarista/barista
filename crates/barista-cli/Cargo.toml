@@ -28,3 +28,4 @@ barista-coords = { path = "../barista-coords" }
 [dev-dependencies]
 insta = "1.47"
 tempfile = "3"
+toml = "0.8"
