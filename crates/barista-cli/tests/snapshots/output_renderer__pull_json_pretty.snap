@@ -1,0 +1,16 @@
+---
+source: crates/barista-cli/tests/output_renderer.rs
+assertion_line: 440
+expression: stdout.as_string()
+---
+{
+  "command": "pull",
+  "project-root": "/proj",
+  "lockfile-status": "unchanged",
+  "entries": 142,
+  "fetched": 0,
+  "project-signature": "deadbeefdead",
+  "coords": "com.example:demo:1.0.0",
+  "no-fetch": true,
+  "strict": false
+}

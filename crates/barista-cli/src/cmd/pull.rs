@@ -26,6 +26,15 @@
 //! project-root / config / POM-parse pipeline and validates an
 //! existing `barista.lock` if one is present — enough to be useful
 //! as a "does this project even parse?" smoke test.
+//!
+//! # Output
+//!
+//! The hand-rolled `eprintln!("pull: …")` path of M3.1 has been
+//! replaced with the structured-output pipeline in [`crate::output`].
+//! [`run`] builds a [`PullReport`] and dispatches it through a
+//! renderer chosen by `--output`. Human format prints the same
+//! `pull: <summary>` line to stderr; JSON / NDJSON emit a structured
+//! document on stdout.
 
 use barista_config::{Config, LoadAudit, LoaderError, LoaderInputs, load_effective_config};
 use barista_lockfile::{Lockfile, LockfileError};
@@ -34,6 +43,8 @@ use barista_pom::profile::{ActivationContext, ResolveError as PomResolveError, r
 use barista_pom::raw::{ParseError as PomParseError, RawParent, RawPom, parse_pom};
 
 use crate::cli::{GlobalFlags, PullArgs};
+use crate::output::report::{LockfileStatus, PullReport};
+use crate::output::make_runtime_renderer;
 use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
 
 /// Run `barista pull`.
@@ -46,25 +57,55 @@ use crate::project::{ResolveError, ResolveInputs, resolve_project_root};
 /// - `2` reserved for "not yet implemented" — the full-fetch path
 ///   when called without `--no-fetch`.
 pub fn run(global: &GlobalFlags, args: &PullArgs) -> i32 {
-    match run_inner(global, args) {
-        Ok(summary) => {
+    let mut renderer = make_runtime_renderer(global);
+    let exit = match run_inner(global, args) {
+        Ok(report) => {
+            // Render the report only when not in `--quiet`. JSON/NDJSON
+            // consumers typically want the document even under
+            // `--quiet`, but mirroring the pre-renderer behaviour for
+            // M3.2 T1 keeps the snapshot suite stable; T3 revisits.
             if !global.quiet {
-                eprintln!("pull: {summary}");
+                if let Err(e) = renderer.render_pull(&report) {
+                    eprintln!("error: rendering pull report failed: {e}");
+                    return 1;
+                }
             }
             0
         }
         Err(PullError::NotYetImplemented { detail }) => {
-            eprintln!("barista: pull (full-fetch path) is not yet wired in this build: {detail}");
+            // Keep the pre-existing direct-stderr message for the
+            // stub path so M3.x tooling that greps for it doesn't
+            // change. Renderer is still consulted for json/ndjson.
+            let err = PullError::NotYetImplemented { detail };
+            if matches!(global.output, crate::cli::OutputFormat::Human) {
+                eprintln!(
+                    "barista: pull (full-fetch path) is not yet wired in this build: {err}"
+                );
+            } else if let Err(re) = renderer.render_error(&err) {
+                eprintln!("error: rendering error report failed: {re}");
+            }
             2
         }
         Err(e) => {
-            eprintln!("error: barista pull failed: {e}");
+            if matches!(global.output, crate::cli::OutputFormat::Human) {
+                eprintln!("error: barista pull failed: {e}");
+            } else if let Err(re) = renderer.render_error(&e) {
+                eprintln!("error: rendering error report failed: {re}");
+            }
             1
         }
+    };
+    if let Err(e) = renderer.finish() {
+        eprintln!("error: flushing output failed: {e}");
+        return 1;
     }
+    exit
 }
 
-fn run_inner(global: &GlobalFlags, args: &PullArgs) -> Result<String, PullError> {
+/// Library-friendly entry point used by [`run`] and integration
+/// tests. Drives the full pipeline and returns a structured report
+/// on success.
+pub fn run_inner(global: &GlobalFlags, args: &PullArgs) -> Result<PullReport, PullError> {
     // -- 1. Project root ---------------------------------------------------
     let root = resolve_project_root(ResolveInputs {
         root: global.root.clone(),
@@ -96,7 +137,7 @@ fn run_inner(global: &GlobalFlags, args: &PullArgs) -> Result<String, PullError>
 
     // -- 4. The two paths --------------------------------------------------
     if args.no_fetch {
-        return run_no_fetch(&root.root, &raw_pom);
+        return run_no_fetch(&root.root, &raw_pom, global, args);
     }
 
     // Full-fetch path: run the effective-POM pipeline. POMs with a
@@ -142,25 +183,32 @@ fn run_inner(global: &GlobalFlags, args: &PullArgs) -> Result<String, PullError>
 /// count. With no lockfile on disk, reports that none was found.
 /// Either outcome is success — `--no-fetch` is a non-mutating
 /// validation pass.
-///
-/// Takes the parsed [`RawPom`] so the summary can echo the coords
-/// of the project being validated; the parse itself happens in
-/// [`run_inner`] before the `--no-fetch` branch.
-fn run_no_fetch(project_root: &std::path::Path, raw_pom: &RawPom) -> Result<String, PullError> {
+fn run_no_fetch(
+    project_root: &std::path::Path,
+    raw_pom: &RawPom,
+    global: &GlobalFlags,
+    args: &PullArgs,
+) -> Result<PullReport, PullError> {
     let coords = pom_coords_for_summary(raw_pom);
     let lock_path = project_root.join("barista.lock");
-    if lock_path.exists() {
+    let (status, entries, signature) = if lock_path.exists() {
         let lf = Lockfile::read(&lock_path)?;
-        Ok(format!(
-            "--no-fetch: {coords}: existing barista.lock has {} entries (signature {})",
-            lf.entries.len(),
-            short_sig(&lf.meta.project_signature),
-        ))
+        let sig = short_sig(&lf.meta.project_signature);
+        (LockfileStatus::Unchanged, lf.entries.len(), Some(sig))
     } else {
-        Ok(format!(
-            "--no-fetch: {coords}: no existing barista.lock (would resolve and write one)"
-        ))
-    }
+        (LockfileStatus::Absent, 0, None)
+    };
+
+    Ok(PullReport {
+        project_root: project_root.to_path_buf(),
+        lockfile_status: status,
+        entries,
+        fetched: 0,
+        project_signature: signature,
+        coords: Some(coords),
+        no_fetch: args.no_fetch,
+        strict: global.strict,
+    })
 }
 
 /// Format the project coordinates from a raw POM, falling back to
