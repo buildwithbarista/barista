@@ -85,6 +85,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod tracing;
 pub mod transport;
 
 pub use transport::{
