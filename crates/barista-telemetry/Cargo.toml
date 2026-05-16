@@ -18,6 +18,21 @@ serde_json = "1"
 # stack. No retries, no streaming, no cookies — just POST.
 # Sonatype-verified at 0.12.x: no malware, policy-compliant.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
+# Local structured-logging stack. `tracing` is the facade that
+# produces spans/events; `tracing-subscriber` consumes them and
+# renders to stderr in either a human-friendly format (default)
+# or a one-event-per-line JSON format (for IDE / AI-agent
+# integration). The subscriber is **process-local** — it never
+# emits over the network and is independent from the opt-in
+# telemetry transport above. The `env-filter` feature enables
+# `RUST_LOG`-style filter strings; `json` enables the JSON
+# formatter; `fmt` is the default pretty formatter.
+# Versions: tracing 0.1.x and tracing-subscriber 0.3.x are the
+# stable maintained line (tokio-rs); Sonatype lookup deferred
+# (credits exhausted at planning time) — pinned to widely-used
+# minor versions and revisitable in a follow-up.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json", "std"] }
 
 [dev-dependencies]
 barista-config = { path = "../barista-config" }
