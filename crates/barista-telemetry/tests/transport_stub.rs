@@ -54,6 +54,28 @@ fn every_event_variant() -> Vec<TelemetryEvent> {
         TelemetryEvent::CommandInvoked { name: "pour" },
         TelemetryEvent::CommandInvoked { name: "pull" },
         TelemetryEvent::CommandInvoked { name: "grind" },
+        TelemetryEvent::BuildDuration {
+            phase: "resolve",
+            duration_ms: 1_240,
+        },
+        TelemetryEvent::BuildDuration {
+            phase: "fetch",
+            duration_ms: 87,
+        },
+        TelemetryEvent::ArtifactCount {
+            category: "resolved-deps",
+            count: 142,
+        },
+        TelemetryEvent::ArtifactCount {
+            category: "fetched-artifacts",
+            count: 9,
+        },
+        TelemetryEvent::CacheHitMiss {
+            hits: 138,
+            misses: 4,
+        },
+        TelemetryEvent::ErrorCodeOnly { code: "BAR-001" },
+        TelemetryEvent::ErrorCodeOnly { code: "BAR-204" },
     ]
 }
 

@@ -177,20 +177,101 @@ impl TelemetrySettings {
 
 /// A telemetry event payload.
 ///
-/// Placeholder catalog — only one variant ships in this revision.
-/// The full event shapes (build start/finish, pour, pull,
-/// daemon-lifecycle, error categories) land in a subsequent
-/// task.
+/// The full catalog of v0.1 event shapes, per PRD §20.2. Each
+/// variant carries **only** the aggregate, non-identifying fields
+/// listed in the PRD. By construction the catalog cannot carry
+/// CLI arguments, error messages, file paths, project names, or
+/// Maven coordinates — there is no variant whose field accepts
+/// such a value, and the privacy contract is enforced both by
+/// code review and by the introspection test
+/// [`tests/event_shapes.rs::no_event_field_names_carry_pii`].
+///
+/// # Wire shape
+///
+/// Externally tagged via `kind`, snake-case variant names. A
+/// serialized `BuildDuration` looks like:
+///
+/// ```json
+/// {"kind":"build_duration","phase":"resolve","duration_ms":1240}
+/// ```
+///
+/// # Why `&'static str` and not `String`
+///
+/// Every textual field on every variant is a `&'static str`. That
+/// is a deliberate, type-level guarantee: a static string literal
+/// cannot have been built from user input at runtime, so a
+/// reviewer reading a call site can see at a glance that no path,
+/// project name, error message, or CLI argument is being passed
+/// in. The PRD-listed values are all known-at-compile-time
+/// (subcommand names like `"pour"`, build phases like `"resolve"`,
+/// artifact-count kinds like `"resolved-deps"`, stable error
+/// codes like `"BAR-001"`), so the `'static` constraint is not
+/// merely a hint — it is the privacy invariant.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TelemetryEvent {
     /// A top-level CLI subcommand was invoked. `name` is the
     /// static command name (`"pour"`, `"pull"`, etc.); never
-    /// user-provided text, never a path.
+    /// user-provided text, never a path, **never CLI arguments**.
     CommandInvoked {
-        /// Static subcommand name.
+        /// Static subcommand name (e.g. `"pour"`, `"pull"`,
+        /// `"grind"`). Must be a compile-time literal — never
+        /// derived from user input.
         name: &'static str,
+    },
+
+    /// Duration of a discrete build phase. Emitted at the end of
+    /// each timed phase so the server can build a histogram per
+    /// `phase`.
+    BuildDuration {
+        /// Static phase name (e.g. `"resolve"`, `"fetch"`,
+        /// `"compile"`, `"action-dispatch"`). Must be a
+        /// compile-time literal — never a user-supplied label.
+        phase: &'static str,
+        /// Wall-clock duration of the phase in milliseconds.
+        duration_ms: u64,
+    },
+
+    /// A count of artifacts produced or consumed by a phase
+    /// (e.g. `resolved-deps`, `fetched-artifacts`). The
+    /// `category` identifies what was counted; the `count` is
+    /// the aggregate. **No identities** — never the GAV
+    /// coordinates, never the file paths.
+    ///
+    /// The label field is called `category` (not `kind`) so it
+    /// doesn't collide with the serde external-tag discriminator
+    /// also named `kind` — see
+    /// [`tests/event_shapes.rs::artifact_count_category_does_not_shadow_discriminator`].
+    ArtifactCount {
+        /// Static counter category (e.g. `"resolved-deps"`,
+        /// `"fetched-artifacts"`). Must be a compile-time
+        /// literal.
+        category: &'static str,
+        /// Number of artifacts the counter observed.
+        count: u64,
+    },
+
+    /// Aggregate cache hit/miss counters for a single
+    /// observation window (typically a single CLI invocation).
+    /// Carries no cache keys, no coordinates, no paths.
+    CacheHitMiss {
+        /// Number of cache hits observed in the window.
+        hits: u64,
+        /// Number of cache misses observed in the window.
+        misses: u64,
+    },
+
+    /// A stable, structured error code. `code` is the `BAR-*`
+    /// identifier from the error catalog — **never** the error
+    /// message, **never** the path that triggered it, **never**
+    /// the underlying cause string. Aggregating on the code lets
+    /// us bucket failures without ever ingesting free-form text.
+    ErrorCodeOnly {
+        /// Stable `BAR-NNN` identifier from the error catalog.
+        /// Must be a compile-time literal sourced from the
+        /// catalog — never a runtime-formatted string.
+        code: &'static str,
     },
 }
 
