@@ -13,6 +13,7 @@ import com.bluminal.barista.barback.proto.Ping;
 import com.bluminal.barista.barback.proto.Pong;
 import com.bluminal.barista.barback.proto.RedactedCredential;
 import com.bluminal.barista.barback.proto.Shutdown;
+import com.bluminal.barista.barback.lifecycle.IdleTimer;
 import com.bluminal.barista.barback.workers.WorkerPool;
 import com.google.protobuf.InvalidProtocolBufferException;
 
@@ -27,6 +28,8 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Objects;
@@ -68,9 +71,11 @@ import java.util.logging.Logger;
  *       listener. The connection that delivered the {@link Shutdown}
  *       message is allowed to read further envelopes from any queued
  *       data already on the socket; subsequent {@code accept()} calls
- *       return null. (Idle-timer-driven shutdown is the responsibility
- *       of milestone 4.2 Task 5; this method exists so the CLI's
- *       explicit shutdown path works today.)</li>
+ *       return null. Pairs with the {@link IdleTimer}-driven
+ *       self-shutdown path: the server tears down on either the
+ *       explicit {@link Shutdown} envelope or the idle window
+ *       elapsing without any inbound activity, whichever fires
+ *       first.</li>
  *   <li>{@link Envelope.BodyCase#ACTION} &mdash; routed to a stub
  *       handler that returns an {@link ActionResult} with
  *       {@link Error#getCode()} = {@code "BAR-DAEMON-NOT-YET-IMPLEMENTED"}
@@ -214,18 +219,41 @@ public final class Server implements AutoCloseable {
      */
     static final int DEFAULT_WORKERS = Math.max(1, Runtime.getRuntime().availableProcessors());
 
+    /**
+     * Default idle-shutdown window in seconds when {@code --idle-shutdown}
+     * is not specified and the caller-supplied {@link SocketConfig}
+     * does not pin a value. Matches the {@code barback.idle_shutdown_seconds
+     * = 1800} default from the daemon configuration spec (PRD §11.2.3
+     * — "after {@code idle_shutdown_seconds} of no requests, the
+     * daemon self-terminates").
+     */
+    static final int DEFAULT_IDLE_SHUTDOWN_SECONDS = 1800;
+
     private final Path socketPath;
     private final ServerSocketChannel serverChannel;
     private final WorkerPool workerPool;
+    private final IdleTimer idleTimer;
     private final Thread acceptThread;
     private final AtomicBoolean shutdownRequested = new AtomicBoolean(false);
     private final CountDownLatch terminated = new CountDownLatch(1);
     private final AtomicLong nextConnectionId = new AtomicLong(0);
 
-    private Server(Path socketPath, ServerSocketChannel serverChannel, WorkerPool workerPool) {
+    private Server(Path socketPath,
+                   ServerSocketChannel serverChannel,
+                   WorkerPool workerPool,
+                   Duration idleTimeout) {
         this.socketPath = socketPath;
         this.serverChannel = serverChannel;
         this.workerPool = workerPool;
+        // The idle-timer callback is `this::shutdownDueToIdle` — a
+        // method reference that flips the shutdown flag and closes
+        // the listener, which is idempotent and safe to invoke from
+        // the timer's daemon thread. The accept loop sees the
+        // resulting `ClosedChannelException`, drains workers, and
+        // counts down `terminated`. Captured here (in the
+        // constructor) so the timer field can stay final.
+        this.idleTimer = new IdleTimer(
+                idleTimeout, this::shutdownDueToIdle, Clock.systemUTC());
         this.acceptThread = new Thread(this::runAcceptLoop, "barback-accept");
         this.acceptThread.setDaemon(false);
     }
@@ -244,8 +272,17 @@ public final class Server implements AutoCloseable {
      *     resolves {@code default_workers} expressions like
      *     {@code "1C"} or {@code "0.75C"} to a concrete integer before
      *     spawning the daemon. Must be &ge; 1.
+     * @param idleShutdownSeconds idle window (in seconds) after which
+     *     the daemon self-terminates with no in-flight or recently-
+     *     completed work. Realises the {@code barback.idle_shutdown_seconds}
+     *     setting from the daemon configuration spec (PRD §11.2.3).
+     *     Must be &ge; 1. Defaults to {@link #DEFAULT_IDLE_SHUTDOWN_SECONDS}
+     *     (30 minutes) when the no-arg overload is used. The Rust CLI
+     *     will resolve {@code barback.toml}'s {@code idle_shutdown_seconds}
+     *     value before spawning the daemon; that wire-through is the
+     *     companion follow-up to T2's worker-count plumbing.
      */
-    public record SocketConfig(Path socketPath, int workers) {
+    public record SocketConfig(Path socketPath, int workers, int idleShutdownSeconds) {
 
         public SocketConfig {
             Objects.requireNonNull(socketPath, "socketPath");
@@ -253,16 +290,41 @@ public final class Server implements AutoCloseable {
                 throw new IllegalArgumentException(
                         "workers must be >= 1; got " + workers);
             }
+            if (idleShutdownSeconds <= 0) {
+                throw new IllegalArgumentException(
+                        "idleShutdownSeconds must be >= 1; got " + idleShutdownSeconds);
+            }
+        }
+
+        /**
+         * Two-arg compatibility constructor: picks the default idle
+         * window so existing call sites that only specify a worker
+         * count keep compiling.
+         */
+        public SocketConfig(Path socketPath, int workers) {
+            this(socketPath, workers, DEFAULT_IDLE_SHUTDOWN_SECONDS);
         }
 
         /**
          * Convenience constructor that picks the per-host
-         * {@link #DEFAULT_WORKERS} value. Retained so existing
-         * call sites that did not specify a worker count keep
+         * {@link #DEFAULT_WORKERS} value and the
+         * {@link #DEFAULT_IDLE_SHUTDOWN_SECONDS} idle window. Retained
+         * so existing call sites that did not specify either keep
          * compiling.
          */
         public SocketConfig(Path socketPath) {
-            this(socketPath, DEFAULT_WORKERS);
+            this(socketPath, DEFAULT_WORKERS, DEFAULT_IDLE_SHUTDOWN_SECONDS);
+        }
+
+        /**
+         * Return a copy of this config with the given idle-shutdown
+         * window. Helper for callers (especially tests) that already
+         * have a {@code SocketConfig} from {@link #defaultPath()} or
+         * one of the other constructors and want to override a single
+         * field without restating the others.
+         */
+        public SocketConfig withIdleShutdownSeconds(int seconds) {
+            return new SocketConfig(socketPath, workers, seconds);
         }
 
         /**
@@ -270,7 +332,8 @@ public final class Server implements AutoCloseable {
          * for the current user, falling back to
          * {@code $HOME/.barista/run/barback.sock} when
          * {@code XDG_RUNTIME_DIR} is unset. Worker count defaults to
-         * {@link #DEFAULT_WORKERS}.
+         * {@link #DEFAULT_WORKERS}; idle window defaults to
+         * {@link #DEFAULT_IDLE_SHUTDOWN_SECONDS}.
          */
         public static SocketConfig defaultPath() {
             String xdg = System.getenv("XDG_RUNTIME_DIR");
@@ -286,7 +349,10 @@ public final class Server implements AutoCloseable {
                 }
                 base = Path.of(home, ".barista", "run");
             }
-            return new SocketConfig(base.resolve("barback.sock"), DEFAULT_WORKERS);
+            return new SocketConfig(
+                    base.resolve("barback.sock"),
+                    DEFAULT_WORKERS,
+                    DEFAULT_IDLE_SHUTDOWN_SECONDS);
         }
     }
 
@@ -356,12 +422,18 @@ public final class Server implements AutoCloseable {
                             + "server binding");
         }
         ServerSocketChannel channel = bindUnix(config.socketPath());
-        Server server = new Server(config.socketPath(), channel, pool);
+        Server server = new Server(
+                config.socketPath(),
+                channel,
+                pool,
+                Duration.ofSeconds(config.idleShutdownSeconds()));
         server.acceptThread.start();
+        server.idleTimer.start();
         LOG.log(Level.INFO,
                 () -> "barback listening on " + config.socketPath()
                         + " (workers=" + pool.workers()
-                        + ", backend=" + pool.backend() + ")");
+                        + ", backend=" + pool.backend()
+                        + ", idleShutdownSeconds=" + config.idleShutdownSeconds() + ")");
         return server;
     }
 
@@ -378,6 +450,10 @@ public final class Server implements AutoCloseable {
     public void shutdown() {
         if (shutdownRequested.compareAndSet(false, true)) {
             LOG.log(Level.INFO, "shutdown requested");
+            // Stop the idle timer up-front so it cannot race the
+            // listener close + worker drain. Safe to call from any
+            // path — idleTimer.stop() is idempotent and never blocks.
+            idleTimer.stop();
             // Closing the server channel unblocks an in-flight
             // accept() call by raising AsynchronousCloseException; the
             // accept loop checks `shutdownRequested` on the catch path
@@ -388,6 +464,18 @@ public final class Server implements AutoCloseable {
                 LOG.log(Level.FINE, "ignored exception closing listener during shutdown", e);
             }
         }
+    }
+
+    /**
+     * Callback target for the {@link IdleTimer}. Logs the idle-shutdown
+     * reason at {@code INFO} (so operators see why the daemon exited)
+     * and then delegates to {@link #shutdown()}. Package-private so
+     * the timer wiring in the constructor can reference it via
+     * {@code this::shutdownDueToIdle}; not part of the public surface.
+     */
+    void shutdownDueToIdle() {
+        LOG.log(Level.INFO, "idle window elapsed; daemon shutting down");
+        shutdown();
     }
 
     /**
@@ -422,7 +510,7 @@ public final class Server implements AutoCloseable {
     }
 
     /**
-     * CLI entry point. Two flags are recognised:
+     * CLI entry point. Three flags are recognised:
      *
      * <ul>
      *   <li>{@code --socket <path>}: override the default socket
@@ -434,16 +522,24 @@ public final class Server implements AutoCloseable {
      *       like {@code "1C"} / {@code "0.75C"} from
      *       {@code barback.toml} to a concrete integer before spawning
      *       this entry point.</li>
+     *   <li>{@code --idle-shutdown <seconds>}: idle window in seconds
+     *       after which the daemon self-terminates. Must be &ge; 1.
+     *       Defaults to {@link #DEFAULT_IDLE_SHUTDOWN_SECONDS} (30
+     *       minutes). The Rust CLI resolves
+     *       {@code barback.idle_shutdown_seconds} from
+     *       {@code barback.toml} before spawning this entry point.</li>
      * </ul>
      *
      * <p>Unknown flags cause the process to exit with status 2 and a
      * one-line usage summary on stderr. The server blocks on
      * {@link #awaitShutdown()} until a {@link Shutdown} envelope is
-     * received from a client.
+     * received from a client, or until the idle window elapses without
+     * any inbound activity (whichever fires first).
      */
     public static void main(String[] args) throws Exception {
         Path socketPath = null;
         Integer workers = null;
+        Integer idleShutdownSeconds = null;
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             switch (arg) {
@@ -477,24 +573,47 @@ public final class Server implements AutoCloseable {
                     }
                     workers = parsed;
                 }
+                case "--idle-shutdown" -> {
+                    if (i + 1 >= args.length) {
+                        System.err.println("--idle-shutdown requires an integer argument (seconds)");
+                        System.exit(2);
+                        return;
+                    }
+                    int parsed;
+                    try {
+                        parsed = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("--idle-shutdown requires an integer argument; got '"
+                                + args[i] + "'");
+                        System.exit(2);
+                        return;
+                    }
+                    if (parsed <= 0) {
+                        System.err.println("--idle-shutdown must be >= 1; got " + parsed);
+                        System.exit(2);
+                        return;
+                    }
+                    idleShutdownSeconds = parsed;
+                }
                 default -> {
                     System.err.println(
                             "barback: unknown flag '" + arg + "'. "
-                                    + "Usage: barback [--socket <path>] [--workers <n>]");
+                                    + "Usage: barback [--socket <path>] [--workers <n>] "
+                                    + "[--idle-shutdown <seconds>]");
                     System.exit(2);
                     return;
                 }
             }
         }
-        SocketConfig config;
-        if (socketPath == null) {
-            SocketConfig def = SocketConfig.defaultPath();
-            config = workers == null ? def : new SocketConfig(def.socketPath(), workers);
-        } else {
-            config = workers == null
-                    ? new SocketConfig(socketPath)
-                    : new SocketConfig(socketPath, workers);
-        }
+        Path effectiveSocketPath = socketPath == null
+                ? SocketConfig.defaultPath().socketPath()
+                : socketPath;
+        int effectiveWorkers = workers == null ? DEFAULT_WORKERS : workers;
+        int effectiveIdle = idleShutdownSeconds == null
+                ? DEFAULT_IDLE_SHUTDOWN_SECONDS
+                : idleShutdownSeconds;
+        SocketConfig config = new SocketConfig(
+                effectiveSocketPath, effectiveWorkers, effectiveIdle);
         Server server = Server.start(config);
         Runtime.getRuntime().addShutdownHook(new Thread(server::shutdown, "barback-sigterm"));
         server.awaitShutdown();
@@ -587,6 +706,12 @@ public final class Server implements AutoCloseable {
                 }
             }
         } finally {
+            // Stop the idle timer first so it cannot race the listener
+            // teardown (e.g. if the accept loop exited for a reason
+            // other than the shutdown() path that already stopped the
+            // timer). Idempotent — a second stop() after shutdown()
+            // is a no-op.
+            idleTimer.stop();
             // WorkerPool#close drains in-flight handlers within
             // WorkerPool.SHUTDOWN_GRACE and forces shutdownNow() if
             // any remain.
@@ -676,6 +801,13 @@ public final class Server implements AutoCloseable {
      */
     private boolean dispatch(long connectionId, SocketChannel client, Envelope envelope) throws IOException {
         Envelope.BodyCase body = envelope.getBodyCase();
+        // Every envelope we route counts as activity. Reset the idle
+        // window before doing any work so the timer cannot fire
+        // between the read-loop pulling a frame off the wire and the
+        // dispatch completing. recordActivity() is thread-safe and
+        // cheap — a single CAS on AtomicReference + a schedule on the
+        // timer's daemon executor.
+        idleTimer.recordActivity();
         LOG.log(Level.FINE,
                 () -> "connection #" + connectionId
                         + " dispatch " + body
