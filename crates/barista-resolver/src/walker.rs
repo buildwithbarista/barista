@@ -50,6 +50,7 @@
 //! [`MetadataSource::fetch_metadata`].
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use barista_coords::Coords;
@@ -59,6 +60,7 @@ use barista_pom::{
 };
 use barista_version::Version;
 
+use crate::oreq::{MetadataKey, OreqSession, OreqStats};
 use crate::skipper::{ExclusionSet, SkipDecision, SkipperState, SkipperStats};
 use crate::source::{MetadataError, MetadataSource, ResolveKey};
 use crate::version_spec::{ParseError as SpecParseError, SpecWarning, VersionSpec};
@@ -82,6 +84,9 @@ pub struct ResolvedGraph {
     /// Skipper telemetry. Zeroed when the skipper is disabled via
     /// [`WalkOptions::enable_skipper`] = `false`.
     pub skipper_stats: SkipperStats,
+    /// O-REQ-01..05 counters (PRD §18.3). Zeroed unless the caller
+    /// provided an [`OreqSession`] via [`WalkOptions::oreq`].
+    pub oreq_stats: OreqStats,
 }
 
 /// A resolved dependency edge in the final graph.
@@ -192,6 +197,23 @@ pub struct WalkOptions {
     /// testing — correctness requires the two modes produce identical
     /// `winners` maps.
     pub enable_skipper: bool,
+    /// Optional [`OreqSession`] (PRD §18.3, O-REQ-01..05) that the
+    /// walker consults to dedup `maven-metadata.xml` lookups,
+    /// short-circuit metadata under frozen-lockfile mode, and dedup
+    /// parent / effective POMs in-session. When `None` the walker
+    /// behaves exactly as it did pre-B.2-T1 — no dedup, no
+    /// counters. When `Some`, the underlying [`MetadataSource`] is
+    /// still consulted on cache misses; the session only avoids the
+    /// redundant calls. The session is shared via `Arc` so the
+    /// caller can hold a clone and read counters after the walk.
+    pub oreq: Option<Arc<OreqSession>>,
+    /// Repository identifier used as the O-REQ-01 dedup key. The
+    /// resolver itself doesn't know which upstream is configured —
+    /// the cache layer does. For v0.1 single-repo resolves this is
+    /// fine to leave at the default `"default"` literal; multi-repo
+    /// resolves should set it to the configured upstream URL so
+    /// per-repo dedup is correct.
+    pub repo_id: String,
 }
 
 impl Default for WalkOptions {
@@ -201,6 +223,8 @@ impl Default for WalkOptions {
             include_scopes: BTreeSet::new(),
             activation: ActivationContext::default(),
             enable_skipper: true,
+            oreq: None,
+            repo_id: "default".to_string(),
         }
     }
 }
@@ -258,7 +282,11 @@ pub async fn walk<S: MetadataSource + ?Sized>(
         process_item(&mut state, source, opts, item).await?;
     }
 
-    Ok(state.finish())
+    let mut graph = state.finish();
+    if let Some(s) = opts.oreq.as_ref() {
+        graph.oreq_stats = s.stats();
+    }
+    Ok(graph)
 }
 
 // ---------------------------------------------------------------------------
@@ -346,6 +374,7 @@ impl WalkState {
             warnings,
             audit,
             skipper_stats: skipper.into_stats(),
+            oreq_stats: OreqStats::default(),
         }
     }
 }
@@ -492,7 +521,7 @@ async fn process_item<S: MetadataSource + ?Sized>(
         detail: spec_parse_error_detail(&e),
     })?;
 
-    let resolved_version = resolve_spec(&spec, &coords, source, &mut state.warnings).await?;
+    let resolved_version = resolve_spec(&spec, &coords, source, &mut state.warnings, opts).await?;
 
     // SNAPSHOT timestamp resolution. If the resolved version is a
     // `-SNAPSHOT`, ask the source for its timestamped publish so we
@@ -563,25 +592,60 @@ async fn process_item<S: MetadataSource + ?Sized>(
     // Fetch + resolve the child POM. A missing transitive POM is a hard
     // error — surface it. For SNAPSHOTs, fetch_version may be a
     // timestamped publish like `1.0.0-20240101.123456-7`.
-    let (raw_pom, _origin) = source.fetch_pom(&coords, &fetch_version).await?;
-
-    // Resolve the child POM (parent merge + interpolation + depMgt). For
-    // the resolver-only walker, we use a parent resolver that delegates
-    // back into `source.fetch_pom` synchronously. To avoid re-entering
-    // async from sync, we pre-fetch the parent chain... in practice, for
-    // T2 most fixtures + Maven-Central POMs have already-resolved deps
-    // by the time we get here. To keep T2 simple and deterministic, we
-    // run resolve_pom with a `NoParentResolver` that returns an empty
-    // POM on any parent ask. T7 / M2.3 will plug in a real parent
-    // resolver backed by the same MetadataSource.
-    let resolved_child = match resolve_child_pom(raw_pom, &opts.activation) {
-        Ok(r) => r,
-        Err(e) => {
-            // Fall back to using the raw POM with no depMgt expansion. We
-            // still propagate dependencies that have explicit versions.
-            // This matches the spec's "T2 stays small; T7 polishes."
-            let _ = e;
-            return Ok(());
+    //
+    // O-REQ-05 fast path: if we already resolved an effective POM for
+    // this (coord, version) in-session, return it without re-fetching
+    // the raw POM and without re-running resolve_pom. The effective-POM
+    // hit also avoids a raw-POM fetch — credit O-REQ-04 too (the two
+    // optimizations are semantically nested: an effective-POM hit is a
+    // strict superset of a raw-POM hit). EFF-LINK:
+    // docs/efficiency/findings/EFF-2026-007.md
+    let resolved_child = if let Some(session) = opts.oreq.as_ref() {
+        if let Some(r) = session.lookup_effective_pom(&coords, &fetch_version) {
+            // Treat the effective-POM hit as also avoiding the underlying
+            // raw POM fetch — bump the O-REQ-04 counter by inserting an
+            // explicit lookup attempt that hits the deposited raw-POM
+            // cache (the walker always deposits both caches together on
+            // first resolve, so this lookup is guaranteed to hit when the
+            // effective-POM lookup hit).
+            // EFF-LINK: docs/efficiency/findings/EFF-2026-006.md
+            let _ = session.lookup_parent_pom(&coords, &fetch_version);
+            r
+        } else {
+            // O-REQ-04 fast path inside the miss branch: the raw POM
+            // may have been fetched earlier this session (e.g. a
+            // shared parent). EFF-LINK: docs/efficiency/findings/EFF-2026-006.md
+            let (raw_pom, _origin) =
+                fetch_pom_via_session(source, &coords, &fetch_version, opts).await?;
+            match resolve_child_pom(raw_pom, &opts.activation) {
+                Ok(r) => {
+                    session.deposit_effective_pom(&coords, &fetch_version, r.clone());
+                    r
+                }
+                Err(_) => {
+                    // Fall back to "do not expand what we can't resolve"
+                    // — matches the spec's "T2 stays small" stance.
+                    return Ok(());
+                }
+            }
+        }
+    } else {
+        let (raw_pom, _origin) = source.fetch_pom(&coords, &fetch_version).await?;
+        // Resolve the child POM (parent merge + interpolation + depMgt). For
+        // the resolver-only walker, we use a parent resolver that delegates
+        // back into `source.fetch_pom` synchronously. To avoid re-entering
+        // async from sync, we pre-fetch the parent chain... in practice, for
+        // T2 most fixtures + Maven-Central POMs have already-resolved deps
+        // by the time we get here. To keep T2 simple and deterministic, we
+        // run resolve_pom with a `NoParentResolver` that returns an empty
+        // POM on any parent ask. T7 / M2.3 will plug in a real parent
+        // resolver backed by the same MetadataSource.
+        match resolve_child_pom(raw_pom, &opts.activation) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = e;
+                return Ok(());
+            }
         }
     };
 
@@ -652,16 +716,40 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
     coords: &ResolveKey,
     source: &S,
     warnings: &mut Vec<SpecWarning>,
+    opts: &WalkOptions,
 ) -> Result<String, WalkError> {
     match spec {
-        VersionSpec::Soft(v) => Ok(v.clone()),
+        VersionSpec::Soft(v) => {
+            // O-REQ-03: in frozen-lockfile mode, the pin (if any)
+            // is authoritative regardless of what's declared inline.
+            // EFF-LINK: docs/efficiency/findings/EFF-2026-005.md
+            if let Some(session) = opts.oreq.as_ref() {
+                if let Some(pin) = session.frozen_pin(coords) {
+                    session.record_frozen_skip();
+                    return Ok(pin);
+                }
+            }
+            Ok(v.clone())
+        }
         VersionSpec::Hard(intervals) => {
+            // O-REQ-03: under frozen-lockfile mode, if the pin lies in
+            // one of the requested intervals, skip the metadata fetch
+            // entirely. EFF-LINK: docs/efficiency/findings/EFF-2026-005.md
+            if let Some(session) = opts.oreq.as_ref() {
+                if let Some(pin) = session.frozen_pin(coords) {
+                    let parsed = Version::parse(&pin);
+                    if intervals.iter().any(|iv| interval_contains(iv, &parsed)) {
+                        session.record_frozen_skip();
+                        return Ok(pin);
+                    }
+                }
+            }
             // For T2, hard ranges are reported as "pick the largest in-range
             // version we know about, else surface the first interval's
             // lower bound as a soft preference." We can't enumerate all
             // versions without calling fetch_metadata, so we keep it
             // simple and fall back to fetch_metadata when needed.
-            let (md, _) = source.fetch_metadata(coords).await?;
+            let md = fetch_metadata_via_session(source, coords, opts).await?;
             let in_range: Vec<&String> = md
                 .versions
                 .iter()
@@ -683,7 +771,18 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
             }
         }
         VersionSpec::Latest => {
-            let (md, _) = source.fetch_metadata(coords).await?;
+            // O-REQ-03: frozen pin wins over LATEST.
+            if let Some(session) = opts.oreq.as_ref() {
+                if let Some(pin) = session.frozen_pin(coords) {
+                    session.record_frozen_skip();
+                    warnings.push(SpecWarning::LatestUsed {
+                        coords: coords.to_string(),
+                        resolved_to: pin.clone(),
+                    });
+                    return Ok(pin);
+                }
+            }
+            let md = fetch_metadata_via_session(source, coords, opts).await?;
             let picked =
                 md.versions
                     .last()
@@ -699,7 +798,18 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
             Ok(picked)
         }
         VersionSpec::Release => {
-            let (md, _) = source.fetch_metadata(coords).await?;
+            // O-REQ-03: frozen pin wins over RELEASE.
+            if let Some(session) = opts.oreq.as_ref() {
+                if let Some(pin) = session.frozen_pin(coords) {
+                    session.record_frozen_skip();
+                    warnings.push(SpecWarning::ReleaseUsed {
+                        coords: coords.to_string(),
+                        resolved_to: pin.clone(),
+                    });
+                    return Ok(pin);
+                }
+            }
+            let md = fetch_metadata_via_session(source, coords, opts).await?;
             let picked = md
                 .versions
                 .iter()
@@ -716,6 +826,69 @@ async fn resolve_spec<S: MetadataSource + ?Sized>(
             });
             Ok(picked)
         }
+    }
+}
+
+/// Fetch `maven-metadata.xml` for `coords`, consulting the
+/// [`OreqSession`] in-session cache first when one is configured.
+///
+/// O-REQ-01: a hit in the session cache returns the cached
+/// [`crate::source::GaMetadata`] without touching `source`, and
+/// bumps the O-REQ-01 counter.
+/// EFF-LINK: docs/efficiency/findings/EFF-2026-001.md
+///
+/// O-REQ-02: on a miss + successful fetch, the [`FetchOrigin`]
+/// reported by `source` bumps the O-REQ-02 counter when it's a
+/// local-cache origin (`Disk` / `InMemory`) — i.e. the cache layer
+/// served the byte payload via a conditional revalidation rather
+/// than a fresh upstream body transfer.
+/// EFF-LINK: docs/efficiency/findings/EFF-2026-004.md
+async fn fetch_metadata_via_session<S: MetadataSource + ?Sized>(
+    source: &S,
+    coords: &ResolveKey,
+    opts: &WalkOptions,
+) -> Result<crate::source::GaMetadata, WalkError> {
+    if let Some(session) = opts.oreq.as_ref() {
+        let key = MetadataKey {
+            repo: opts.repo_id.clone(),
+            coords: coords.clone(),
+        };
+        if let Some(md) = session.lookup_metadata(&key) {
+            return Ok(md);
+        }
+        let (md, origin) = source.fetch_metadata(coords).await?;
+        session.deposit_metadata(key, md.clone(), origin);
+        Ok(md)
+    } else {
+        let (md, _) = source.fetch_metadata(coords).await?;
+        Ok(md)
+    }
+}
+
+/// Fetch a POM via the configured [`MetadataSource`], consulting
+/// the [`OreqSession`] in-session raw-POM cache first when one is
+/// configured.
+///
+/// O-REQ-04: a hit returns the cached [`RawPom`] without going to
+/// the source, and bumps the O-REQ-04 counter. This catches the
+/// "shared parent POM across sibling modules" pattern at the heart
+/// of the §18.3 O-REQ-04 description.
+/// EFF-LINK: docs/efficiency/findings/EFF-2026-006.md
+async fn fetch_pom_via_session<S: MetadataSource + ?Sized>(
+    source: &S,
+    coords: &ResolveKey,
+    version: &str,
+    opts: &WalkOptions,
+) -> Result<(RawPom, crate::source::FetchOrigin), WalkError> {
+    if let Some(session) = opts.oreq.as_ref() {
+        if let Some(pom) = session.lookup_parent_pom(coords, version) {
+            return Ok((pom, crate::source::FetchOrigin::InMemory));
+        }
+        let (pom, origin) = source.fetch_pom(coords, version).await?;
+        session.deposit_parent_pom(coords, version, pom.clone());
+        Ok((pom, origin))
+    } else {
+        Ok(source.fetch_pom(coords, version).await?)
     }
 }
 

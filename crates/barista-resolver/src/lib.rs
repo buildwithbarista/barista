@@ -17,6 +17,7 @@
 //! a remote HTTP repository, an on-disk cache, or an in-process test
 //! fixture all look the same through this trait.
 
+pub mod oreq;
 pub mod skipper;
 pub mod snapshot;
 pub mod source;
@@ -25,6 +26,7 @@ pub mod strict_format;
 pub mod version_spec;
 pub mod walker;
 
+pub use oreq::{MetadataKey, OreqCounters, OreqSession, OreqStats};
 pub use skipper::{
     ExclusionPattern, ExclusionSet, SkipDecision, SkipReason, SkipperState, SkipperStats,
 };
