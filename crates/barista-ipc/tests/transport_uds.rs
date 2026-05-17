@@ -41,9 +41,8 @@ use std::path::PathBuf;
 use barista_ipc::{
     ActionRequest, ActionResult, ActionStream, CancelRequest, Credential, CredentialsEnvelope,
     Envelope, Error, Mojo, Ping, Pong, ProducedArtifact, ProgressEvent, Shutdown, SshKey,
-    StatusRequest, StatusResponse, Transport, TransportError, action_result, credential,
-    envelope, progress_event,
-    transport::uds::UdsTransport,
+    StatusRequest, StatusResponse, Transport, TransportError, action_result, credential, envelope,
+    progress_event, transport::uds::UdsTransport,
 };
 use tempfile::TempDir;
 use tokio::net::UnixListener;
@@ -283,7 +282,10 @@ async fn roundtrip_body_error() {
 /// Drive a single variant through a fresh echo server.
 async fn roundtrip_one_variant(index: usize) {
     let bodies = all_body_variants();
-    let body = bodies.into_iter().nth(index).expect("variant index in range");
+    let body = bodies
+        .into_iter()
+        .nth(index)
+        .expect("variant index in range");
 
     let (_tmp, path) = temp_socket_path();
     let server = spawn_echo_server(path.clone()).await;

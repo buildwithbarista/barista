@@ -44,10 +44,9 @@ fn unique_pipe_name() -> PipeName {
 async fn bind_secure_creates_pipe_with_dacl() {
     let name = unique_pipe_name();
     // bind_secure builds the DACL and creates the pipe.
-    let _server = NamedPipeTransport::<tokio::net::windows::named_pipe::NamedPipeServer>::bind_secure(
-        &name,
-    )
-    .expect("bind_secure should succeed on same-user process");
+    let _server =
+        NamedPipeTransport::<tokio::net::windows::named_pipe::NamedPipeServer>::bind_secure(&name)
+            .expect("bind_secure should succeed on same-user process");
 }
 
 #[tokio::test]

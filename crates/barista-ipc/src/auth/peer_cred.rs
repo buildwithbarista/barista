@@ -197,7 +197,9 @@ fn peer_uid_linux(stream: &UnixStream) -> Result<u32> {
     if optlen != expected {
         return Err(AuthError::Io(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("getsockopt(SO_PEERCRED) returned unexpected optlen {optlen}; expected {expected}"),
+            format!(
+                "getsockopt(SO_PEERCRED) returned unexpected optlen {optlen}; expected {expected}"
+            ),
         )));
     }
 
@@ -281,7 +283,10 @@ mod tests {
         let bogus = u32::MAX;
         match verify_peer_uid_with_expected(&a, bogus) {
             Err(AuthError::PeerUidMismatch { peer_uid, our_uid }) => {
-                assert_eq!(our_uid, bogus, "expected_uid should round-trip into our_uid field");
+                assert_eq!(
+                    our_uid, bogus,
+                    "expected_uid should round-trip into our_uid field"
+                );
                 assert_ne!(peer_uid, bogus);
             }
             other => panic!("expected PeerUidMismatch, got: {other:?}"),

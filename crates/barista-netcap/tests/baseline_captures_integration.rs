@@ -47,8 +47,7 @@ fn repo_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cur: &Path = &manifest;
     loop {
-        if cur.join("scripts/run-baseline-captures.sh").exists()
-            && cur.join("test-corpus").is_dir()
+        if cur.join("scripts/run-baseline-captures.sh").exists() && cur.join("test-corpus").is_dir()
         {
             return cur.to_path_buf();
         }
@@ -101,9 +100,7 @@ fn driver_script_produces_har_and_metadata_for_one_cell() {
     let har = ts_dir.join("capture.har");
     let meta = ts_dir.join("metadata.toml");
 
-    let har_bytes = std::fs::metadata(&har)
-        .expect("capture.har exists")
-        .len();
+    let har_bytes = std::fs::metadata(&har).expect("capture.har exists").len();
     assert!(har_bytes > 0, "capture.har is empty — proxy didn't capture");
 
     // Parse the HAR via the crate's own validator so we exercise the

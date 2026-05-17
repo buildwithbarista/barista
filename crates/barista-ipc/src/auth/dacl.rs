@@ -48,15 +48,15 @@
 
 use std::ffi::c_void;
 use std::io;
-use std::mem::{size_of, MaybeUninit};
+use std::mem::{MaybeUninit, size_of};
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
 use windows_sys::Win32::Security::Authorization::ConvertStringSidToSidW;
 use windows_sys::Win32::Security::{
-    ACL, ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation,
-    InitializeAcl, InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, PSID,
-    SECURITY_ATTRIBUTES, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACL, ACL_REVISION, AddAccessAllowedAce, GetLengthSid, GetTokenInformation, InitializeAcl,
+    InitializeSecurityDescriptor, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::SystemServices::SECURITY_DESCRIPTOR_REVISION;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -72,8 +72,8 @@ const PIPE_ACCESS_MASK: u32 = 0x1F01FF; // FILE_ALL_ACCESS — matches NamedPipe
 /// The SDDL string for `NT AUTHORITY\SYSTEM`. Pre-defined SID;
 /// always valid; doesn't depend on the local SAM database.
 const SYSTEM_SID_SDDL: &[u16] = &[
-    'S' as u16, '-' as u16, '1' as u16, '-' as u16, '5' as u16, '-' as u16,
-    '1' as u16, '8' as u16, 0,
+    'S' as u16, '-' as u16, '1' as u16, '-' as u16, '5' as u16, '-' as u16, '1' as u16, '8' as u16,
+    0,
 ];
 
 /// A constructed DACL ready to be passed to tokio's
@@ -126,9 +126,7 @@ impl PipeDacl {
         let mut system_sid: PSID = ptr::null_mut();
         // SAFETY: SYSTEM_SID_SDDL is a static null-terminated UTF-16
         // string we control. `system_sid` is a stack-local out-ptr.
-        let ok = unsafe {
-            ConvertStringSidToSidW(SYSTEM_SID_SDDL.as_ptr(), &raw mut system_sid)
-        };
+        let ok = unsafe { ConvertStringSidToSidW(SYSTEM_SID_SDDL.as_ptr(), &raw mut system_sid) };
         if ok == 0 {
             return Err(AuthError::Io(io::Error::last_os_error()));
         }
@@ -154,8 +152,10 @@ impl PipeDacl {
         // ACCESS_ALLOWED_ACE is 12 bytes in windows-sys; sizeof(DWORD) = 4.
         let ace_header_overhead: u32 = 12 - 4; // = 8
         let dacl_size: u32 = size_of::<ACL>() as u32
-            + ace_header_overhead + sid_user_len
-            + ace_header_overhead + sid_sys_len;
+            + ace_header_overhead
+            + sid_user_len
+            + ace_header_overhead
+            + sid_sys_len;
 
         // Buffer: SECURITY_DESCRIPTOR followed by DACL. We allocate
         // one Vec<u8> and slice it; the SD's `lpDacl` pointer is set
@@ -171,9 +171,7 @@ impl PipeDacl {
         let sd_ptr: PSECURITY_DESCRIPTOR = sd_buf.as_mut_ptr().cast::<c_void>();
         // SAFETY: sd_ptr points at a sufficiently-sized zero-init
         // buffer we own; revision is the documented constant.
-        let ok = unsafe {
-            InitializeSecurityDescriptor(sd_ptr, SECURITY_DESCRIPTOR_REVISION)
-        };
+        let ok = unsafe { InitializeSecurityDescriptor(sd_ptr, SECURITY_DESCRIPTOR_REVISION) };
         if ok == 0 {
             return Err(AuthError::Io(io::Error::last_os_error()));
         }
@@ -203,14 +201,8 @@ impl PipeDacl {
             return Err(AuthError::Io(io::Error::last_os_error()));
         }
 
-        let ok = unsafe {
-            AddAccessAllowedAce(
-                dacl_ptr,
-                ACL_REVISION,
-                PIPE_ACCESS_MASK,
-                system_sid,
-            )
-        };
+        let ok =
+            unsafe { AddAccessAllowedAce(dacl_ptr, ACL_REVISION, PIPE_ACCESS_MASK, system_sid) };
         if ok == 0 {
             return Err(AuthError::Io(io::Error::last_os_error()));
         }
@@ -219,9 +211,7 @@ impl PipeDacl {
         // SAFETY: sd_ptr is the SD we initialized above; dacl_ptr is
         // a DACL inside the same buffer. `BOOL` in windows-sys is
         // `i32` — pass `1`/`0` as `i32` literals.
-        let ok = unsafe {
-            SetSecurityDescriptorDacl(sd_ptr, 1_i32, dacl_ptr, 0_i32)
-        };
+        let ok = unsafe { SetSecurityDescriptorDacl(sd_ptr, 1_i32, dacl_ptr, 0_i32) };
         if ok == 0 {
             return Err(AuthError::Io(io::Error::last_os_error()));
         }
@@ -285,7 +275,10 @@ struct SidGuard {
 
 impl SidGuard {
     fn new(sid: PSID) -> Self {
-        Self { sid, disarmed: false }
+        Self {
+            sid,
+            disarmed: false,
+        }
     }
 
     fn into_inner(mut self) -> PSID {
@@ -298,7 +291,9 @@ impl Drop for SidGuard {
     fn drop(&mut self) {
         if !self.disarmed && !self.sid.is_null() {
             // SAFETY: same as PipeDacl::drop.
-            unsafe { LocalFree(self.sid as HLOCAL); }
+            unsafe {
+                LocalFree(self.sid as HLOCAL);
+            }
         }
     }
 }
@@ -313,9 +308,7 @@ fn current_user_sid() -> Result<Vec<u8>> {
     let mut token: HANDLE = ptr::null_mut();
     // SAFETY: `GetCurrentProcess` returns a pseudo-handle that's
     // always valid; `&raw mut token` is a stack-local out-ptr.
-    let ok = unsafe {
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token)
-    };
+    let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) };
     if ok == 0 {
         return Err(AuthError::Io(io::Error::last_os_error()));
     }
@@ -324,15 +317,7 @@ fn current_user_sid() -> Result<Vec<u8>> {
     // First call: ask for the required size (`return_length` out;
     // returns 0 + `ERROR_INSUFFICIENT_BUFFER`).
     let mut required: u32 = 0;
-    let _ = unsafe {
-        GetTokenInformation(
-            token,
-            TokenUser,
-            ptr::null_mut(),
-            0,
-            &raw mut required,
-        )
-    };
+    let _ = unsafe { GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &raw mut required) };
     if required == 0 {
         return Err(AuthError::Io(io::Error::last_os_error()));
     }
@@ -371,11 +356,7 @@ fn current_user_sid() -> Result<Vec<u8>> {
     // SAFETY: src points to `sid_len` valid bytes inside `buf`; dst
     // is a freshly-allocated `Vec<u8>` of the same size.
     unsafe {
-        ptr::copy_nonoverlapping(
-            sid_ptr.cast::<u8>(),
-            out.as_mut_ptr(),
-            sid_len as usize,
-        );
+        ptr::copy_nonoverlapping(sid_ptr.cast::<u8>(), out.as_mut_ptr(), sid_len as usize);
     }
     Ok(out)
 }
@@ -387,7 +368,9 @@ impl Drop for HandleGuard {
     fn drop(&mut self) {
         if !self.0.is_null() {
             // SAFETY: handle is a real Win32 HANDLE we own.
-            unsafe { CloseHandle(self.0); }
+            unsafe {
+                CloseHandle(self.0);
+            }
         }
     }
 }

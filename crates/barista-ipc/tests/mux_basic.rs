@@ -20,8 +20,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use barista_ipc::{
-    transport::uds::UdsTransport, ActionRequest, ActionResult, Multiplexer, ProgressEvent,
-    StreamEvent, action_result, progress_event,
+    ActionRequest, ActionResult, Multiplexer, ProgressEvent, StreamEvent, action_result,
+    progress_event, transport::uds::UdsTransport,
 };
 use tempfile::TempDir;
 use tokio::net::{UnixListener, UnixStream};
@@ -138,11 +138,7 @@ async fn submit_one_action_round_trips_progress_and_result() {
     let mut progress_count = 0;
     let mut got_result = false;
     let mut got_terminal = false;
-    while let Some(event) = handle
-        .next_event()
-        .await
-        .expect("next_event")
-    {
+    while let Some(event) = handle.next_event().await.expect("next_event") {
         match event {
             StreamEvent::Progress(p) => {
                 assert_eq!(p.action_id, client_action_id, "action_id correlation");
@@ -262,6 +258,9 @@ async fn next_event_survives_select_drop() {
             }
         }
     }
-    assert_eq!(count, 5, "all 5 progress events observed across select! drops");
+    assert_eq!(
+        count, 5,
+        "all 5 progress events observed across select! drops"
+    );
     server_handle.await.expect("server task");
 }

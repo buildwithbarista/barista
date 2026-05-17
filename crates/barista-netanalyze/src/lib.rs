@@ -64,8 +64,6 @@ pub use analyzer::{
     UncompressedTransferConfig, default_registry,
 };
 pub use error::AnalyzeError;
-pub use finding::{
-    Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status,
-};
+pub use finding::{Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status};
 pub use har::{Har, HarContent, HarEntry, HarHeader, HarLog, HarRequest, HarResponse, HarTimings};
 pub use pipeline::{analyze, analyze_with, load_har, write_findings};

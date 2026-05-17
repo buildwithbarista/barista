@@ -312,7 +312,11 @@ pub struct ResponseChannel {
 }
 
 impl ResponseChannel {
-    pub(crate) fn new(action_id: String, request_id: u64, outbound: mpsc::Sender<Envelope>) -> Self {
+    pub(crate) fn new(
+        action_id: String,
+        request_id: u64,
+        outbound: mpsc::Sender<Envelope>,
+    ) -> Self {
         Self {
             action_id,
             request_id,

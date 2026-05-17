@@ -19,9 +19,7 @@
 use std::collections::HashMap;
 
 use crate::analyzer::Analyzer;
-use crate::finding::{
-    Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status,
-};
+use crate::finding::{Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status};
 use crate::har::Har;
 
 /// Tunable thresholds for [`MetadataOverFetchAnalyzer`].

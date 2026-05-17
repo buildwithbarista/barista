@@ -20,8 +20,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use barista_ipc::{
-    transport::uds::UdsTransport, ActionRequest, ActionResult, Multiplexer, ProgressEvent,
-    StreamEvent, action_result, progress_event,
+    ActionRequest, ActionResult, Multiplexer, ProgressEvent, StreamEvent, action_result,
+    progress_event, transport::uds::UdsTransport,
 };
 use tempfile::TempDir;
 use tokio::net::{UnixListener, UnixStream};

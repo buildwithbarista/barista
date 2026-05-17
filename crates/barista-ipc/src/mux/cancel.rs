@@ -38,8 +38,8 @@
 //! points. The conformance test (`tests/mux_cancel.rs`) enforces this
 //! contract by spawning a server body that does exactly that.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio_util::sync::CancellationToken;
 
@@ -97,7 +97,6 @@ impl CancelToken {
     pub async fn cancelled(&self) {
         self.inner.cancelled().await;
     }
-
 }
 
 /// Atomic "has this `ActionHandle` already had `cancel` or `Drop` run"

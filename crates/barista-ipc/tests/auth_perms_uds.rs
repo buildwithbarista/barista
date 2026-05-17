@@ -35,8 +35,8 @@
 use std::os::unix::fs::PermissionsExt;
 
 use barista_ipc::auth::SocketPath;
-use barista_ipc::{Envelope, Ping, Transport, TransportError, envelope};
 use barista_ipc::transport::uds::UdsTransport;
+use barista_ipc::{Envelope, Ping, Transport, TransportError, envelope};
 use tempfile::TempDir;
 use tokio::net::UnixListener;
 
@@ -59,11 +59,7 @@ async fn server_run_dir_is_0700() {
     // the run-dir tightening already fired inside `SocketPath::new_in`.
     let _listener = UdsTransport::bind_secure(&sp).expect("bind_secure");
 
-    let run_dir_mode = std::fs::metadata(tmp.path())
-        .unwrap()
-        .permissions()
-        .mode()
-        & 0o7777;
+    let run_dir_mode = std::fs::metadata(tmp.path()).unwrap().permissions().mode() & 0o7777;
     assert_eq!(
         run_dir_mode, 0o700,
         "run dir mode should be 0700, got {run_dir_mode:#o}"
@@ -94,7 +90,8 @@ async fn client_rejects_non_0600_socket() {
     let listener = UdsTransport::bind_secure(&sp).expect("bind_secure");
 
     // Sanity: pre-mutation, verify() passes.
-    sp.verify().expect("verify should pass on freshly-bound 0600 socket");
+    sp.verify()
+        .expect("verify should pass on freshly-bound 0600 socket");
 
     // Loosen mode bits to 0644 — simulates a misconfigured server
     // that forgot the chmod step (or an attacker with the same UID
@@ -193,11 +190,18 @@ async fn bind_secure_idempotent_against_stale_socket() {
     let listener_v1 = UdsTransport::bind_secure(&sp).expect("first bind");
     drop(listener_v1);
     // Drop closes the listener but does NOT unlink the inode on Linux/macOS.
-    assert!(sp.as_path().exists(), "socket file should persist after listener drop");
+    assert!(
+        sp.as_path().exists(),
+        "socket file should persist after listener drop"
+    );
 
     // Second bind should unlink-then-rebind.
     let _listener_v2 = UdsTransport::bind_secure(&sp).expect("second bind should succeed");
-    let mode = std::fs::metadata(sp.as_path()).unwrap().permissions().mode() & 0o7777;
+    let mode = std::fs::metadata(sp.as_path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o7777;
     assert_eq!(mode, 0o600, "second bind should re-tighten perms");
 }
 
@@ -214,12 +218,20 @@ async fn peer_uid_mismatch_test_seam_returns_typed_error() {
         let (stream, _) = listener.accept().await.expect("accept");
         stream
     });
-    let client = tokio::net::UnixStream::connect(sp.as_path()).await.expect("connect");
+    let client = tokio::net::UnixStream::connect(sp.as_path())
+        .await
+        .expect("connect");
     let _server_stream = accept.await.expect("accept task");
 
     // Force a UID mismatch via the test seam.
     let err = barista_ipc::auth::verify_peer_uid_with_expected(&client, u32::MAX).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("peer UID mismatch"), "error should call out mismatch: {msg}");
-    assert!(msg.contains("4294967295"), "Display should show the bogus expected UID: {msg}");
+    assert!(
+        msg.contains("peer UID mismatch"),
+        "error should call out mismatch: {msg}"
+    );
+    assert!(
+        msg.contains("4294967295"),
+        "Display should show the bogus expected UID: {msg}"
+    );
 }

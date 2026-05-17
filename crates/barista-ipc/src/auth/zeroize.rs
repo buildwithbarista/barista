@@ -343,7 +343,11 @@ mod tests {
         // partially-move from it).
         match &cred.secret {
             Some(credential::Secret::Password(p)) => {
-                assert!(p.is_empty(), "password bytes should be zero'd; got len={}", p.len());
+                assert!(
+                    p.is_empty(),
+                    "password bytes should be zero'd; got len={}",
+                    p.len()
+                );
             }
             None => {} // Equally acceptable — zeroize may set Option to None.
             other => panic!("expected Password (empty) or None, got: {other:?}"),

@@ -67,13 +67,19 @@ fn reports_installed_when_pem_present_and_mitmdump_on_path() {
     let mitm_dir = home.path().join(".mitmproxy");
     fs::create_dir_all(&mitm_dir).expect("mkdir");
     let cert = mitm_dir.join("mitmproxy-ca-cert.pem");
-    fs::write(&cert, b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n")
-        .expect("write cert");
+    fs::write(
+        &cert,
+        b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n",
+    )
+    .expect("write cert");
 
     let status = CaSetup::ensure_installed_with_home(home.path()).expect("ensure_installed");
 
     match status {
-        CaStatus::Installed { cert: c, suggested_truststore_commands } => {
+        CaStatus::Installed {
+            cert: c,
+            suggested_truststore_commands,
+        } => {
             assert_eq!(c.path, cert);
             assert!(
                 suggested_truststore_commands

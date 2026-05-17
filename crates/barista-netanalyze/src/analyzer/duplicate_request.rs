@@ -9,9 +9,7 @@
 use std::collections::HashMap;
 
 use crate::analyzer::Analyzer;
-use crate::finding::{
-    Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status,
-};
+use crate::finding::{Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status};
 use crate::har::Har;
 
 /// Tunable thresholds for [`DuplicateRequestAnalyzer`].
@@ -126,9 +124,7 @@ impl Analyzer for DuplicateRequestAnalyzer {
                     "Cache the response in-session and serve the {extra_count} subsequent \
                      requests from memory. See PRD §18.3 O-REQ-01/04/05."
                 ),
-                references: vec![
-                    "PRD §18.3 — O-REQ-01, O-REQ-04, O-REQ-05".to_string(),
-                ],
+                references: vec!["PRD §18.3 — O-REQ-01, O-REQ-04, O-REQ-05".to_string()],
                 discovered_by: self.id().to_string(),
             });
         }

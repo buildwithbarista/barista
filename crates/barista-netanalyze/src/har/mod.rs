@@ -252,9 +252,7 @@ fn parse_host(url: &str) -> Option<String> {
     let host = if host_port.starts_with('[') {
         host_port
     } else {
-        host_port
-            .rsplit_once(':')
-            .map_or(host_port, |(h, _)| h)
+        host_port.rsplit_once(':').map_or(host_port, |(h, _)| h)
     };
     if host.is_empty() {
         None
@@ -342,14 +340,8 @@ mod tests {
     fn header_lookup_is_case_insensitive() {
         let har = parse_har_bytes(sample_har().as_bytes()).expect("parse");
         let entry = &har.log.entries[0];
-        assert_eq!(
-            entry.response_header("content-encoding"),
-            Some("gzip")
-        );
-        assert_eq!(
-            entry.request_header("ACCEPT-ENCODING"),
-            Some("gzip, br")
-        );
+        assert_eq!(entry.response_header("content-encoding"), Some("gzip"));
+        assert_eq!(entry.request_header("ACCEPT-ENCODING"), Some("gzip, br"));
         assert_eq!(entry.response_header("missing"), None);
     }
 

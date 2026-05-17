@@ -32,7 +32,10 @@ fn parses_full_corpus_manifest() {
     assert_eq!(manifest.id, "P02");
     assert_eq!(manifest.display_name, "Spring PetClinic");
     assert_eq!(manifest.category, Category::Corpus);
-    assert_eq!(manifest.corpus_id.as_deref(), Some("spring-petclinic-3.3.0"));
+    assert_eq!(
+        manifest.corpus_id.as_deref(),
+        Some("spring-petclinic-3.3.0")
+    );
     assert_eq!(manifest.hardware_tier, HardwareTier::Tier3);
     assert_eq!(manifest.iterations, 5);
     assert_eq!(manifest.warmup_iterations, 1);
@@ -45,7 +48,10 @@ fn parses_full_corpus_manifest() {
         manifest.allowed_variance.get("wall_ms_p95").copied(),
         Some(0.10)
     );
-    assert_eq!(manifest.labels.get("shape").map(String::as_str), Some("small-spring"));
+    assert_eq!(
+        manifest.labels.get("shape").map(String::as_str),
+        Some("small-spring")
+    );
 }
 
 #[test]
@@ -93,7 +99,10 @@ fn rejects_bad_schema_string() {
         matches!(err, Error::ManifestInvalid(_)),
         "expected ManifestInvalid, got: {msg}"
     );
-    assert!(msg.contains("schema"), "diagnostic should mention schema: {msg}");
+    assert!(
+        msg.contains("schema"),
+        "diagnostic should mention schema: {msg}"
+    );
 }
 
 #[test]
@@ -104,7 +113,10 @@ fn rejects_empty_metrics_list() {
         matches!(err, Error::ManifestInvalid(_)),
         "expected ManifestInvalid, got: {msg}"
     );
-    assert!(msg.contains("metrics"), "diagnostic should mention metrics: {msg}");
+    assert!(
+        msg.contains("metrics"),
+        "diagnostic should mention metrics: {msg}"
+    );
 }
 
 #[test]

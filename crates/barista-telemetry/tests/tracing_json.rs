@@ -55,11 +55,8 @@ impl<'a> MakeWriter<'a> for SharedBuffer {
 #[test]
 fn json_format_is_one_event_per_line_and_valid_json() {
     let buf = SharedBuffer::default();
-    let subscriber = build_subscriber_with_writer(
-        LogFormat::Json,
-        EnvFilter::new("trace"),
-        buf.clone(),
-    );
+    let subscriber =
+        build_subscriber_with_writer(LogFormat::Json, EnvFilter::new("trace"), buf.clone());
 
     tracing::subscriber::with_default(subscriber, || {
         info!(target: "barista_test", first_event = 1, "first event");
@@ -77,10 +74,8 @@ fn json_format_is_one_event_per_line_and_valid_json() {
     );
 
     for line in &lines {
-        let value: serde_json::Value =
-            serde_json::from_str(line).unwrap_or_else(|err| {
-                panic!("line is not valid JSON: {line:?} ({err})")
-            });
+        let value: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|err| panic!("line is not valid JSON: {line:?} ({err})"));
 
         assert!(value.is_object(), "JSON line is not an object: {line}");
 
@@ -117,11 +112,8 @@ fn json_format_is_one_event_per_line_and_valid_json() {
 #[test]
 fn json_format_includes_structured_field_values() {
     let buf = SharedBuffer::default();
-    let subscriber = build_subscriber_with_writer(
-        LogFormat::Json,
-        EnvFilter::new("trace"),
-        buf.clone(),
-    );
+    let subscriber =
+        build_subscriber_with_writer(LogFormat::Json, EnvFilter::new("trace"), buf.clone());
 
     tracing::subscriber::with_default(subscriber, || {
         info!(target: "barista_test", count = 7_u64, name = "pour", "structured");
@@ -151,11 +143,8 @@ fn json_format_includes_structured_field_values() {
 #[test]
 fn json_format_respects_level_filter() {
     let buf = SharedBuffer::default();
-    let subscriber = build_subscriber_with_writer(
-        LogFormat::Json,
-        EnvFilter::new("warn"),
-        buf.clone(),
-    );
+    let subscriber =
+        build_subscriber_with_writer(LogFormat::Json, EnvFilter::new("warn"), buf.clone());
 
     tracing::subscriber::with_default(subscriber, || {
         info!(target: "barista_test", "below threshold");

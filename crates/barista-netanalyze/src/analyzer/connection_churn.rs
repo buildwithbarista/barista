@@ -15,9 +15,7 @@
 use std::collections::HashMap;
 
 use crate::analyzer::Analyzer;
-use crate::finding::{
-    Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status,
-};
+use crate::finding::{Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status};
 use crate::har::Har;
 
 /// Tunable thresholds for [`ConnectionChurnAnalyzer`].
@@ -124,8 +122,7 @@ impl Analyzer for ConnectionChurnAnalyzer {
                 impact: ImpactEstimate {
                     bytes_saved_per_build: 0,
                     requests_saved_per_build: 0,
-                    connections_saved_per_build: u64::try_from(extra_count)
-                        .unwrap_or(u64::MAX),
+                    connections_saved_per_build: u64::try_from(extra_count).unwrap_or(u64::MAX),
                 },
                 proposal: format!(
                     "Reuse a single HTTP/2 connection to `{host}` across all requests; \

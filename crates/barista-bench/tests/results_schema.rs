@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use barista_bench::{
-    IterationMeasurement, RESULTS_SCHEMA, ResultsDocument, RunHardware, Summary, write_results,
-    manifest::HardwareTier,
+    IterationMeasurement, RESULTS_SCHEMA, ResultsDocument, RunHardware, Summary,
+    manifest::HardwareTier, write_results,
 };
 use jsonschema::Validator;
 use serde_json::Value;
@@ -38,8 +38,7 @@ fn load_validator() -> Validator {
 }
 
 fn load_json(name: &str) -> Value {
-    let raw = std::fs::read_to_string(fixture(name))
-        .unwrap_or_else(|e| panic!("read {name}: {e}"));
+    let raw = std::fs::read_to_string(fixture(name)).unwrap_or_else(|e| panic!("read {name}: {e}"));
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {name}: {e}"))
 }
 

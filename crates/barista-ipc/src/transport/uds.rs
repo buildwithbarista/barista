@@ -44,8 +44,8 @@ use super::{
     Result, SplitTransport, Transport, TransportError, TransportReceiver, TransportSender,
     decode_envelope, encode_envelope, framed_codec, map_codec_io_err,
 };
-use crate::auth::{BufferZeroizer, SocketPath, verify_peer_uid};
 use crate::Envelope;
+use crate::auth::{BufferZeroizer, SocketPath, verify_peer_uid};
 
 /// Transport that carries framed `Envelope`s over a Unix domain socket.
 ///
@@ -144,7 +144,9 @@ impl UdsTransport {
     pub fn bind_secure(socket_path: &SocketPath) -> Result<UnixListener> {
         socket_path.unlink_if_exists().map_err(TransportError::Io)?;
         let listener = UnixListener::bind(socket_path.as_path())?;
-        socket_path.chmod_to_policy().map_err(auth_to_transport_err)?;
+        socket_path
+            .chmod_to_policy()
+            .map_err(auth_to_transport_err)?;
         Ok(listener)
     }
 

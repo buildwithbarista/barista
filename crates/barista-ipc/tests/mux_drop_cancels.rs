@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use barista_ipc::{
-    transport::uds::UdsTransport, ActionRequest, ActionResult, Multiplexer, action_result,
+    ActionRequest, ActionResult, Multiplexer, action_result, transport::uds::UdsTransport,
 };
 use tempfile::TempDir;
 use tokio::net::{UnixListener, UnixStream};

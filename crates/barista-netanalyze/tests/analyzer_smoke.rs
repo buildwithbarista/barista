@@ -51,7 +51,10 @@ fn duplicate_request_negative_is_silent() {
         Box::new(DuplicateRequestAnalyzer::with_defaults()),
         "duplicate_request_negative.har",
     );
-    assert!(findings.is_empty(), "expected no findings, got {findings:?}");
+    assert!(
+        findings.is_empty(),
+        "expected no findings, got {findings:?}"
+    );
 }
 
 #[test]
@@ -72,7 +75,10 @@ fn uncompressed_transfer_negative_is_silent() {
         Box::new(UncompressedTransferAnalyzer::with_defaults()),
         "uncompressed_transfer_negative.har",
     );
-    assert!(findings.is_empty(), "expected no findings, got {findings:?}");
+    assert!(
+        findings.is_empty(),
+        "expected no findings, got {findings:?}"
+    );
 }
 
 #[test]
@@ -93,7 +99,10 @@ fn connection_churn_negative_is_silent() {
         Box::new(ConnectionChurnAnalyzer::with_defaults()),
         "connection_churn_negative.har",
     );
-    assert!(findings.is_empty(), "expected no findings, got {findings:?}");
+    assert!(
+        findings.is_empty(),
+        "expected no findings, got {findings:?}"
+    );
 }
 
 #[test]
@@ -115,7 +124,10 @@ fn slow_redirect_negative_is_silent() {
         Box::new(SlowRedirectAnalyzer::with_defaults()),
         "slow_redirect_negative.har",
     );
-    assert!(findings.is_empty(), "expected no findings, got {findings:?}");
+    assert!(
+        findings.is_empty(),
+        "expected no findings, got {findings:?}"
+    );
 }
 
 #[test]
@@ -137,7 +149,10 @@ fn metadata_overfetch_negative_is_silent() {
         Box::new(MetadataOverFetchAnalyzer::with_defaults()),
         "metadata_overfetch_negative.har",
     );
-    assert!(findings.is_empty(), "expected no findings, got {findings:?}");
+    assert!(
+        findings.is_empty(),
+        "expected no findings, got {findings:?}"
+    );
 }
 
 #[test]

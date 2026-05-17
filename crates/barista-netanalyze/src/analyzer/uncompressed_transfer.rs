@@ -8,9 +8,7 @@
 //! Pattern PRD §18.9: `PM-MISSED-COMPRESSION`.
 
 use crate::analyzer::Analyzer;
-use crate::finding::{
-    Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status,
-};
+use crate::finding::{Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status};
 use crate::har::Har;
 
 /// Tunable thresholds for [`UncompressedTransferAnalyzer`].
@@ -69,9 +67,9 @@ impl Analyzer for UncompressedTransferAnalyzer {
             if entry.response.status < 200 || entry.response.status >= 300 {
                 continue;
             }
-            let mime = entry.response_header("content-type").unwrap_or(
-                entry.response.content.mime_type.as_str(),
-            );
+            let mime = entry
+                .response_header("content-type")
+                .unwrap_or(entry.response.content.mime_type.as_str());
             if !is_compressible_mime(mime) {
                 continue;
             }
@@ -92,9 +90,7 @@ impl Analyzer for UncompressedTransferAnalyzer {
 
             findings.push(Finding {
                 id: Finding::PENDING_ID.to_string(),
-                title: format!(
-                    "Compressible {mime} response sent uncompressed ({size_u64} bytes)"
-                ),
+                title: format!("Compressible {mime} response sent uncompressed ({size_u64} bytes)"),
                 severity: severity_for_size(size_u64),
                 category: Category::CompressionAbsent,
                 status: Status::Open,
@@ -103,7 +99,11 @@ impl Analyzer for UncompressedTransferAnalyzer {
                     url: entry.request.url.clone(),
                     note: format!(
                         "Content-Type `{mime}`, Content-Encoding `{enc}`",
-                        enc = if encoding.is_empty() { "<none>" } else { encoding }
+                        enc = if encoding.is_empty() {
+                            "<none>"
+                        } else {
+                            encoding
+                        }
                     ),
                 }],
                 impact: ImpactEstimate {
@@ -129,13 +129,15 @@ impl Analyzer for UncompressedTransferAnalyzer {
 
 fn is_compressible_mime(mime: &str) -> bool {
     // Strip parameters: `application/json; charset=utf-8` → base.
-    let base = mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let base = mime
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     matches!(
         base.as_str(),
-        "application/json"
-            | "application/xml"
-            | "application/javascript"
-            | "application/xhtml+xml"
+        "application/json" | "application/xml" | "application/javascript" | "application/xhtml+xml"
     ) || base.starts_with("text/")
 }
 

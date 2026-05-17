@@ -54,11 +54,8 @@ impl<'a> MakeWriter<'a> for SharedBuffer {
 #[test]
 fn human_format_renders_tty_friendly_layout() {
     let buf = SharedBuffer::default();
-    let subscriber = build_subscriber_with_writer(
-        LogFormat::Human,
-        EnvFilter::new("trace"),
-        buf.clone(),
-    );
+    let subscriber =
+        build_subscriber_with_writer(LogFormat::Human, EnvFilter::new("trace"), buf.clone());
 
     tracing::subscriber::with_default(subscriber, || {
         info!(target: "barista_test", "hello from human format");
@@ -119,11 +116,8 @@ fn human_format_renders_tty_friendly_layout() {
 #[test]
 fn human_format_respects_level_filter() {
     let buf = SharedBuffer::default();
-    let subscriber = build_subscriber_with_writer(
-        LogFormat::Human,
-        EnvFilter::new("warn"),
-        buf.clone(),
-    );
+    let subscriber =
+        build_subscriber_with_writer(LogFormat::Human, EnvFilter::new("warn"), buf.clone());
 
     tracing::subscriber::with_default(subscriber, || {
         info!(target: "barista_test", "should be filtered out");

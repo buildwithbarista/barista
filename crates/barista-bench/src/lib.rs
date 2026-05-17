@@ -87,10 +87,7 @@ pub fn load_manifest<P: AsRef<Path>>(path: P) -> Result<Manifest, Error> {
 /// newline so diffs against checked-in fixtures stay readable. Returns
 /// [`Error::Io`] on filesystem errors or [`Error::ResultsSerialize`]
 /// if serialization fails.
-pub fn write_results<P: AsRef<Path>>(
-    path: P,
-    document: &ResultsDocument,
-) -> Result<(), Error> {
+pub fn write_results<P: AsRef<Path>>(path: P, document: &ResultsDocument) -> Result<(), Error> {
     let path = path.as_ref();
     let mut json = serde_json::to_string_pretty(document).map_err(Error::ResultsSerialize)?;
     json.push('\n');

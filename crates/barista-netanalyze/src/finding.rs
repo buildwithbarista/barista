@@ -394,7 +394,8 @@ mod tests {
                 requests_saved_per_build: 3,
                 connections_saved_per_build: 0,
             },
-            proposal: "Dedupe per `(repo, groupId, artifactId)` within one CLI invocation.".to_string(),
+            proposal: "Dedupe per `(repo, groupId, artifactId)` within one CLI invocation."
+                .to_string(),
             references: vec!["PRD §18.3 — O-REQ-01".to_string()],
             discovered_by: "MetadataOverFetchAnalyzer".to_string(),
         }

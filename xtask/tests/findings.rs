@@ -9,9 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
-use xtask::findings::{
-    self, CatalogRow, FindingsError, collect_rows, list_catalog, promote_draft,
-};
+use xtask::findings::{self, CatalogRow, FindingsError, collect_rows, list_catalog, promote_draft};
 
 /// Minimal valid draft body — frontmatter plus the four required
 /// body sections. Used as the fixture for promotion tests.
@@ -114,7 +112,10 @@ fn promote_smoke_allocates_next_id_and_moves_file() {
     // frontmatter.
     assert!(!draft.exists(), "draft should be moved");
     let promoted = fs::read_to_string(&result.dest).unwrap();
-    assert!(promoted.contains("id: EFF-2026-003"), "id should be rewritten");
+    assert!(
+        promoted.contains("id: EFF-2026-003"),
+        "id should be rewritten"
+    );
     assert!(
         !promoted.contains("EFF-2026-PENDING"),
         "placeholder id should be gone"
@@ -308,9 +309,10 @@ fn list_against_real_catalog_finds_seed_cohort() {
     assert!(ids.contains(&"EFF-2026-003"), "ids: {ids:?}");
     // Sanity check: every seed row uses `human-authored` per the
     // convention documented in the catalog README.
-    for row in rows.iter().filter(|r| {
-        r.id == "EFF-2026-001" || r.id == "EFF-2026-002" || r.id == "EFF-2026-003"
-    }) {
+    for row in rows
+        .iter()
+        .filter(|r| r.id == "EFF-2026-001" || r.id == "EFF-2026-002" || r.id == "EFF-2026-003")
+    {
         assert_eq!(
             row.discovered_by, "human-authored",
             "seed cohort uses human-authored provenance"

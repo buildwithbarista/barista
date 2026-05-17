@@ -56,9 +56,9 @@ use super::{
     Result, SplitTransport, Transport, TransportError, TransportReceiver, TransportSender,
     decode_envelope, encode_envelope, framed_codec, map_codec_io_err,
 };
-use crate::auth::{BufferZeroizer, PipeName};
-use crate::auth::dacl::PipeDacl;
 use crate::Envelope;
+use crate::auth::dacl::PipeDacl;
+use crate::auth::{BufferZeroizer, PipeName};
 
 /// One side of a named-pipe connection, framed with the shared codec.
 ///
@@ -267,9 +267,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> TransportReceiver for P
     }
 }
 
-impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> SplitTransport
-    for NamedPipeTransport<S>
-{
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> SplitTransport for NamedPipeTransport<S> {
     type Sender = PipeSender<S>;
     type Receiver = PipeReceiver<S>;
 

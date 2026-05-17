@@ -136,9 +136,7 @@ pub enum AuthError {
     /// `actual_mode` is the value `stat(2)` returned (masked to the
     /// low 12 permission bits); `expected` is the constant `0o600`
     /// from the policy.
-    #[error(
-        "socket permissions wrong: got mode {actual_mode:#o}, expected {expected:#o}"
-    )]
+    #[error("socket permissions wrong: got mode {actual_mode:#o}, expected {expected:#o}")]
     SocketPermsWrong {
         /// Mode bits read from the socket inode, masked to `0o7777`.
         actual_mode: u32,
@@ -148,9 +146,7 @@ pub enum AuthError {
 
     /// The socket file is owned by a different UID than the current
     /// effective UID. Surfaced before `connect(2)`.
-    #[error(
-        "socket owner wrong: socket owned by uid {actual_uid}, we are uid {expected_uid}"
-    )]
+    #[error("socket owner wrong: socket owned by uid {actual_uid}, we are uid {expected_uid}")]
     SocketOwnerWrong {
         /// UID returned by `stat(2)` on the socket inode.
         actual_uid: u32,
@@ -163,9 +159,7 @@ pub enum AuthError {
     /// successful `connect(2)`; this catches the case where someone
     /// replaced the socket inode between our `stat(2)` and our
     /// `connect(2)` calls.
-    #[error(
-        "peer UID mismatch: peer reported uid {peer_uid}, we are uid {our_uid}"
-    )]
+    #[error("peer UID mismatch: peer reported uid {peer_uid}, we are uid {our_uid}")]
     PeerUidMismatch {
         /// UID reported by the kernel for the peer.
         peer_uid: u32,
@@ -259,8 +253,14 @@ mod tests {
             expected: 0o600,
         };
         let s = format!("{e}");
-        assert!(s.contains("0o644"), "Display should show actual_mode in octal: {s}");
-        assert!(s.contains("0o600"), "Display should show expected in octal: {s}");
+        assert!(
+            s.contains("0o644"),
+            "Display should show actual_mode in octal: {s}"
+        );
+        assert!(
+            s.contains("0o600"),
+            "Display should show expected in octal: {s}"
+        );
 
         let e = AuthError::PeerUidMismatch {
             peer_uid: 1000,
@@ -288,6 +288,9 @@ mod tests {
         // Operators reading the error need to know *why* it failed,
         // not just "access denied". Pin the Display string.
         let s = format!("{}", AuthError::PipeAccessDenied);
-        assert!(s.contains("DACL"), "PipeAccessDenied should reference the DACL: {s}");
+        assert!(
+            s.contains("DACL"),
+            "PipeAccessDenied should reference the DACL: {s}"
+        );
     }
 }

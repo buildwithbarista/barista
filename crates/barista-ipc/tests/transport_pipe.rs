@@ -23,8 +23,7 @@ use std::collections::HashMap;
 use barista_ipc::{
     ActionRequest, ActionResult, ActionStream, CancelRequest, Envelope, Error, Mojo, Ping, Pong,
     ProducedArtifact, ProgressEvent, Shutdown, StatusRequest, StatusResponse, Transport,
-    TransportError, action_result, envelope, progress_event,
-    transport::pipe::NamedPipeTransport,
+    TransportError, action_result, envelope, progress_event, transport::pipe::NamedPipeTransport,
 };
 use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
 
@@ -169,9 +168,10 @@ async fn roundtrip_all_variants_one_pipe() {
     });
     ready_rx.await.expect("server ready");
 
-    let mut client = NamedPipeTransport::<tokio::net::windows::named_pipe::NamedPipeClient>::connect(&pipe_name)
-        .await
-        .expect("client connect");
+    let mut client =
+        NamedPipeTransport::<tokio::net::windows::named_pipe::NamedPipeClient>::connect(&pipe_name)
+            .await
+            .expect("client connect");
     for (i, body) in all_body_variants().into_iter().enumerate() {
         let env = Envelope {
             version: 1,

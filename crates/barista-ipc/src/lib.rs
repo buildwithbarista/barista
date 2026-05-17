@@ -49,8 +49,7 @@ pub mod transport;
 // stay namespaced under `transport::` to keep the crate root focused on
 // the trait + error model + the wire types from `proto`.
 pub use transport::{
-    MAX_FRAME_BYTES, SplitTransport, Transport, TransportError, TransportReceiver,
-    TransportSender,
+    MAX_FRAME_BYTES, SplitTransport, Transport, TransportError, TransportReceiver, TransportSender,
 };
 
 /// Streaming + multiplexing + cancellation layer on top of [`transport`].
@@ -63,7 +62,7 @@ pub mod mux;
 // downstream callers can write `barista_ipc::Multiplexer` /
 // `barista_ipc::ActionHandle` / etc.
 pub use mux::{
-    ActionHandle, CancelToken, IncomingAction, MuxClient, MuxError, MuxServer, Multiplexer,
+    ActionHandle, CancelToken, IncomingAction, Multiplexer, MuxClient, MuxError, MuxServer,
     ResponseChannel, StreamEvent,
 };
 

@@ -6,9 +6,7 @@
 //! when an upstream is forcing an avoidable round trip.
 
 use crate::analyzer::Analyzer;
-use crate::finding::{
-    Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status,
-};
+use crate::finding::{Category, EvidenceEntry, Finding, ImpactEstimate, Severity, Status};
 use crate::har::Har;
 
 /// Tunable thresholds for [`SlowRedirectAnalyzer`].

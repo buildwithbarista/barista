@@ -285,10 +285,7 @@ fn wire_shape_is_stable() {
             }),
         ),
         (
-            TelemetryEvent::CacheHitMiss {
-                hits: 7,
-                misses: 1,
-            },
+            TelemetryEvent::CacheHitMiss { hits: 7, misses: 1 },
             serde_json::json!({
                 "kind": "cache_hit_miss",
                 "hits": 7,

@@ -292,9 +292,7 @@ fn no_daemon_compile_produces_class_file() {
     let out = run_phase_no_daemon(&project, "compile");
     assert_phase_ok(&project, "compile", &out);
     assert!(
-        project
-            .join("target/classes/example/Hello.class")
-            .is_file(),
+        project.join("target/classes/example/Hello.class").is_file(),
         "Hello.class must exist after compile"
     );
 }
@@ -389,8 +387,7 @@ fn no_daemon_install_writes_into_local_repo() {
         "install should succeed; stderr={}",
         String::from_utf8_lossy(&out.stderr),
     );
-    let installed = local_repo
-        .join("example/lifecycle-fixture/0.1.0/lifecycle-fixture-0.1.0.jar");
+    let installed = local_repo.join("example/lifecycle-fixture/0.1.0/lifecycle-fixture-0.1.0.jar");
     assert!(
         installed.is_file(),
         "install must publish to local repo at {}",
@@ -429,8 +426,7 @@ fn no_daemon_deploy_writes_to_file_distribution_management() {
         "deploy against file:// dist-management should succeed; stderr={}",
         String::from_utf8_lossy(&out.stderr),
     );
-    let deployed = deploy_repo
-        .join("example/lifecycle-fixture/0.1.0/lifecycle-fixture-0.1.0.jar");
+    let deployed = deploy_repo.join("example/lifecycle-fixture/0.1.0/lifecycle-fixture-0.1.0.jar");
     assert!(
         deployed.is_file(),
         "deploy must publish to the file-based <distributionManagement>: {}",

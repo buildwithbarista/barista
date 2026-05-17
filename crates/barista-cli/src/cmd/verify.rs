@@ -536,11 +536,7 @@ impl VerifyError {
             | VerifyError::Workers { .. }
             | VerifyError::Pour { .. } => 2,
             VerifyError::DeployAuthEncrypted { .. } => 3,
-            VerifyError::DaemonError { code, .. }
-                if code.starts_with("BAR-DEPLOY-AUTH-") =>
-            {
-                3
-            }
+            VerifyError::DaemonError { code, .. } if code.starts_with("BAR-DEPLOY-AUTH-") => 3,
             VerifyError::Launcher(_)
             | VerifyError::DaemonConnect { .. }
             | VerifyError::Ipc { .. }

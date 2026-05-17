@@ -28,9 +28,7 @@ use std::hint::black_box;
 use std::path::Path;
 
 use barista_config::sources::EnvGetter;
-use barista_config::{
-    CliOverrides, LoaderInputs, ProjectConfigFile, load_effective_config,
-};
+use barista_config::{CliOverrides, LoaderInputs, ProjectConfigFile, load_effective_config};
 use criterion::{Criterion, criterion_group, criterion_main};
 use tempfile::TempDir;
 
@@ -71,8 +69,7 @@ version = "1.2.3"
 fn bench_parse_barista_toml(c: &mut Criterion) {
     c.bench_function("ProjectConfigFile parse: sample barista.toml", |bench| {
         bench.iter(|| {
-            let cfg: ProjectConfigFile =
-                toml::from_str(black_box(SAMPLE_BARISTA_TOML)).unwrap();
+            let cfg: ProjectConfigFile = toml::from_str(black_box(SAMPLE_BARISTA_TOML)).unwrap();
             black_box(cfg);
         });
     });
@@ -87,11 +84,7 @@ fn env_from(map: HashMap<String, String>) -> BoxedEnvGetter {
     Box::new(move |k: &str| map.get(k).cloned())
 }
 
-fn make_inputs(
-    home: &Path,
-    cwd: &Path,
-    env_map: HashMap<String, String>,
-) -> LoaderInputs<'static> {
+fn make_inputs(home: &Path, cwd: &Path, env_map: HashMap<String, String>) -> LoaderInputs<'static> {
     let getter = Box::leak(Box::new(env_from(env_map))) as &dyn Fn(&str) -> Option<String>;
     let getter: &'static EnvGetter<'static> = getter;
     LoaderInputs {

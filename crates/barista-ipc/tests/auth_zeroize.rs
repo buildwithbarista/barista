@@ -267,7 +267,11 @@ fn credential_drops_scrub_in_memory_secrets() {
     assert!(cred.username.is_empty(), "username should be zero'd");
     match &cred.secret {
         Some(credential::Secret::Password(p)) => {
-            assert!(p.is_empty(), "password should be zero'd; got len={}", p.len());
+            assert!(
+                p.is_empty(),
+                "password should be zero'd; got len={}",
+                p.len()
+            );
         }
         None => {}
         other => panic!("unexpected secret variant: {other:?}"),
@@ -345,7 +349,11 @@ async fn transport_recv_zeroizes_wire_buffer_after_decode() {
                 .credentials
                 .as_ref()
                 .expect("credentials should survive the wire-buffer scrub via prost's copy");
-            assert_eq!(creds.entries.len(), 3, "all three credential entries should round-trip");
+            assert_eq!(
+                creds.entries.len(),
+                3,
+                "all three credential entries should round-trip"
+            );
             // The password bytes are still live in the decoded
             // envelope's heap copy (they'll be zeroed when this
             // envelope drops at end of scope).
@@ -407,7 +415,10 @@ async fn transport_recv_scrub_does_not_break_codec_across_frames() {
         let mut server = UdsTransport::from_stream(stream);
         for i in 0..5 {
             let env = server.recv().await.expect("recv");
-            assert_eq!(env.request_id, i, "frame ordering should be preserved across scrubs");
+            assert_eq!(
+                env.request_id, i,
+                "frame ordering should be preserved across scrubs"
+            );
         }
     });
 

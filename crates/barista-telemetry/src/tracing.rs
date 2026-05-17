@@ -156,9 +156,9 @@ pub enum InstallError {
 impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::AlreadyInstalled => f.write_str(
-                "a global tracing subscriber is already installed",
-            ),
+            Self::AlreadyInstalled => {
+                f.write_str("a global tracing subscriber is already installed")
+            }
         }
     }
 }

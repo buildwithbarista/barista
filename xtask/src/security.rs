@@ -120,7 +120,14 @@ const CHECKS: &[Check] = &[
         name: "clippy",
         label: "cargo clippy",
         program: "cargo",
-        args: &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
+        args: &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--",
+            "-D",
+            "warnings",
+        ],
         requirement: Requirement::Required,
         install_hint: "",
     },
@@ -364,10 +371,7 @@ fn run_with_env<E: Env>(args: &Args, env: &E) -> i32 {
 
     print_summary(&results);
 
-    if results
-        .iter()
-        .any(|(_, o)| matches!(o, Outcome::Failed))
-    {
+    if results.iter().any(|(_, o)| matches!(o, Outcome::Failed)) {
         1
     } else {
         0
@@ -375,7 +379,9 @@ fn run_with_env<E: Env>(args: &Args, env: &E) -> i32 {
 }
 
 fn render_command(check: &Check) -> String {
-    let parts: Vec<&str> = std::iter::once(check.program).chain(check.args.iter().copied()).collect();
+    let parts: Vec<&str> = std::iter::once(check.program)
+        .chain(check.args.iter().copied())
+        .collect();
     parts.join(" ")
 }
 
@@ -451,23 +457,44 @@ mod tests {
     /// Clean tree, every optional tool installed, every check passes → exit 0.
     #[test]
     fn all_checks_pass_returns_zero() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"]);
+        let env = FakeEnv::new(&[
+            "cargo",
+            "cargo-deny",
+            "cargo-audit",
+            "python3",
+            "semgrep",
+            "gitleaks",
+        ]);
         assert_eq!(run_with_env(&args_default(), &env), 0);
     }
 
     /// Required check fails → exit 1 even though everything else is fine.
     #[test]
     fn failing_required_check_returns_one() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"])
-            .with_exit_code("cargo", 1);
+        let env = FakeEnv::new(&[
+            "cargo",
+            "cargo-deny",
+            "cargo-audit",
+            "python3",
+            "semgrep",
+            "gitleaks",
+        ])
+        .with_exit_code("cargo", 1);
         assert_eq!(run_with_env(&args_default(), &env), 1);
     }
 
     /// Failing optional check (tool present, exits non-zero) → exit 1.
     #[test]
     fn failing_optional_check_returns_one() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"])
-            .with_exit_code("semgrep", 1);
+        let env = FakeEnv::new(&[
+            "cargo",
+            "cargo-deny",
+            "cargo-audit",
+            "python3",
+            "semgrep",
+            "gitleaks",
+        ])
+        .with_exit_code("semgrep", 1);
         assert_eq!(run_with_env(&args_default(), &env), 1);
     }
 
@@ -512,12 +539,19 @@ mod tests {
     /// `--check clippy` only runs clippy; other checks are filter-skipped.
     #[test]
     fn check_filter_runs_only_named_check() {
-        let env = FakeEnv::new(&["cargo", "cargo-deny", "cargo-audit", "python3", "semgrep", "gitleaks"])
-            // Force every other check to exit non-zero — they should never run.
-            .with_exit_code("cargo-deny", 1)
-            .with_exit_code("cargo-audit", 1)
-            .with_exit_code("semgrep", 1)
-            .with_exit_code("gitleaks", 1);
+        let env = FakeEnv::new(&[
+            "cargo",
+            "cargo-deny",
+            "cargo-audit",
+            "python3",
+            "semgrep",
+            "gitleaks",
+        ])
+        // Force every other check to exit non-zero — they should never run.
+        .with_exit_code("cargo-deny", 1)
+        .with_exit_code("cargo-audit", 1)
+        .with_exit_code("semgrep", 1)
+        .with_exit_code("gitleaks", 1);
         let args = Args {
             strict: false,
             check: vec!["clippy".to_owned()],
@@ -541,4 +575,3 @@ mod tests {
         assert_eq!(run_with_env(&args, &env), 2);
     }
 }
-

@@ -259,8 +259,7 @@ fn ensure_run_dir(dir: &Path) -> Result<()> {
             // access.
             if cur & 0o077 != 0 {
                 let perms = std::fs::Permissions::from_mode(RUN_DIR_MODE);
-                std::fs::set_permissions(dir, perms)
-                    .map_err(AuthError::SocketDirCreateFailed)?;
+                std::fs::set_permissions(dir, perms).map_err(AuthError::SocketDirCreateFailed)?;
             }
             Ok(())
         }
@@ -385,8 +384,7 @@ mod tests {
         // Place a regular file at the socket path. `0600` so the
         // owner / perms checks would otherwise pass.
         std::fs::write(sp.as_path(), b"not a socket").unwrap();
-        std::fs::set_permissions(sp.as_path(), std::fs::Permissions::from_mode(0o600))
-            .unwrap();
+        std::fs::set_permissions(sp.as_path(), std::fs::Permissions::from_mode(0o600)).unwrap();
 
         let err = sp.verify().unwrap_err();
         match err {

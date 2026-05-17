@@ -85,9 +85,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::finding::{
-        Category, EvidenceEntry, ImpactEstimate, Severity, Status,
-    };
+    use crate::finding::{Category, EvidenceEntry, ImpactEstimate, Severity, Status};
     use tempfile::tempdir;
 
     fn finding(slug: &str) -> Finding {
@@ -117,7 +115,13 @@ mod tests {
         assert_eq!(paths.len(), 3);
         // First two share the same evidence URL slug → second is
         // suffixed with `-1`.
-        assert!(paths[0].file_name().unwrap().to_string_lossy().ends_with(".md"));
+        assert!(
+            paths[0]
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with(".md")
+        );
         assert_ne!(paths[0], paths[1]);
         for path in &paths {
             assert!(path.exists());
@@ -155,7 +159,10 @@ mod tests {
                 .iter()
                 .any(|f| f.discovered_by == "DuplicateRequestAnalyzer"),
             "expected a DuplicateRequestAnalyzer finding, got: {:?}",
-            findings.iter().map(|f| &f.discovered_by).collect::<Vec<_>>()
+            findings
+                .iter()
+                .map(|f| &f.discovered_by)
+                .collect::<Vec<_>>()
         );
     }
 }

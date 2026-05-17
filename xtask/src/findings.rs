@@ -203,7 +203,14 @@ pub fn list_catalog(catalog_dir: &Path) -> Result<String, FindingsError> {
 }
 
 fn render_table(rows: &[CatalogRow]) -> String {
-    let headers = ["ID", "Title", "Severity", "Category", "Status", "Discovered-by"];
+    let headers = [
+        "ID",
+        "Title",
+        "Severity",
+        "Category",
+        "Status",
+        "Discovered-by",
+    ];
     // Column widths: max of the header and any cell. Cap title at 60
     // so terminal output doesn't wrap horribly; the cell text is not
     // truncated, just the column-width calculation is bounded.
@@ -321,9 +328,7 @@ pub fn promote_draft(draft_path: &Path, catalog_dir: &Path) -> Result<Promoted, 
     let allocated_id = allocate_next_id(&canonical_catalog)?;
     let dest = canonical_catalog.join(format!("{allocated_id}.md"));
     if dest.exists() {
-        return Err(FindingsError::IdCollision {
-            path: dest.clone(),
-        });
+        return Err(FindingsError::IdCollision { path: dest.clone() });
     }
 
     // 4. Rewrite the `id:` line in the frontmatter. The placeholder
@@ -343,10 +348,7 @@ pub fn promote_draft(draft_path: &Path, catalog_dir: &Path) -> Result<Promoted, 
         source,
     })?;
 
-    Ok(Promoted {
-        allocated_id,
-        dest,
-    })
+    Ok(Promoted { allocated_id, dest })
 }
 
 /// Find the highest `EFF-2026-NNN` in `catalog_dir` and return
@@ -394,20 +396,15 @@ fn is_catalog_file(path: &Path) -> bool {
 /// Stable id ordering: numeric on the trailing NNN so
 /// `EFF-2026-010` sorts after `EFF-2026-009`, not before it.
 fn compare_ids(a: &str, b: &str) -> Ordering {
-    let parse = |s: &str| -> Option<u32> {
-        s.strip_prefix("EFF-2026-").and_then(|n| n.parse().ok())
-    };
+    let parse =
+        |s: &str| -> Option<u32> { s.strip_prefix("EFF-2026-").and_then(|n| n.parse().ok()) };
     match (parse(a), parse(b)) {
         (Some(x), Some(y)) => x.cmp(&y),
         _ => a.cmp(b),
     }
 }
 
-fn rewrite_id_line(
-    body: &str,
-    new_id: &str,
-    raw_id_line: &str,
-) -> Result<String, FindingsError> {
+fn rewrite_id_line(body: &str, new_id: &str, raw_id_line: &str) -> Result<String, FindingsError> {
     // The frontmatter parser captured the exact original `id:` line
     // (incl. trailing whitespace as it appeared in the file).
     // String-replace it in the source. If the line appears more than
@@ -417,9 +414,7 @@ fn rewrite_id_line(
     if count != 1 {
         return Err(FindingsError::InvalidDraft {
             path: PathBuf::new(),
-            reason: format!(
-                "expected exactly one occurrence of the id line, found {count}"
-            ),
+            reason: format!("expected exactly one occurrence of the id line, found {count}"),
         });
     }
     let new_line = format!("id: {new_id}");
@@ -507,16 +502,13 @@ pub fn parse_frontmatter(body: &str) -> Result<Frontmatter, String> {
     }
 
     let id = id.ok_or_else(|| "missing required field `id`".to_string())?;
-    let raw_id_line =
-        raw_id_line.ok_or_else(|| "missing required field `id`".to_string())?;
+    let raw_id_line = raw_id_line.ok_or_else(|| "missing required field `id`".to_string())?;
     let title = title.ok_or_else(|| "missing required field `title`".to_string())?;
-    let severity =
-        severity.ok_or_else(|| "missing required field `severity`".to_string())?;
-    let category =
-        category.ok_or_else(|| "missing required field `category`".to_string())?;
+    let severity = severity.ok_or_else(|| "missing required field `severity`".to_string())?;
+    let category = category.ok_or_else(|| "missing required field `category`".to_string())?;
     let status = status.ok_or_else(|| "missing required field `status`".to_string())?;
-    let discovered_by = discovered_by
-        .ok_or_else(|| "missing required field `discovered_by`".to_string())?;
+    let discovered_by =
+        discovered_by.ok_or_else(|| "missing required field `discovered_by`".to_string())?;
 
     Ok(Frontmatter {
         id,
