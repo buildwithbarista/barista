@@ -44,6 +44,7 @@
 //! compiled at all lives in `transport/mod.rs` on the `mod pipe`
 //! declaration; we don't need an inner `#![cfg(windows)]` here.
 
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::windows::named_pipe::{
@@ -52,8 +53,8 @@ use tokio::net::windows::named_pipe::{
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::{
-    Result, Transport, TransportError, decode_envelope, encode_envelope, framed_codec,
-    map_codec_io_err,
+    Result, SplitTransport, Transport, TransportError, TransportReceiver, TransportSender,
+    decode_envelope, encode_envelope, framed_codec, map_codec_io_err,
 };
 use crate::auth::{BufferZeroizer, PipeName};
 use crate::auth::dacl::PipeDacl;
@@ -233,6 +234,48 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send> Transport for NamedPipeTransport<
             Some(Err(e)) => Err(map_codec_io_err(e)),
             None => Err(TransportError::Closed),
         }
+    }
+}
+
+/// Send-only half of a [`NamedPipeTransport`]. Counterpart to
+/// [`PipeReceiver`]; used by the multiplex layer's writer task.
+pub struct PipeSender<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> {
+    sink: SplitSink<Framed<S, LengthDelimitedCodec>, bytes::Bytes>,
+}
+
+/// Recv-only half of a [`NamedPipeTransport`]. Counterpart to
+/// [`PipeSender`]; used by the multiplex layer's reader task.
+pub struct PipeReceiver<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> {
+    stream: SplitStream<Framed<S, LengthDelimitedCodec>>,
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> TransportSender for PipeSender<S> {
+    async fn send(&mut self, env: Envelope) -> Result<()> {
+        let payload = encode_envelope(&env)?;
+        self.sink.send(payload).await.map_err(map_codec_io_err)?;
+        Ok(())
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> TransportReceiver for PipeReceiver<S> {
+    async fn recv(&mut self) -> Result<Envelope> {
+        match self.stream.next().await {
+            Some(Ok(buf)) => decode_envelope(&buf),
+            Some(Err(e)) => Err(map_codec_io_err(e)),
+            None => Err(TransportError::Closed),
+        }
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> SplitTransport
+    for NamedPipeTransport<S>
+{
+    type Sender = PipeSender<S>;
+    type Receiver = PipeReceiver<S>;
+
+    fn split(self) -> (Self::Sender, Self::Receiver) {
+        let (sink, stream) = self.framed.split();
+        (PipeSender { sink }, PipeReceiver { stream })
     }
 }
 

@@ -48,7 +48,24 @@ pub mod transport;
 // TransportError`. The concrete `UdsTransport` and `NamedPipeTransport`
 // stay namespaced under `transport::` to keep the crate root focused on
 // the trait + error model + the wire types from `proto`.
-pub use transport::{MAX_FRAME_BYTES, Transport, TransportError};
+pub use transport::{
+    MAX_FRAME_BYTES, SplitTransport, Transport, TransportError, TransportReceiver,
+    TransportSender,
+};
+
+/// Streaming + multiplexing + cancellation layer on top of [`transport`].
+///
+/// See `mux/mod.rs` for the architecture, backpressure model, and
+/// cancel-safety contract.
+pub mod mux;
+
+// Re-export the most commonly-used mux types at the crate root so
+// downstream callers can write `barista_ipc::Multiplexer` /
+// `barista_ipc::ActionHandle` / etc.
+pub use mux::{
+    ActionHandle, CancelToken, IncomingAction, MuxClient, MuxError, MuxServer, Multiplexer,
+    ResponseChannel, StreamEvent,
+};
 
 // Re-export the auth surface so downstream callers can write
 // `barista_ipc::AuthError`, `barista_ipc::BufferZeroizer`,

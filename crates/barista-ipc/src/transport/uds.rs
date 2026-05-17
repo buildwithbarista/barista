@@ -35,13 +35,14 @@
 
 use std::path::Path;
 
+use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::{
-    Result, Transport, TransportError, decode_envelope, encode_envelope, framed_codec,
-    map_codec_io_err,
+    Result, SplitTransport, Transport, TransportError, TransportReceiver, TransportSender,
+    decode_envelope, encode_envelope, framed_codec, map_codec_io_err,
 };
 use crate::auth::{BufferZeroizer, SocketPath, verify_peer_uid};
 use crate::Envelope;
@@ -211,6 +212,52 @@ impl Transport for UdsTransport {
             Some(Err(e)) => Err(map_codec_io_err(e)),
             None => Err(TransportError::Closed),
         }
+    }
+}
+
+/// Send-only half of a [`UdsTransport`]. Owns the `Sink` half of the
+/// inner `Framed`; used by the multiplex layer's writer task.
+pub struct UdsSender {
+    sink: SplitSink<Framed<UnixStream, LengthDelimitedCodec>, bytes::Bytes>,
+}
+
+/// Recv-only half of a [`UdsTransport`]. Owns the `Stream` half of the
+/// inner `Framed`; used by the multiplex layer's reader task.
+pub struct UdsReceiver {
+    stream: SplitStream<Framed<UnixStream, LengthDelimitedCodec>>,
+}
+
+impl TransportSender for UdsSender {
+    async fn send(&mut self, env: Envelope) -> Result<()> {
+        let payload = encode_envelope(&env)?;
+        self.sink.send(payload).await.map_err(map_codec_io_err)?;
+        Ok(())
+    }
+}
+
+impl TransportReceiver for UdsReceiver {
+    async fn recv(&mut self) -> Result<Envelope> {
+        match self.stream.next().await {
+            Some(Ok(buf)) => decode_envelope(&buf),
+            Some(Err(e)) => Err(map_codec_io_err(e)),
+            None => Err(TransportError::Closed),
+        }
+    }
+}
+
+impl SplitTransport for UdsTransport {
+    type Sender = UdsSender;
+    type Receiver = UdsReceiver;
+
+    fn split(self) -> (Self::Sender, Self::Receiver) {
+        // `StreamExt::split` is the canonical Tokio idiom for
+        // separating the read + write halves of a `Framed`: it
+        // returns a `SplitSink` and a `SplitStream` that share the
+        // underlying `Framed` via a `BiLock` internally, so concurrent
+        // writes + reads don't step on each other but neither half
+        // blocks the other at the awaiting layer.
+        let (sink, stream) = self.framed.split();
+        (UdsSender { sink }, UdsReceiver { stream })
     }
 }
 

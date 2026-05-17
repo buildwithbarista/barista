@@ -237,6 +237,52 @@ pub trait Transport {
 }
 
 // ---------------------------------------------------------------------------
+// Split transport (sender + receiver halves)
+// ---------------------------------------------------------------------------
+
+/// The send-only half of a [`Transport`].
+///
+/// Exposes only `send`. Carved out so the multiplex layer (M4.1 T6) can
+/// own the writer half in a dedicated background task while the
+/// receiver half lives in the reader task — without any locking on the
+/// underlying socket. See `mux::Multiplexer` for the consumer.
+pub trait TransportSender: Send + 'static {
+    /// Send a single `Envelope`. See [`Transport::send`] for semantics.
+    fn send(&mut self, env: Envelope) -> impl Future<Output = Result<()>> + Send;
+}
+
+/// The recv-only half of a [`Transport`]. Counterpart to
+/// [`TransportSender`]; see that trait's docs.
+pub trait TransportReceiver: Send + 'static {
+    /// Wait for one inbound `Envelope`. See [`Transport::recv`] for
+    /// semantics.
+    fn recv(&mut self) -> impl Future<Output = Result<Envelope>> + Send;
+}
+
+/// A [`Transport`] that can be split into independently-owned
+/// sender + receiver halves.
+///
+/// Implementors must split the underlying socket in a way that lets
+/// the two halves operate concurrently without locking — typically via
+/// `tokio::io::split` on an `AsyncRead + AsyncWrite` stream, or via
+/// `futures_util::StreamExt::split` on a `Framed`. The multiplex layer
+/// (M4.1 T6) requires this property: its reader and writer tasks run
+/// in parallel, and routing a `CancelRequest` from the writer while
+/// the reader is blocked on `recv` would deadlock if the underlying
+/// transport serialised both halves on a single mutex.
+pub trait SplitTransport: Transport {
+    /// The sender half produced by [`split`](Self::split).
+    type Sender: TransportSender;
+    /// The receiver half produced by [`split`](Self::split).
+    type Receiver: TransportReceiver;
+
+    /// Consume the transport and return its independently-owned
+    /// sender / receiver halves. The two halves must be safe to use
+    /// concurrently — see the trait-level doc for the constraint.
+    fn split(self) -> (Self::Sender, Self::Receiver);
+}
+
+// ---------------------------------------------------------------------------
 // Shared codec configuration
 // ---------------------------------------------------------------------------
 

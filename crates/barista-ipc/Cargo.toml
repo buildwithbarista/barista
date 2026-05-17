@@ -42,7 +42,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "io-util", "net", "macro
 # torn-write / partial-frame bugs that live in such code). Configured in
 # `src/transport/mod.rs` with `length_field_length(4)`, big-endian by
 # default, and a 16 MiB max-frame guardrail (see `MAX_FRAME_BYTES`).
-tokio-util = { version = "0.7", features = ["codec"] }
+#
+# The `rt` feature unlocks `tokio_util::sync::CancellationToken`, used by
+# the multiplex layer in `src/mux/` (M4.1 T6) for per-action server-side
+# cancellation. `CancellationToken` is structurally a counted, awaitable
+# atomic flag with hierarchical `child_token()` semantics — exactly what
+# the per-action cancel-propagation needs.
+tokio-util = { version = "0.7", features = ["codec", "rt"] }
 
 # `bytes` is `tokio-util`'s buffer currency — `LengthDelimitedCodec`
 # yields `BytesMut` frames on read and accepts `Bytes` on write. Adding
@@ -70,6 +76,22 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # current stable 5.x line. Sonatype version-check deferred (MCP credits
 # exhausted at task execution time); revisit at M6.1 dependency audit.
 dirs = "5"
+
+# `uuid` provides the v7 generator used by the multiplexer (`src/mux/`)
+# for client-side action IDs. UUIDv7 (RFC 9562 §5.7) is a 128-bit
+# timestamp-first identifier: the first 48 bits are unix-millis,
+# guaranteeing intra-process monotonicity (correlation logs sort
+# chronologically) without sacrificing the collision-resistance of a
+# UUID. Compared to alternatives:
+#   * `u64` monotonic counter — would need an atomic *and* a per-
+#     connection seed to avoid colliding when two CLIs reuse the
+#     same persisted ID space (e.g. across barback restarts).
+#   * Snowflake — needs a worker-id provisioning step we don't have.
+#   * UUIDv4 — non-sortable; debugging logs cluster by hash, not time.
+# Only the `v7` feature is enabled; `v4`/`v5`/`serde` pull in extra
+# dependencies (`getrandom` is already transitively available via
+# the rand pieces UUIDv7 needs).
+uuid = { version = "1", features = ["v7"] }
 
 # Unix-only: `libc` exposes `SO_PEERCRED`, `ucred`, `geteuid` for the
 # peer-UID check on the UDS transport. Already in the workspace
