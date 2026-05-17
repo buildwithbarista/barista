@@ -166,6 +166,26 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <!--
+                      Pick up `*IT` integration tests alongside the
+                      default `*Test` unit tests. We run them under
+                      Surefire (not Failsafe) on purpose: the daemon's
+                      integration tests are in-process Socket tests
+                      that do not need a separately staged JVM, and
+                      the CI matrix already runs `mvn test` under both
+                      JDK 17 and JDK 21 cells — folding `*IT` into the
+                      same phase ensures the M4.2 Task 2 acceptance
+                      criterion ("ThreadPoolExecutor fallback path
+                      exercised under JDK 17 in CI") fires on every
+                      matrix cell without extra workflow plumbing.
+                    -->
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
             </plugin>
             <plugin>
                 <!--

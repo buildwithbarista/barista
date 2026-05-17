@@ -13,10 +13,10 @@ import com.bluminal.barista.barback.proto.Ping;
 import com.bluminal.barista.barback.proto.Pong;
 import com.bluminal.barista.barback.proto.RedactedCredential;
 import com.bluminal.barista.barback.proto.Shutdown;
+import com.bluminal.barista.barback.workers.WorkerPool;
 import com.google.protobuf.InvalidProtocolBufferException;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
 import java.net.StandardProtocolFamily;
 import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
@@ -27,15 +27,11 @@ import java.nio.channels.SocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.EnumSet;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Level;
@@ -92,14 +88,17 @@ import java.util.logging.Logger;
  * <h2>Threading model</h2>
  *
  * <p>The accept loop runs on a single dedicated thread. Each accepted
- * connection is handed to a per-task executor; the v0.1 default is the
- * JDK 21+ virtual-thread executor
- * ({@code Executors.newVirtualThreadPerTaskExecutor()}), reflectively
- * acquired so the class file stays JDK 17-compatible. If the JVM
- * predates JDK 21 the server falls back to a cached thread pool. The
- * full worker-pool configuration (bounded queue, max worker count,
- * back-pressure policy) is owned by milestone 4.2 Task 2, which
- * replaces this default with the configured executor.
+ * connection is handed to a {@link com.bluminal.barista.barback.workers.WorkerPool},
+ * which picks its backing executor based on the running JVM: virtual
+ * threads on Java 21+ (with a {@link java.util.concurrent.Semaphore}
+ * enforcing the configured concurrency budget), and a bounded
+ * platform-thread {@link java.util.concurrent.ThreadPoolExecutor} on
+ * Java 17. The budget is the {@code workers} field of
+ * {@link SocketConfig}, sourced from the {@code --workers} flag or
+ * the host-default {@code 1C} fallback. {@link #startWith(SocketConfig,
+ * com.bluminal.barista.barback.workers.WorkerPool)} accepts a
+ * caller-built pool so tests and benches can drive either backend
+ * directly.
  *
  * <h2>Socket-permission contract</h2>
  *
@@ -203,18 +202,30 @@ public final class Server implements AutoCloseable {
             PosixFilePermission.OWNER_WRITE,
             PosixFilePermission.OWNER_EXECUTE);
 
+    /**
+     * Default worker-pool size when {@code --workers} is not specified
+     * and the caller-supplied {@link SocketConfig} does not pin a
+     * value. Matches the {@code barback.default_workers = "1C"}
+     * default from the daemon configuration spec ("one per core"). The
+     * Rust CLI will resolve the expression {@code "1C"} / {@code "0.75C"}
+     * / etc. before spawning the daemon; this value is the fallback
+     * for the bare {@code java -jar barback-uber.jar} entry point that
+     * exercises the daemon without going through the CLI.
+     */
+    static final int DEFAULT_WORKERS = Math.max(1, Runtime.getRuntime().availableProcessors());
+
     private final Path socketPath;
     private final ServerSocketChannel serverChannel;
-    private final ExecutorService connectionExecutor;
+    private final WorkerPool workerPool;
     private final Thread acceptThread;
     private final AtomicBoolean shutdownRequested = new AtomicBoolean(false);
     private final CountDownLatch terminated = new CountDownLatch(1);
     private final AtomicLong nextConnectionId = new AtomicLong(0);
 
-    private Server(Path socketPath, ServerSocketChannel serverChannel, ExecutorService connectionExecutor) {
+    private Server(Path socketPath, ServerSocketChannel serverChannel, WorkerPool workerPool) {
         this.socketPath = socketPath;
         this.serverChannel = serverChannel;
-        this.connectionExecutor = connectionExecutor;
+        this.workerPool = workerPool;
         this.acceptThread = new Thread(this::runAcceptLoop, "barback-accept");
         this.acceptThread.setDaemon(false);
     }
@@ -222,28 +233,44 @@ public final class Server implements AutoCloseable {
     /**
      * Configuration for a single {@link Server} instance.
      *
-     * <p>Today only the socket path is configurable. Worker-pool
-     * configuration (max workers, queue depth, back-pressure policy)
-     * is intentionally absent; milestone 4.2 Task 2 introduces a
-     * richer config record once the worker-pool semantics are settled.
-     *
      * @param socketPath absolute path the server should bind. The
      *     parent directory is created with {@code 0700} permissions if
      *     it does not already exist. Any existing inode at this path
      *     is unlinked before {@code bind()}, so the start path is
      *     idempotent across restarts.
+     * @param workers concurrency budget for the per-connection
+     *     {@link WorkerPool}. Realises the {@code barback.workers}
+     *     setting from the daemon configuration spec; the Rust CLI
+     *     resolves {@code default_workers} expressions like
+     *     {@code "1C"} or {@code "0.75C"} to a concrete integer before
+     *     spawning the daemon. Must be &ge; 1.
      */
-    public record SocketConfig(Path socketPath) {
+    public record SocketConfig(Path socketPath, int workers) {
 
         public SocketConfig {
             Objects.requireNonNull(socketPath, "socketPath");
+            if (workers <= 0) {
+                throw new IllegalArgumentException(
+                        "workers must be >= 1; got " + workers);
+            }
+        }
+
+        /**
+         * Convenience constructor that picks the per-host
+         * {@link #DEFAULT_WORKERS} value. Retained so existing
+         * call sites that did not specify a worker count keep
+         * compiling.
+         */
+        public SocketConfig(Path socketPath) {
+            this(socketPath, DEFAULT_WORKERS);
         }
 
         /**
          * Build a config that binds at the freedesktop-default location
          * for the current user, falling back to
          * {@code $HOME/.barista/run/barback.sock} when
-         * {@code XDG_RUNTIME_DIR} is unset.
+         * {@code XDG_RUNTIME_DIR} is unset. Worker count defaults to
+         * {@link #DEFAULT_WORKERS}.
          */
         public static SocketConfig defaultPath() {
             String xdg = System.getenv("XDG_RUNTIME_DIR");
@@ -259,7 +286,7 @@ public final class Server implements AutoCloseable {
                 }
                 base = Path.of(home, ".barista", "run");
             }
-            return new SocketConfig(base.resolve("barback.sock"));
+            return new SocketConfig(base.resolve("barback.sock"), DEFAULT_WORKERS);
         }
     }
 
@@ -297,13 +324,44 @@ public final class Server implements AutoCloseable {
                             + "conformance-validated wire format pending the production "
                             + "server binding");
         }
+        WorkerPool pool = WorkerPool.create(config.workers());
+        return startWith(config, pool);
+    }
+
+    /**
+     * Start a server with a caller-supplied {@link WorkerPool}. The
+     * runtime branch in {@link WorkerPool#create(int)} is bypassed and
+     * the pool is wrapped as given. Lifetime of {@code pool} is
+     * transferred to the returned {@link Server} &mdash; closing the
+     * server closes the pool.
+     *
+     * <p>This is the injection seam the test suite uses to drive the
+     * platform-thread fallback path under a JDK 21 runtime (and vice
+     * versa) without rebooting the JVM. The CI matrix also runs the
+     * full integration suite under both JDK 17 and JDK 21 cells so the
+     * runtime-branch selection in {@link WorkerPool#create(int)} is
+     * exercised end-to-end on a real JDK 17 in CI.
+     *
+     * @throws UnsupportedOperationException on Windows (see {@link #start(SocketConfig)}).
+     * @throws IOException if the socket bind fails.
+     */
+    public static Server startWith(SocketConfig config, WorkerPool pool) throws IOException {
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(pool, "pool");
+        if (isWindows()) {
+            throw new UnsupportedOperationException(
+                    "barback server on Windows is deferred to a follow-up task; "
+                            + "the Windows CLI can talk to a remote daemon over the "
+                            + "conformance-validated wire format pending the production "
+                            + "server binding");
+        }
         ServerSocketChannel channel = bindUnix(config.socketPath());
-        ExecutorService executor = newConnectionExecutor();
-        Server server = new Server(config.socketPath(), channel, executor);
+        Server server = new Server(config.socketPath(), channel, pool);
         server.acceptThread.start();
         LOG.log(Level.INFO,
-                () -> "barback listening on " + config.socketPath() + " (executor="
-                        + executor.getClass().getSimpleName() + ")");
+                () -> "barback listening on " + config.socketPath()
+                        + " (workers=" + pool.workers()
+                        + ", backend=" + pool.backend() + ")");
         return server;
     }
 
@@ -369,9 +427,13 @@ public final class Server implements AutoCloseable {
      * <ul>
      *   <li>{@code --socket <path>}: override the default socket
      *       location;</li>
-     *   <li>{@code --workers <n>}: accepted but ignored in T1; the
-     *       worker-pool configuration is owned by milestone 4.2
-     *       Task 2.</li>
+     *   <li>{@code --workers <n>}: concurrency budget for the worker
+     *       pool. Must be &ge; 1. Defaults to
+     *       {@code Runtime.availableProcessors()} ("1C") when omitted.
+     *       The Rust CLI resolves {@code default_workers} expressions
+     *       like {@code "1C"} / {@code "0.75C"} from
+     *       {@code barback.toml} to a concrete integer before spawning
+     *       this entry point.</li>
      * </ul>
      *
      * <p>Unknown flags cause the process to exit with status 2 and a
@@ -381,6 +443,7 @@ public final class Server implements AutoCloseable {
      */
     public static void main(String[] args) throws Exception {
         Path socketPath = null;
+        Integer workers = null;
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             switch (arg) {
@@ -398,13 +461,21 @@ public final class Server implements AutoCloseable {
                         System.exit(2);
                         return;
                     }
-                    // Parsed to surface bad input now, even though the
-                    // value is unused until milestone 4.2 Task 2 wires
-                    // it into the worker-pool configuration.
-                    Integer.parseInt(args[++i]);
-                    LOG.log(Level.INFO,
-                            "--workers accepted but ignored in T1; "
-                                    + "worker-pool config lands in M4.2 T2");
+                    int parsed;
+                    try {
+                        parsed = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("--workers requires an integer argument; got '"
+                                + args[i] + "'");
+                        System.exit(2);
+                        return;
+                    }
+                    if (parsed <= 0) {
+                        System.err.println("--workers must be >= 1; got " + parsed);
+                        System.exit(2);
+                        return;
+                    }
+                    workers = parsed;
                 }
                 default -> {
                     System.err.println(
@@ -415,9 +486,15 @@ public final class Server implements AutoCloseable {
                 }
             }
         }
-        SocketConfig config = socketPath == null
-                ? SocketConfig.defaultPath()
-                : new SocketConfig(socketPath);
+        SocketConfig config;
+        if (socketPath == null) {
+            SocketConfig def = SocketConfig.defaultPath();
+            config = workers == null ? def : new SocketConfig(def.socketPath(), workers);
+        } else {
+            config = workers == null
+                    ? new SocketConfig(socketPath)
+                    : new SocketConfig(socketPath, workers);
+        }
         Server server = Server.start(config);
         Runtime.getRuntime().addShutdownHook(new Thread(server::shutdown, "barback-sigterm"));
         server.awaitShutdown();
@@ -476,40 +553,6 @@ public final class Server implements AutoCloseable {
         }
     }
 
-    /**
-     * Acquire the per-connection executor. The v0.1 default is the
-     * JDK 21+ virtual-thread executor, fetched reflectively so the
-     * compiled class file stays JDK 17 compatible (D20 in the
-     * roadmap keeps both JDK 17 and JDK 21 in the barback
-     * CI matrix). On JDK 17 the fallback is
-     * {@link Executors#newCachedThreadPool()}: each connection still
-     * gets its own thread without an artificial pool cap.
-     *
-     * <p>This default is intentionally simple and is replaced by the
-     * full worker-pool configuration (bounded queue, back-pressure
-     * policy, JDK-17 ThreadPoolExecutor sized to CPU count) in
-     * milestone 4.2 Task 2.
-     */
-    private static ExecutorService newConnectionExecutor() {
-        try {
-            return (ExecutorService) Executors.class
-                    .getMethod("newVirtualThreadPerTaskExecutor")
-                    .invoke(null);
-        } catch (NoSuchMethodException e) {
-            LOG.log(Level.INFO,
-                    "JDK predates 21; falling back to cached thread pool. "
-                            + "Worker-pool configuration lands in M4.2 T2.");
-            return Executors.newCachedThreadPool(r -> {
-                Thread t = new Thread(r, "barback-conn");
-                t.setDaemon(false);
-                return t;
-            });
-        } catch (IllegalAccessException | InvocationTargetException e) {
-            throw new IllegalStateException(
-                    "failed to construct virtual-thread executor reflectively", e);
-        }
-    }
-
     private void runAcceptLoop() {
         try {
             while (!shutdownRequested.get()) {
@@ -532,29 +575,22 @@ public final class Server implements AutoCloseable {
                 long id = nextConnectionId.incrementAndGet();
                 LOG.log(Level.FINE, () -> "accepted connection #" + id);
                 try {
-                    connectionExecutor.execute(() -> handleConnection(id, client));
+                    workerPool.execute(() -> handleConnection(id, client));
                 } catch (RuntimeException e) {
-                    // The executor refused the task (e.g. mid-shutdown
-                    // race). Log + close the connection so we never
-                    // leak a SocketChannel.
+                    // The pool refused the task (e.g. mid-shutdown
+                    // race, including RejectedExecutionException from
+                    // an already-closed backing executor). Log + close
+                    // the connection so we never leak a SocketChannel.
                     LOG.log(Level.WARNING,
-                            "executor rejected connection #" + id + "; closing", e);
+                            "worker pool rejected connection #" + id + "; closing", e);
                     closeQuietly(client);
                 }
             }
         } finally {
-            connectionExecutor.shutdown();
-            try {
-                if (!connectionExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                    LOG.log(Level.WARNING,
-                            "connection executor did not drain within 5s; "
-                                    + "forcing shutdownNow()");
-                    connectionExecutor.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                connectionExecutor.shutdownNow();
-            }
+            // WorkerPool#close drains in-flight handlers within
+            // WorkerPool.SHUTDOWN_GRACE and forces shutdownNow() if
+            // any remain.
+            workerPool.close();
             try {
                 Files.deleteIfExists(socketPath);
             } catch (IOException e) {
