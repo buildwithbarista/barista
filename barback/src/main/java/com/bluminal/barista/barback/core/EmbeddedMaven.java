@@ -5,6 +5,7 @@
  */
 package com.bluminal.barista.barback.core;
 
+import com.bluminal.barista.barback.classloader.PluginCache;
 import com.bluminal.barista.barback.proto.ActionRequest;
 import com.bluminal.barista.barback.proto.ActionResult;
 import com.bluminal.barista.barback.proto.Error;
@@ -89,15 +90,24 @@ import org.codehaus.plexus.classworlds.ClassWorld;
  * advantage. Callers must <em>not</em> dispose this instance between
  * actions; only at daemon shutdown.
  *
- * <h2>Plugin classloader cache hook</h2>
+ * <h2>Plugin classloader cache</h2>
  *
- * <p>The plugin classloader cache (a separate task tracked under the
- * core/ module's M4.2 T4 placeholder) will extend
- * {@link ResidentMavenInvoker} rather than reimplement the cache
- * keying logic. This class deliberately exposes {@link #invoker()} as
- * a package-private hook so the cache implementation can subclass or
- * decorate the held invoker without {@code EmbeddedMaven} growing a
- * second responsibility.
+ * <p>{@link com.bluminal.barista.barback.classloader.PluginCache}
+ * caches realised plugin classloaders by
+ * {@code (GAV, jar-sha256)} so subsequent actions skip the JAR-scan +
+ * {@code defineClass} dance for plugins they have already loaded. The
+ * cache lives strictly under this instance's lifetime: it is cleared
+ * on every {@link ResidentMavenInvoker} rebuild (so cached entries
+ * never reference a realm hierarchy the eviction policy has dropped)
+ * and on {@link #close()}.
+ *
+ * <p>The cache also carries an <em>override list</em> &mdash; the OPEN-8
+ * escape hatch from PRD &sect;11.6 &mdash; for plugins that misbehave
+ * under classloader caching. Override-listed plugins bypass the cache
+ * and are loaded fresh on every action. The factory entrypoint
+ * {@code EmbeddedMavenFactory.with(mavenHome, overrideList)} accepts
+ * an explicit set; the bootstrap path reads it from the
+ * {@code barista.daemon.classloader_cache.override} JVM property.
  *
  * <h2>Concurrency</h2>
  *
@@ -197,6 +207,15 @@ public final class EmbeddedMaven implements AutoCloseable {
     private final MessageBuilderFactory messageBuilderFactory;
 
     /**
+     * Plugin classloader cache. Lives strictly under this instance's
+     * lifetime; cleared on every invoker rebuild (so cached entries
+     * never outlive the realm hierarchy they point into) and on
+     * {@link #close()}. See the "Plugin classloader cache" javadoc
+     * section on this class for the integration contract.
+     */
+    private final PluginCache pluginCache;
+
+    /**
      * Held resident invoker. Mutable (replaced on eviction) so the
      * daemon can recycle the cached session state every
      * {@link #MAX_ACTIONS_PER_INVOKER} actions without tearing down
@@ -237,10 +256,15 @@ public final class EmbeddedMaven implements AutoCloseable {
      * Package-private; instances are constructed via
      * {@link EmbeddedMavenFactory}, which owns the heavy
      * {@link ClassWorld} bring-up.
+     *
+     * @param pluginCache the plugin classloader cache scoped to this
+     *     instance; never {@code null}. The factory builds it from the
+     *     daemon's override-list configuration.
      */
-    EmbeddedMaven(ClassWorld classWorld, Path mavenHome) {
+    EmbeddedMaven(ClassWorld classWorld, Path mavenHome, PluginCache pluginCache) {
         this.classWorld = Objects.requireNonNull(classWorld, "classWorld");
         this.mavenHome = Objects.requireNonNull(mavenHome, "mavenHome");
+        this.pluginCache = Objects.requireNonNull(pluginCache, "pluginCache");
         this.messageBuilderFactory = new JLineMessageBuilderFactory();
         // ProtoLookup is the bootstrap-lookup Maven uses to publish a
         // small set of pre-Plexus objects (ClassWorld is the canonical
@@ -342,6 +366,18 @@ public final class EmbeddedMaven implements AutoCloseable {
             LOG.log(Level.WARNING,
                     "ignored failure closing resident Maven invoker during periodic eviction", e);
         }
+        // Drop every cached plugin classloader before installing the
+        // fresh invoker. The cached entries point at child ClassRealms
+        // of the (now-closed) invoker's classworld hierarchy; carrying
+        // them across the rebuild would (a) defeat T3's heap-stability
+        // guarantee — the dropped invoker stays reachable via the
+        // realm parent chain — and (b) hand the new invoker realms
+        // that aren't wired into its lookup, producing
+        // ClassNotFoundException at mojo dispatch. Invalidation runs
+        // before the new invoker is installed so a subsequent
+        // execute() always sees either the prior cache or no cache,
+        // never a half-built one.
+        pluginCache.invalidateAll();
         this.invoker = new ResidentMavenInvoker(protoLookup);
         actionsInCurrentCycle.set(0);
         int rebuilds = invokerRebuildCount.incrementAndGet();
@@ -410,12 +446,16 @@ public final class EmbeddedMaven implements AutoCloseable {
                 () -> "action #" + seq + " (cold=" + cold + ") exit=" + 0
                         + " duration_ms=" + (durationMicros / 1_000L));
 
-        // TODO(plugin classloader cache): when the cache hooks in via a
-        // ResidentMavenInvoker subclass (see #invoker() and the class-
-        // level "Plugin classloader cache hook" javadoc), it should be
-        // able to observe cache-hit / cache-miss for this action by
-        // inspecting the held invoker's residentContext map size before
-        // and after the call. No additional seam needed here.
+        // Plugin classloader cache hook site (M4.2 T4): the held
+        // PluginCache is consulted by callers that know the plugin
+        // coord at dispatch time. In the v0.1 EmbeddedMaven path the
+        // Maven core itself owns plugin resolution (it reads
+        // plugin.xml off the realized realm); the cache is exercised
+        // by the integration tests directly and will be wired into
+        // the action-dispatch path proper in M4.3 once the dispatcher
+        // learns to surface PluginKey for each Mojo. The hit/miss
+        // metrics are surfaced via pluginCache().hitCount() etc. for
+        // the status RPC.
 
         ActionResult.Builder result = ActionResult.newBuilder()
                 .setActionId(actionId)
@@ -561,6 +601,18 @@ public final class EmbeddedMaven implements AutoCloseable {
     }
 
     /**
+     * The plugin classloader cache scoped to this instance. Cleared on
+     * every invoker rebuild and on {@link #close()} so cached entries
+     * never reference a realm hierarchy that the eviction policy has
+     * dropped. Surfaced for the dispatcher (which materialises the
+     * cache key per mojo lookup) and for diagnostics
+     * ({@link PluginCache#hitCount()} feeds the daemon's status RPC).
+     */
+    public PluginCache pluginCache() {
+        return pluginCache;
+    }
+
+    /**
      * Number of times the held {@link ResidentMavenInvoker} has been
      * closed and rebuilt by the eviction policy. Zero immediately
      * after construction; bumps on the call that crosses the
@@ -606,6 +658,17 @@ public final class EmbeddedMaven implements AutoCloseable {
     public void close() throws IOException {
         executionLock.lock();
         try {
+            // Close the plugin classloader cache first: its entries
+            // hold URLClassLoader references whose parent realm chains
+            // go up into the invoker we are about to dispose. Closing
+            // out-of-order would leak the loaders' file handles for
+            // the duration of the JVM, which we observed in the
+            // EmbeddedMavenLeakIT shake-down runs.
+            try {
+                pluginCache.close();
+            } catch (RuntimeException e) {
+                LOG.log(Level.FINE, () -> "ignored failure closing plugin cache: " + e);
+            }
             try {
                 invoker.close();
             } catch (InvokerException e) {

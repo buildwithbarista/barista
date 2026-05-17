@@ -12,10 +12,12 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 
+import com.bluminal.barista.barback.classloader.PluginCache;
 import org.codehaus.plexus.classworlds.ClassWorld;
 import org.codehaus.plexus.classworlds.realm.ClassRealm;
 
@@ -114,6 +116,27 @@ public final class EmbeddedMavenFactory {
     }
 
     /**
+     * Build an {@link EmbeddedMaven} from the discovered Maven 4
+     * distribution, using {@code overrideList} as the plugin
+     * classloader cache's override set (OPEN-8 escape hatch).
+     *
+     * <p>The override list is the v0.1 mechanism for handling plugins
+     * that misbehave under classloader caching &mdash; e.g. plugins
+     * that store state in static fields and assume a cold JVM. PRD
+     * &sect;11.6 specifies the format as a set of
+     * {@code groupId:artifactId} strings; entries matching one of
+     * these bypass the cache and are loaded fresh on every action.
+     * Default is empty; populate via this factory entrypoint or by
+     * setting {@code -Dbarista.daemon.classloader_cache.override=ga1,ga2}
+     * on the daemon JVM. The {@code barista.toml} surface that exposes
+     * this to end users is implemented separately as part of the
+     * config-wiring task (M4.3 dispatcher batch).
+     */
+    public static EmbeddedMaven discover(Set<String> overrideList) throws IOException {
+        return with(resolveMavenHome(), overrideList);
+    }
+
+    /**
      * Build an {@link EmbeddedMaven} that loads the embedded core from
      * {@code mavenHome}. The directory must contain {@code lib/} and
      * {@code boot/} subdirectories matching the standard Maven 4
@@ -126,7 +149,42 @@ public final class EmbeddedMavenFactory {
      * once at daemon startup and reuse the returned instance.
      */
     public static EmbeddedMaven using(Path mavenHome) throws IOException {
+        // Honour the override-list system property when the caller
+        // hasn't passed an explicit set. The launcher-set property is
+        // the common path while barista.toml plumbing is in flight;
+        // explicit programmatic overrides (the with(...) overload)
+        // take precedence and skip property parsing entirely.
+        return withCache(mavenHome, PluginCache.fromSystemProperties());
+    }
+
+    /**
+     * Build an {@link EmbeddedMaven} from an explicit Maven 4
+     * distribution path and override list. See
+     * {@link #discover(Set)} for the override-list semantics.
+     *
+     * @param mavenHome the Maven 4 distribution root (contains
+     *     {@code lib/}, {@code boot/}, {@code conf/}); never
+     *     {@code null}
+     * @param overrideList the plugin classloader cache override set
+     *     (see {@link PluginCache#overrideList()}); never {@code null}.
+     *     Pass {@link Set#of()} for the default policy.
+     */
+    public static EmbeddedMaven with(Path mavenHome, Set<String> overrideList) throws IOException {
+        Objects.requireNonNull(overrideList, "overrideList");
+        return withCache(mavenHome, new PluginCache(overrideList));
+    }
+
+    /**
+     * Build an {@link EmbeddedMaven} from an explicit Maven 4
+     * distribution path and a pre-built {@link PluginCache}. Used by
+     * tests that need to install a custom cache (e.g. one with an
+     * inflated override list to disable caching for the comparison
+     * arm of the speedup IT) without round-tripping through the
+     * {@link PluginCache#OVERRIDE_PROPERTY} system property.
+     */
+    public static EmbeddedMaven withCache(Path mavenHome, PluginCache pluginCache) throws IOException {
         Objects.requireNonNull(mavenHome, "mavenHome");
+        Objects.requireNonNull(pluginCache, "pluginCache");
         Path normalized = mavenHome.toAbsolutePath().normalize();
         requireDistribution(normalized);
 
@@ -147,8 +205,9 @@ public final class EmbeddedMavenFactory {
         ClassWorld world = buildClassWorld(normalized);
         LOG.log(Level.INFO,
                 () -> "embedded Maven core class-world built from " + normalized
-                        + " (realm=" + CORE_REALM_ID + ")");
-        return new EmbeddedMaven(world, normalized);
+                        + " (realm=" + CORE_REALM_ID + ", overrides="
+                        + pluginCache.overrideList().size() + ")");
+        return new EmbeddedMaven(world, normalized, pluginCache);
     }
 
     /**
