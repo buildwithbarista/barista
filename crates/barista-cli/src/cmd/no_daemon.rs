@@ -122,6 +122,15 @@ struct RealSpawner;
 
 impl Spawner for RealSpawner {
     fn spawn(&self, mvn_path: &Path, args: &[OsString], working_dir: &Path) -> SpawnOutcome {
+        // `mvn_path` is not user-controlled interpolation: it is the
+        // output of `resolve_mvn`, which only returns either
+        // (a) `$MAVEN_HOME/bin/mvn{,.cmd}` after an `is_file()` check
+        // or (b) `which::which("mvn")` resolving a hard-coded program
+        // name against `$PATH`. The resolution policy is documented
+        // in the module docs above. The user-controlled args flow
+        // into `cmd.args(args)` on the next line, never into
+        // `Command::new`.
+        // nosemgrep: barista-rust-unchecked-command-new
         let mut cmd = Command::new(mvn_path);
         cmd.args(args);
         cmd.current_dir(working_dir);
