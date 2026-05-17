@@ -119,6 +119,7 @@ jobs:
             --config p/java \
             --config p/yaml \
             --config .semgrep/ \
+            --exclude tests/fixtures/sast/ \
             --sarif \
             --sarif-output=semgrep.sarif \
             --error \
