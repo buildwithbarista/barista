@@ -1,0 +1,262 @@
+# Tier-2 performance regression gate per PRD §17.10.
+#
+# Compares per-dimension-per-project median wall-clock from the PR
+# branch against the same numbers on `main`. A regression that
+# exceeds the per-dimension threshold (table below) blocks merge,
+# unless the (project, dimension) pair is listed in
+# `docs/perf/accepted-regressions.md`.
+#
+# ---------------------------------------------------------------------------
+# PRD §17.10 threshold table (per-metric, per-project):
+#
+#   Dimension                                | Allowed regression | Notes
+#   -----------------------------------------|--------------------|---------
+#   Cold-cache resolve              (D1)     | +10%               | Hard ceiling
+#   Warm-cache resolve              (D2)     | +15%               | Slightly looser; warmth varies
+#   Lock-verified resolve           (D3)     | +10%               | Hard
+#   Cold build                      (D4)     | +15%               | JVM startup variance
+#   Warm `shot test` no-change      (D5)     | +10%               | Hard; hot path
+#   Warm `shot test` 1-file         (D6)     | +20%               | Compilation work dominates
+#   Reactor parallel                (D7)     | +15%               | Parallelism varies
+#
+# The fixed threshold map lives in `scripts/compare-perf-results.sh`
+# (`THRESHOLDS_BY_DIMENSION`). The dimension a results.json belongs to
+# is read from `metadata.dimension` (one of D1..D7); manifests without
+# a dimension label fall back to the conservative cold-resolve cap.
+#
+# Improvements >5% are flagged as wins in the PR comment but never
+# block the gate. Tracked metric: `summary.median_wall_ms`. p95 is
+# reported alongside for transparency but does not gate at v0.1
+# (variance on GitHub-hosted runners makes a p95 gate too noisy).
+# ---------------------------------------------------------------------------
+#
+# Runner choice — `ubuntu-latest` for v0.1.
+#
+# PRD §17.10 specifies the self-hosted `R-Bench-1` runner. That runner
+# is provisioned by Workstream A.1 T3 (operator step; pending at the
+# time of this workflow's authorship). Until then, `ubuntu-latest`
+# runs the gate so the comparison logic is exercised continuously and
+# the wire-up is debugged against real bench output. Operators
+# should flip `runs-on:` to `[self-hosted, r-bench-1]` once the Tier-3
+# hardware fleet exists; the comparison logic and threshold table are
+# unchanged.
+#
+# Note that GitHub-hosted runners are noisy. False-positive
+# regressions are expected at the +10% threshold. The accepted-
+# regressions escape hatch (docs/perf/accepted-regressions.md) is the
+# pressure relief valve until v0.2's self-hosted fleet lands.
+#
+# ---------------------------------------------------------------------------
+#
+# Bench-run step is deliberately stubbed.
+#
+# Step `Run Tier-2 bench suite` is the integration point that needs
+# A.1 T3's hardware + A.2 T3's corpus checkout. Until those land, the
+# step writes a synthetic placeholder results.json so the rest of the
+# workflow exercises the comparison + commenting pipeline end-to-end.
+# The placeholder is documented inline in the step.
+#
+# ---------------------------------------------------------------------------
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers can
+# audit drift. When bumping, update both the SHA and the comment.
+
+name: perf-gate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/barista-resolver/**'
+      - 'crates/barista-cache/**'
+      - 'crates/barista-ipc/**'
+      - 'barback/**'
+      - 'bench/**'
+      - 'docs/perf/accepted-regressions.md'
+      - '.github/workflows/perf-gate.yml'
+      - 'scripts/compare-perf-results.sh'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/barista-resolver/**'
+      - 'crates/barista-cache/**'
+      - 'crates/barista-ipc/**'
+      - 'barback/**'
+      - 'bench/**'
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+# Only one perf-gate run per ref at a time. The self-hosted runner
+# step (post-A.1-T3) cannot be shared; serializing here is the safer
+# default even on GitHub-hosted runners while the v0.1 wiring is
+# stabilizing.
+concurrency:
+  group: perf-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Bench + threshold comparison.
+  #
+  # The job is one stage rather than a build-matrix because the
+  # comparison logic needs both the PR and baseline results.json
+  # documents on the same filesystem. Splitting into separate jobs
+  # would force an artifact upload/download round-trip per dimension
+  # for no real isolation benefit; baselines + PR runs are bytes that
+  # belong on the same machine for the diff to run.
+  # ---------------------------------------------------------------------------
+  perf-gate:
+    name: Tier-2 perf regression check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write  # to post the regression-summary comment
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          # Need the baseline ref as well for the comparison step. The
+          # comparison reads the baseline results from
+          # `.perf-gate/baseline/` which is populated by the "Fetch
+          # baseline results" step below (not by checkout history).
+          fetch-depth: 1
+
+      # The placeholder bench step. Until A.1 T3 (R-Bench-1 hardware)
+      # and A.2 T3 (corpus projects under `bench/projects/`) land,
+      # this step writes synthetic results.json blobs so the rest of
+      # the pipeline (comparison, accepted-regressions parsing, PR
+      # comment) is exercised continuously. Once the hardware is up,
+      # this step calls `barista-bench run --corpus tier-2 --baselines
+      # barista --iterations 5 --output .perf-gate/current/` instead.
+      - name: Run Tier-2 bench suite (PLACEHOLDER — see preamble)
+        run: |
+          set -euo pipefail
+          mkdir -p .perf-gate/current
+          # The placeholder values intentionally match the baseline so
+          # the gate never fails on the placeholder content alone.
+          # Smoke-test coverage of pass/warn/fail logic is in
+          # `scripts/test-perf-gate-logic.sh`.
+          cat > .perf-gate/current/p02-d1.json <<'JSON'
+          {
+            "schema": "barista.bench.results/v1",
+            "manifest_id": "p02-d1-cold-resolve",
+            "run_id": "2026-05-17T00:00:00Z-placeholder",
+            "timestamp": "2026-05-17T00:00:00Z",
+            "git_sha": "0000000000000000000000000000000000000000",
+            "barista_version": "0.1.0-alpha.0",
+            "hardware_tier": 2,
+            "runner_id": "github-actions-ubuntu-latest",
+            "hardware": {
+              "id": "gha-ubuntu-latest",
+              "cpu": "placeholder",
+              "cores_physical": 2,
+              "cores_logical": 4,
+              "memory_gb": 16,
+              "os": "linux"
+            },
+            "iterations": [
+              { "iteration": 0, "wall_ms": 1000, "exit_code": 0 }
+            ],
+            "summary": {
+              "avg_wall_ms": 1000,
+              "median_wall_ms": 1000,
+              "p95_wall_ms": 1000,
+              "stddev_wall_ms": 0
+            },
+            "metadata": {
+              "project": "spring-petclinic",
+              "dimension": "D1"
+            }
+          }
+          JSON
+
+      # Baseline fetch. Documented target: the Tier-2 results store at
+      # `s3://barista-bench/runs/main/<project>/<dimension>.json`
+      # (Cloudflare R2, the same bucket §17.11 defines for the public
+      # dashboard). Operators with R2 credentials wire `aws s3 cp` here
+      # using the `R2_ENDPOINT`, `R2_BUCKET`, and (read-only)
+      # `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets — the
+      # gate is read-only against the bucket. Until those credentials
+      # exist, the step short-circuits to a synthetic placeholder
+      # that round-trips the comparison logic.
+      - name: Fetch baseline results (PLACEHOLDER — see preamble)
+        run: |
+          set -euo pipefail
+          mkdir -p .perf-gate/baseline
+          cat > .perf-gate/baseline/p02-d1.json <<'JSON'
+          {
+            "schema": "barista.bench.results/v1",
+            "manifest_id": "p02-d1-cold-resolve",
+            "run_id": "2026-05-16T00:00:00Z-placeholder",
+            "timestamp": "2026-05-16T00:00:00Z",
+            "git_sha": "0000000000000000000000000000000000000000",
+            "barista_version": "0.1.0-alpha.0",
+            "hardware_tier": 2,
+            "runner_id": "github-actions-ubuntu-latest",
+            "hardware": {
+              "id": "gha-ubuntu-latest",
+              "cpu": "placeholder",
+              "cores_physical": 2,
+              "cores_logical": 4,
+              "memory_gb": 16,
+              "os": "linux"
+            },
+            "iterations": [
+              { "iteration": 0, "wall_ms": 1000, "exit_code": 0 }
+            ],
+            "summary": {
+              "avg_wall_ms": 1000,
+              "median_wall_ms": 1000,
+              "p95_wall_ms": 1000,
+              "stddev_wall_ms": 0
+            },
+            "metadata": {
+              "project": "spring-petclinic",
+              "dimension": "D1"
+            }
+          }
+          JSON
+
+      - name: Compare against baseline
+        id: compare
+        run: |
+          set -euo pipefail
+          bash scripts/compare-perf-results.sh \
+            --baseline .perf-gate/baseline \
+            --current .perf-gate/current \
+            --accepted docs/perf/accepted-regressions.md \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --report .perf-gate/report.md
+
+      - name: Upload comparison report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-gate-report
+          path: |
+            .perf-gate/report.md
+            .perf-gate/current/
+            .perf-gate/baseline/
+          retention-days: 14
+
+      # Post the regression summary to the PR. Pure GH CLI; the
+      # report markdown is written by `compare-perf-results.sh` to
+      # `.perf-gate/report.md` and read back here without any shell
+      # interpolation of PR-controlled content.
+      - name: Post regression summary comment
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .perf-gate/report.md ]; then
+            echo "::warning::perf-gate report missing; skipping PR comment."
+            exit 0
+          fi
+          gh pr comment "$PR_NUMBER" --body-file .perf-gate/report.md

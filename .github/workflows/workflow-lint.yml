@@ -228,3 +228,7 @@ jobs:
       - name: Validate PR template directory-form migration
         shell: bash
         run: bash scripts/test-pr-template-migration.sh
+
+      - name: Validate perf-gate comparison logic
+        shell: bash
+        run: bash scripts/test-perf-gate-logic.sh
