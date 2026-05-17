@@ -2,8 +2,14 @@
 #
 # This crate is the home for any task that doesn't belong inside a product
 # crate but that a contributor (or CI) needs to be able to run with a single
-# command. The first task it ships is `cargo xtask security`, which runs the
-# full locally-runnable security suite — see `src/security.rs`.
+# command. Today it ships two subcommand families:
+#   - `cargo xtask security`  — the locally-runnable security suite
+#                                (see `src/security.rs`).
+#   - `cargo xtask findings`  — efficiency-findings catalog tooling: list
+#                                catalog entries and promote drafts out of
+#                                `docs/efficiency/findings/auto-generated/`
+#                                with id allocation + frontmatter validation
+#                                (see `src/findings.rs`).
 #
 # Convention: `xtask` is invoked via the `[alias] xtask = ...` line in
 # `.cargo/config.toml` at the workspace root, so `cargo xtask <subcommand>`
@@ -15,12 +21,16 @@ name = "xtask"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Workspace task runner for Barista (security suite, etc.)."
+description = "Workspace task runner for Barista (security suite, findings catalog, etc.)."
 publish = false
 
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
+
+[lib]
+name = "xtask"
+path = "src/lib.rs"
 
 # Dependency rationale (Sonatype Developer Trust Score in parens — verified
 # via `mcp__sonatype-mcp__getRecommendedComponentVersions` against the
@@ -32,9 +42,22 @@ path = "src/main.rs"
 #   which 8.0    PATH lookup for optional tools (semgrep, gitleaks, etc.)
 #                without shelling out to `which(1)` / `where.exe`. MIT.
 #                DTS 98, no advisories.
+#
+# Intentionally not pulling in a YAML crate: the catalog's frontmatter is a
+# tiny, fixed schema (id, title, severity, category, status, discovered_by,
+# impact mapping). A targeted in-house parser in `src/findings.rs` is ~120
+# LOC and avoids dragging serde_yaml (which has dead-upstream / advisory
+# history) into the workspace.
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 which = "8.0"
+
+[dev-dependencies]
+# `tempfile` gives the `findings` integration tests scratch directories so
+# the promotion ceremony can be exercised without touching the real
+# `docs/efficiency/findings/` tree. Already at major 3 across the workspace
+# (5+ crates use it as a dev-dep).
+tempfile = "3"
 
 [lints]
 workspace = true

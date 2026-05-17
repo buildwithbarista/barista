@@ -179,6 +179,21 @@ pub struct Finding {
     pub references: Vec<String>,
     /// Originating analyzer ID — written into the frontmatter as
     /// `discovered_by` so the catalog can trace back to the rule.
+    ///
+    /// **Convention** (locked in M B.1 T4 — see
+    /// `docs/efficiency/findings/README.md`): auto-emitted drafts
+    /// use the **analyzer's stable id** (e.g.
+    /// `"MetadataOverFetchAnalyzer"`, `"ConnectionChurnAnalyzer"`)
+    /// rather than the generic `"claude-analysis"` label the PRD
+    /// §18.10 example shows. The catalog refines that single label
+    /// into three traceable provenance classes:
+    ///
+    /// - `<AnalyzerName>` — a `barista-netanalyze` analyzer emitted
+    ///   the draft (this field).
+    /// - `human-authored` — a human wrote the finding directly
+    ///   (used by the seed cohort).
+    /// - `claude-analysis` — an out-of-band Claude Code session
+    ///   produced the finding without going through this pipeline.
     pub discovered_by: String,
 }
 

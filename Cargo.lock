@@ -3252,6 +3252,7 @@ name = "xtask"
 version = "0.1.0-alpha.0"
 dependencies = [
  "clap",
+ "tempfile",
  "which",
 ]
 

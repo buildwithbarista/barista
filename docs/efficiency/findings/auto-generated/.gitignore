@@ -1,0 +1,8 @@
+# Auto-generated finding drafts are transient — they're overwritten on
+# every `barista-netanalyze` run and promoted into the parent catalog
+# directory when a reviewer accepts them. Ignore every markdown file
+# except the README that documents how the directory works. A
+# maintainer can `git add -f <draft>.md` to pin a long-lived draft;
+# the bias is to promote or discard rather than pin.
+*.md
+!README.md
