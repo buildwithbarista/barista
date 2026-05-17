@@ -137,6 +137,13 @@ public final class PluginCache implements AutoCloseable {
     private final AtomicLong misses = new AtomicLong(0);
     private final AtomicLong overrideBypasses = new AtomicLong(0);
 
+    // M4.3 T3 realm-cache surface: counters fed by
+    // BaristaPluginRealmCache so the daemon's status RPC reports a
+    // unified hit-rate across both the local URLClassLoader cache and
+    // Maven's PluginRealmCache hook.
+    private final AtomicLong realmCacheHits = new AtomicLong(0);
+    private final AtomicLong realmCacheMisses = new AtomicLong(0);
+
     /**
      * Build a cache with an explicit override list. The set is copied
      * and unmodifiable internally; callers may mutate their input
@@ -244,6 +251,42 @@ public final class PluginCache implements AutoCloseable {
      */
     public boolean isOverridden(PluginKey key) {
         return overrideList.contains(key.ga());
+    }
+
+    /**
+     * Is the given {@code groupId:artifactId} override-listed? Called
+     * from {@link BaristaPluginRealmCache} where the plugin identity
+     * is known only as a {@code Plugin} model object (no JAR hash
+     * available at the realm-cache layer).
+     */
+    public boolean isOverriddenByGa(String ga) {
+        return overrideList.contains(ga);
+    }
+
+    /**
+     * Record a hit on the {@link BaristaPluginRealmCache} surface.
+     * Surfaced by {@link #realmCacheHitCount()} for the daemon's
+     * status RPC.
+     */
+    public void recordRealmCacheHit() {
+        realmCacheHits.incrementAndGet();
+    }
+
+    /**
+     * Record a miss on the {@link BaristaPluginRealmCache} surface.
+     */
+    public void recordRealmCacheMiss() {
+        realmCacheMisses.incrementAndGet();
+    }
+
+    /** Hits recorded against the embedded Maven plugin-realm cache. */
+    public long realmCacheHitCount() {
+        return realmCacheHits.get();
+    }
+
+    /** Misses recorded against the embedded Maven plugin-realm cache. */
+    public long realmCacheMissCount() {
+        return realmCacheMisses.get();
     }
 
     /**

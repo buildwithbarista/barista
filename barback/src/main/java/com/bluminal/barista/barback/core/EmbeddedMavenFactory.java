@@ -17,6 +17,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 
+import com.bluminal.barista.barback.classloader.BaristaPluginRealmCache;
 import com.bluminal.barista.barback.classloader.PluginCache;
 import org.codehaus.plexus.classworlds.ClassWorld;
 import org.codehaus.plexus.classworlds.realm.ClassRealm;
@@ -203,6 +204,14 @@ public final class EmbeddedMavenFactory {
         System.setProperty("maven.installation.conf", normalized.resolve("conf").toString());
 
         ClassWorld world = buildClassWorld(normalized);
+        // Install the host PluginCache as the companion for the Sisu-
+        // discovered BaristaPluginRealmCache. The Sisu component is
+        // instantiated per Plexus container by the cling stack, but its
+        // entry storage is process-wide (static) so a single companion
+        // wired here serves every container the daemon brings up. The
+        // override list and the realm-cache hit/miss counters both flow
+        // through this companion reference.
+        BaristaPluginRealmCache.setCompanion(pluginCache);
         LOG.log(Level.INFO,
                 () -> "embedded Maven core class-world built from " + normalized
                         + " (realm=" + CORE_REALM_ID + ", overrides="

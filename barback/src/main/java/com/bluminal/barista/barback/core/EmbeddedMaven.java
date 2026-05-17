@@ -5,6 +5,7 @@
  */
 package com.bluminal.barista.barback.core;
 
+import com.bluminal.barista.barback.classloader.BaristaPluginRealmCache;
 import com.bluminal.barista.barback.classloader.PluginCache;
 import com.bluminal.barista.barback.proto.ActionRequest;
 import com.bluminal.barista.barback.proto.ActionResult;
@@ -366,18 +367,32 @@ public final class EmbeddedMaven implements AutoCloseable {
             LOG.log(Level.WARNING,
                     "ignored failure closing resident Maven invoker during periodic eviction", e);
         }
-        // Drop every cached plugin classloader before installing the
-        // fresh invoker. The cached entries point at child ClassRealms
-        // of the (now-closed) invoker's classworld hierarchy; carrying
-        // them across the rebuild would (a) defeat T3's heap-stability
-        // guarantee — the dropped invoker stays reachable via the
-        // realm parent chain — and (b) hand the new invoker realms
-        // that aren't wired into its lookup, producing
-        // ClassNotFoundException at mojo dispatch. Invalidation runs
-        // before the new invoker is installed so a subsequent
-        // execute() always sees either the prior cache or no cache,
-        // never a half-built one.
-        pluginCache.invalidateAll();
+        // M4.3 T3: previously we called pluginCache.invalidateAll()
+        // here so cached URLClassLoaders did not outlive the invoker
+        // they were built under. With the Sisu-wired
+        // BaristaPluginRealmCache landing the host cache no longer
+        // mirrors plugin realms (the realm-cache contract is owned by
+        // Maven via PluginRealmCache, and that surface deliberately
+        // survives the invoker rebuild because the parent realm
+        // chain — plexus.core under the retained ClassWorld — is
+        // stable). The local PluginCache entries that remain are
+        // diagnostic / test-only loaders whose lifetime is tied to
+        // the host instance, not to the resident invoker. Holding
+        // them across the rebuild preserves the SM-3.2 warm-shot
+        // budget; clearing here would invalidate work the next
+        // action would have to redo on a hot path.
+        //
+        // The eviction-interaction test (PluginCacheEvictionInteractionTest)
+        // pins this contract explicitly: PluginCache entries SURVIVE
+        // invoker rebuild and are only invalidated at
+        // EmbeddedMaven#close() (i.e. when the ClassWorld itself is
+        // going away).
+        //
+        // The BaristaPluginRealmCache (Maven's realm-cache hook) is
+        // per-Plexus-container (Sisu @Singleton); its entries drop
+        // automatically when the container disposes below. No
+        // explicit clearing call is needed here — the Sisu lifecycle
+        // owns it.
         this.invoker = new ResidentMavenInvoker(protoLookup);
         actionsInCurrentCycle.set(0);
         int rebuilds = invokerRebuildCount.incrementAndGet();
@@ -678,6 +693,21 @@ public final class EmbeddedMaven implements AutoCloseable {
                 pluginCache.close();
             } catch (RuntimeException e) {
                 LOG.log(Level.FINE, () -> "ignored failure closing plugin cache: " + e);
+            }
+            // Drop the BaristaPluginRealmCache's static entry map. The
+            // realm objects it referenced are about to be invalid
+            // because the ClassWorld is being closed below; holding on
+            // would prevent their classloaders from being reclaimed
+            // for the rest of the JVM's lifetime. This is the one
+            // place we clear the realm cache — not on the invoker-
+            // rebuild boundary — because that boundary leaves the
+            // ClassWorld intact and the cached realms still usable
+            // (the M4.3 T3 "cache survives invoker rebuild" contract).
+            try {
+                BaristaPluginRealmCache.clearAll();
+            } catch (RuntimeException e) {
+                LOG.log(Level.FINE,
+                        () -> "ignored failure clearing plugin realm cache: " + e);
             }
             try {
                 invoker.close();

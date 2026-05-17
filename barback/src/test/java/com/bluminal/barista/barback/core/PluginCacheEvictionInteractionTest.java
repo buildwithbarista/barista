@@ -33,37 +33,38 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Proves the {@link PluginCache} survives M4.2 T3's periodic invoker
- * eviction without leaking entries that point at realms attached to
- * the dropped invoker hierarchy.
+ * Proves the {@link PluginCache} <em>survives</em> M4.2 T3's periodic
+ * invoker eviction. The cache is invalidated only when the host's
+ * {@link ClassWorld} is disposed (i.e. on {@link EmbeddedMaven#close()}).
  *
- * <p>The contract under test (see the "Eviction" section of
- * {@link PluginCache}'s javadoc):
+ * <h2>Why this contract changed (M4.3 T3)</h2>
+ *
+ * <p>Originally the host cleared {@link PluginCache#invalidateAll()}
+ * on every invoker rebuild so cached {@link URLClassLoader}s never
+ * outlived the resident invoker they were built under. That contract
+ * predated the {@link com.bluminal.barista.barback.classloader.BaristaPluginRealmCache}
+ * wiring (M4.3 T3), where the plugin-realm storage is a process-wide
+ * static map that intentionally outlives the resident invoker so the
+ * warm-shot SM-3.2 path never rebuilds the same realm twice.
+ *
+ * <p>With the realm-cache contract owning the survival semantics, the
+ * companion {@link PluginCache} (PluginKey → URLClassLoader, the
+ * diagnostic / OPEN-8 override surface) follows the same lifetime:
+ * it is invalidated only when {@code EmbeddedMaven#close()} disposes
+ * the ClassWorld. Holding entries across the invoker rebuild is safe
+ * because the parent realm hierarchy (the {@code plexus.core} realm
+ * in the retained ClassWorld) is identical before and after the
+ * rebuild.
+ *
+ * <h2>What this test pins</h2>
  *
  * <ol>
- *   <li>When {@code EmbeddedMaven} rebuilds its
- *       {@code ResidentMavenInvoker} on the
- *       {@code MAX_ACTIONS_PER_INVOKER} boundary, the cache's
- *       {@link PluginCache#invalidateAll()} is called inside the same
- *       lock that swaps the invoker reference.</li>
- *   <li>Every cached {@link URLClassLoader} is therefore closed and
- *       the entry map is cleared.</li>
- *   <li>No live reference into the dropped invoker's realm hierarchy
- *       remains in {@code PluginCache} after the eviction.</li>
+ *   <li>A pre-populated {@link PluginCache} entry is still present
+ *       after the host's resident invoker has been rebuilt at least
+ *       once.</li>
+ *   <li>The entry is dropped (and its {@link URLClassLoader} becomes
+ *       GC-eligible) only after {@link EmbeddedMaven#close()} fires.</li>
  * </ol>
- *
- * <p>We verify (1) and (2) by inspecting cache statistics directly,
- * and we verify (3) by holding a {@link WeakReference} to a loader
- * instance that was cached pre-eviction and asserting that it becomes
- * garbage-collectable after the eviction fires.
- *
- * <p>The test drives an {@link EmbeddedMaven} through enough actions
- * to force at least one T3 eviction (with {@code MAX_ACTIONS_PER_INVOKER}
- * pinned to 3 for cheap reproduction). It does <em>not</em> exercise
- * Maven's actual plugin loading: we install a fake cache entry via
- * the public {@link EmbeddedMaven#pluginCache()} accessor between
- * Maven action calls, then watch what happens to it on the boundary
- * call.
  *
  * <p>Tagged {@code integration} because the host EmbeddedMaven still
  * needs a real Maven distribution to bring up its ClassWorld + boot
@@ -85,8 +86,8 @@ final class PluginCacheEvictionInteractionTest {
     }
 
     @Test
-    @DisplayName("PluginCache is invalidated on invoker rebuild; cached loaders become GC-eligible")
-    void cacheClearsOnInvokerRebuild(@TempDir Path tmp) throws IOException {
+    @DisplayName("PluginCache survives invoker rebuild; entries drop only on EmbeddedMaven.close()")
+    void cacheSurvivesInvokerRebuild(@TempDir Path tmp) throws IOException {
         Path mavenHome = MavenDistributionFixture.requireMavenHome();
         Path project = MavenDistributionFixture.stageSampleProject(tmp);
         Path fakeJar = writeFakeJar(tmp.resolve("fake-plugin.jar"));
@@ -101,7 +102,7 @@ final class PluginCacheEvictionInteractionTest {
 
         // Pre-populate the cache with a fake entry. We hold only a
         // weak reference to the realised loader so we can prove the
-        // cache lets it go.
+        // cache lets it go on close.
         PluginKey fakeKey = new PluginKey("com.example", "fake-plugin", "1.0",
                 PluginCache.sha256(fakeJar));
         WeakReference<URLClassLoader> weakLoader = primeCacheEntry(cache, fakeKey, fakeJar);
@@ -121,22 +122,90 @@ final class PluginCacheEvictionInteractionTest {
                 "no rebuild should have fired yet");
 
         // The fourth action crosses the threshold: T3 evicts the
-        // invoker AND drops every cached PluginCache entry in the
-        // same locked region.
-        runOne(project); // #4 — boundary call → rebuild #1 → cache invalidate
+        // invoker. With the M4.3 T3 contract the PluginCache entry
+        // SURVIVES the rebuild — only the resident invoker is
+        // recycled; the ClassWorld (and the cached loader's parent
+        // realm chain) is retained.
+        runOne(project); // #4 — boundary call → rebuild #1
         assertEquals(1, embedded.invokerRebuildCount(),
                 "T3 must have rebuilt the invoker on the boundary call");
-        assertEquals(0, cache.size(),
-                "PluginCache must drop every entry when T3 rebuilds the invoker");
+        assertEquals(1, cache.size(),
+                "PluginCache MUST survive invoker rebuild (M4.3 T3 contract); "
+                        + "entries are only dropped on EmbeddedMaven#close() when "
+                        + "the ClassWorld goes away");
 
-        // Now prove (3): no strong reference into the dropped realm
-        // chain remains. We dropped our local strong reference inside
-        // primeCacheEntry; after the invalidate cleared the cache's
-        // own reference, the loader must be GC-collectable.
+        // Closing the host disposes the ClassWorld; the cache must
+        // drop every entry at that point so cached loaders become
+        // GC-eligible (no realm chain into a live ClassWorld holds
+        // them alive any longer).
+        embedded.close();
+        embedded = null;
+
         assertTrue(waitForCollection(weakLoader),
-                "cached URLClassLoader must be reclaimable after invalidateAll; "
+                "cached URLClassLoader must be reclaimable after EmbeddedMaven#close(); "
                         + "if this fails, PluginCache or EmbeddedMaven is still "
-                        + "holding a strong reference into the dropped invoker hierarchy");
+                        + "holding a strong reference into a disposed realm hierarchy");
+    }
+
+    /**
+     * M4.3 T3 wiring smoke test. Drives a small handful of Maven
+     * compile actions and asserts the
+     * {@link com.bluminal.barista.barback.classloader.BaristaPluginRealmCache}
+     * Sisu hook is the one Maven consulted &mdash; not the default
+     * {@code DefaultPluginRealmCache}. Visible via the realm-cache
+     * hit / miss counters on the host's {@link PluginCache}: hits
+     * only flow into those counters when our impl is the one Sisu
+     * bound. If a future Maven version reshuffles the Sisu hint
+     * ordering and our {@code @Priority(100)} stops winning, this
+     * test will fail with zero counters — making the breakage
+     * visible at the bring-up surface rather than as a silent
+     * regression in the warm-shot path.
+     */
+    @Test
+    @DisplayName("BaristaPluginRealmCache is the Sisu-bound PluginRealmCache for the embedded core")
+    void baristaPluginRealmCacheWiringActive(@TempDir Path tmp) throws IOException {
+        Path mavenHome = MavenDistributionFixture.requireMavenHome();
+        Path project = MavenDistributionFixture.stageSampleProject(tmp);
+
+        savedThreshold = EmbeddedMaven.MAX_ACTIONS_PER_INVOKER;
+        EmbeddedMaven.MAX_ACTIONS_PER_INVOKER = 12;
+
+        embedded = EmbeddedMavenFactory.using(mavenHome);
+        PluginCache cache = embedded.pluginCache();
+
+        // Two actions within a single invoker cycle: the first
+        // populates the cache for every plugin it loads, the
+        // second's lookups hit. Our hook records each on the
+        // companion's realm-cache counters.
+        runOne(project);
+        runOne(project);
+
+        long hits = cache.realmCacheHitCount();
+        long misses = cache.realmCacheMissCount();
+
+        // Misses fire whenever our hook is consulted for a fresh
+        // plugin-key lookup. A 1-module compile engages
+        // resources / compiler / jar (and friends), so the first
+        // call should record at least one miss against our hook.
+        //
+        // Note: subsequent calls within the same invoker cycle don't
+        // necessarily hit our hook — Maven core's
+        // {@code PluginDescriptorCache} caches the descriptor with
+        // its ClassRealm attached, so once the descriptor is warm
+        // {@code setupPluginRealm} short-circuits and our
+        // {@link PluginRealmCache#get(Key)} is never called for
+        // that plugin a second time. That layering is why the
+        // SM-3.2 measurement is dominated by what runs INSIDE
+        // {@code ResidentMavenInvoker.invoke()} after plugin
+        // resolution settles, not by anything our hook controls.
+        // For the wiring check it is enough that we observe at
+        // least one miss flowing through our hook.
+        assertTrue(misses > 0L,
+                "BaristaPluginRealmCache hook never observed a lookup — "
+                        + "Sisu likely bound the default PluginRealmCache. "
+                        + "Check the @Priority(100) annotation and the "
+                        + "META-INF/sisu/javax.inject.Named index in the "
+                        + "uber-jar. hits=" + hits + " misses=" + misses);
     }
 
     /**

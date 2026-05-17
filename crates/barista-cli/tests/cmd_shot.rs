@@ -618,11 +618,7 @@ fn ensure_maven4_home() -> Option<PathBuf> {
     if !status.success() {
         return None;
     }
-    if staged.is_dir() {
-        Some(staged)
-    } else {
-        None
-    }
+    if staged.is_dir() { Some(staged) } else { None }
 }
 
 /// Spawn `barista shot test` against `project` with
@@ -682,39 +678,68 @@ fn time_barista_shot_daemon(project: &Path, uber_jar: &Path, maven_home: &Path) 
 ///
 /// # Current measurement vs. AC
 ///
-/// **As of M4.3 T3 rework, this test FAILS on a fast local
-/// machine** (Apple M-series, asdf-managed Temurin 21):
+/// **As of M4.3 T3 final, this test FAILS on a fast local
+/// machine** (Apple M-series, asdf-managed Temurin 21). The
+/// PluginRealmCache wiring landed (Sisu-bound
+/// `BaristaPluginRealmCache` overrides Maven's default; eviction
+/// IT confirms our hook is the active binding) but the warm-shot
+/// ratio is unchanged from before the wiring:
 ///
-/// | Configuration                          | mvn test | warm shot | ratio |
-/// |----------------------------------------|----------|-----------|-------|
-/// | Single-action shot graph (post-rework) | ~1.2 s   | ~300-400 ms | ~3-4× |
-/// | 15-action shot graph (pre-rework)      | ~1.2 s   | ~900 ms   | ~1.3× |
+/// | Configuration                                 | mvn test | warm shot | ratio |
+/// |-----------------------------------------------|----------|-----------|-------|
+/// | M4.3 T3 final (PluginRealmCache hook wired)   | ~1.25 s  | ~330-360 ms | ~3.5-3.9× |
+/// | M4.3 T3 pre-wiring (default PluginRealmCache) | ~1.27 s  | ~330-360 ms | ~3.5-3.9× |
+/// | M4.3 T3 single-action shot (post-collapse)    | ~1.2 s   | ~300-400 ms | ~3-4× |
+/// | M4.3 T3 15-action shot (pre-collapse)         | ~1.2 s   | ~900 ms   | ~1.3× |
 ///
-/// The single-action collapse fixed the quadratic per-phase
-/// dispatch waste, but the warm `barista shot test` still pays
-/// ~300-400 ms end-to-end where the AC requires <120 ms (to clear
-/// 10× over a 1.2s baseline). The remaining gap breakdown
-/// (approximate, from JMH benches and structured-output traces):
+/// # Why the wiring did not move the number
 ///
-/// * **~160 ms** — `ResidentMavenInvoker.invoke()` warm, per the
-///   M4.0 spike measurement (this is irreducible without an
-///   upstream Maven 4 perf fix).
-/// * **~80-120 ms** — plugin discovery + classloader work the
-///   M4.2 T4 cache should serve but doesn't yet (the dispatcher
-///   doesn't surface PluginKey, so every action takes the
-///   cache-miss path).
+/// The forecast that "wiring `PluginRealmCache` would drop warm
+/// shot to <150 ms" turned out to be wrong. Two reasons:
+///
+/// 1. Maven's own `DefaultPluginRealmCache` is already
+///    `@Singleton`-scoped inside the cling-built Plexus container,
+///    so it already serves a hit on the second lookup of the same
+///    plugin within one `ResidentMavenInvoker` cycle. Our override
+///    matches its in-cycle semantics — replacing the binding does
+///    not add hits Maven was missing.
+/// 2. `DefaultMavenPluginManager.setupPluginRealm` consults the
+///    `PluginDescriptorCache` first; if the descriptor is cached
+///    with its ClassRealm attached, the realm-cache hook is never
+///    called at all on subsequent lookups. Empirically (see the
+///    `baristaPluginRealmCacheWiringActive` IT) our hook records
+///    only misses across the first action and exactly zero
+///    subsequent calls — Maven's descriptor cache short-circuits
+///    the path the realm cache sits on.
+///
+/// In other words: the realm-cache hookpoint is correctly owned
+/// (which we needed regardless of perf), but the warm-shot
+/// bottleneck is not realm-cache work.
+///
+/// # Where the remaining ~330 ms is going
+///
+/// Empirically (per the M4.0 spike + this measurement):
+///
+/// * **~160 ms** — `ResidentMavenInvoker.invoke()` overhead per
+///   call (parser, lifecycle binding, session population,
+///   reactor build). Partly irreducible without upstream
+///   Maven 4 work.
+/// * **~50-80 ms** — Inside-Maven model build, project
+///   resolution, classpath resolution that runs every call
+///   regardless of plugin caching (PluginDescriptorCache hits
+///   the descriptor but lifecycle still walks the project tree).
 /// * **~30-50 ms** — IPC dispatch + structured-output render.
 /// * **~30-80 ms** — JIT jitter / GC pauses inside the daemon.
 ///
-/// # Open question (M4.3 T3 follow-up)
+/// # Disposition
 ///
-/// The 10× target is achievable but requires the M4.2 T4 plugin
-/// classloader cache to be **wired into the dispatch path**
-/// (the cache exists; the lookup site doesn't yet supply
-/// `PluginKey`). Until that lands, this test is a forcing
-/// function — keeping the assertion at the literal AC threshold
-/// rather than relaxing it makes the gap visible in the test
-/// log every time someone runs the suite.
+/// SM-3.2's literal ≥10× target is structurally unreachable on the
+/// current Maven 4.0.0-rc-3 embedding without surgery inside
+/// `ResidentMavenInvoker.invoke()` (the 160 ms floor is
+/// upstream-bounded). The assertion stays at the literal AC value
+/// so the gap remains visible on every run; relaxing to a v0.2
+/// target is a planning decision documented in the M4.3 T3
+/// completion record, not a unilateral test-relaxation.
 ///
 /// **Do not** relax this threshold to satisfy a slow machine —
 /// the gap is the AC, not the machine.
@@ -722,16 +747,13 @@ fn time_barista_shot_daemon(project: &Path, uber_jar: &Path, maven_home: &Path) 
 /// # Failure-mode honesty
 ///
 /// The assert prints actual ratio + the per-sample warm times.
-/// Investigate the daemon path before relaxing; likely culprits
-/// in order of probability are listed inline at the assertion
-/// site.
 ///
 /// `#[ignore]`-gated because it (a) needs `mvn` on PATH, (b)
 /// needs a Maven 4 distribution staged, (c) takes 20-40 s
 /// end-to-end, and (d) currently fails on the AC. Run with
 /// `cargo test --ignored --test-threads=1`.
 #[test]
-#[ignore = "SM-3.2 AC forcing-function test; currently fails at ~3-4× until M4.2 T4 plugin cache is wired into dispatch — see test docstring"]
+#[ignore = "SM-3.2 AC forcing-function test; currently fails at ~3.5-3.9× — PluginRealmCache hook is wired but the warm-shot floor is bounded by ResidentMavenInvoker.invoke() overhead; relaxation to a v0.2 target is a planning decision (see docstring)"]
 fn warm_path_speedup_against_daemon_satisfies_sm32() {
     if !host_has_mvn() {
         eprintln!("skipped: no `mvn` on $PATH");
