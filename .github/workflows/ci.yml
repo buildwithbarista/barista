@@ -166,6 +166,19 @@ jobs:
           java -version
       - name: mvn test (parent)
         run: mvn -f barback/pom.xml -B test
+      # The bench harness must compile under both JDK 17 and JDK 21
+      # so the WorkerPool virtual-thread vs platform-thread numbers,
+      # the PluginCache hit/miss numbers, and the embedded-Maven
+      # cold-start numbers can all be recorded against both JDKs on
+      # the operator-provisioned dashboard hardware. The benches
+      # themselves are NOT run in CI (their wall-clock budget is too
+      # high for per-PR feedback) — this step gates the shaded JAR's
+      # *compile* in both matrix cells. We install the parent first
+      # (skipping tests so the prior `mvn test` is not duplicated)
+      # because the bench module declares a Maven dep on the parent
+      # to drive its production code rather than reimplementing it.
+      - name: mvn install (parent, skip tests)
+        run: mvn -f barback/pom.xml -B install -DskipTests
       - name: mvn package (bench harness compiles)
         run: mvn -f barback/bench/pom.xml -B package -DskipTests
       # Cross-language Rust↔Java UDS conformance, scoped to the

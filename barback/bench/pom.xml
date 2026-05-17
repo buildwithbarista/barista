@@ -38,6 +38,22 @@
             <version>${jmh.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!--
+          The benches drive real barback production code (WorkerPool,
+          PluginCache, EmbeddedMavenFactory, the proto ActionRequest /
+          ActionResult builders). Declaring the dep here — rather than
+          duplicating the classes — keeps the bench numbers honest
+          against whatever the daemon actually ships. The bench module
+          stays its own Maven module (and out of the daemon's runtime
+          classpath) because JMH and its annotation processor must not
+          leak into the daemon jar. Version pinned in lock-step with the
+          parent so a bump only has to happen in one place.
+        -->
+        <dependency>
+            <groupId>com.bluminal.barista</groupId>
+            <artifactId>barback</artifactId>
+            <version>0.1.0-alpha.0</version>
+        </dependency>
     </dependencies>
 
     <build>
