@@ -107,7 +107,10 @@ async fn frame_starts_with_4_byte_big_endian_length() {
         .read_exact(&mut payload)
         .await
         .expect("read payload");
-    assert_eq!(payload, expected_payload, "payload bytes must match prost output");
+    assert_eq!(
+        payload, expected_payload,
+        "payload bytes must match prost output"
+    );
 
     drop(client);
 }
@@ -176,24 +179,33 @@ async fn partial_frame_then_close_errors() {
     let mut server = UdsTransport::from_stream(server_stream);
 
     // Write a 4-byte prefix announcing 100 bytes, then write only 10
-    // bytes of payload before closing — the codec should surface an
-    // I/O error (UnexpectedEof or similar) when the connection ends
-    // mid-frame.
+    // bytes of payload before closing — the codec should surface a
+    // terminal error when the connection ends mid-frame. Since
+    // M4.2 T6 landed, a partial-frame EOF is reclassified as
+    // `TransportError::DaemonCrashed { UnexpectedEof }` (a peer
+    // that disappeared mid-frame is, by definition, the failure-
+    // model shape the daemon-crash path needs to detect). `Closed`
+    // is also accepted to defend against future codec changes that
+    // route the half-state through a different read path; the
+    // contract is "terminal + daemon-crash-flavoured", not the
+    // exact variant.
     raw_client
         .write_all(&100u32.to_be_bytes())
         .await
         .expect("write prefix");
-    raw_client.write_all(&[0u8; 10]).await.expect("write partial");
+    raw_client
+        .write_all(&[0u8; 10])
+        .await
+        .expect("write partial");
     raw_client.flush().await.expect("flush");
     drop(raw_client);
 
     let result = server.recv().await;
-    // A partial frame + close yields either Io (UnexpectedEof) or
-    // Closed depending on how the codec interprets the half-state.
-    // The contract is "terminal error", not the exact variant.
     match result {
-        Err(TransportError::Io(_)) | Err(TransportError::Closed) => {}
-        other => panic!("expected Io/Closed on partial frame, got: {other:?}"),
+        Err(TransportError::DaemonCrashed { .. }) | Err(TransportError::Closed) => {}
+        other => panic!(
+            "expected DaemonCrashed/Closed on partial frame (M4.2 T6 failure model), got: {other:?}"
+        ),
     }
 }
 

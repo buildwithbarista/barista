@@ -146,8 +146,23 @@ import java.util.logging.Logger;
  * prefix, malformed protobuf, mid-frame EOF) is logged at
  * {@link Level#WARNING} and the offending {@link SocketChannel} is
  * closed; the accept loop continues. The connection-level crash
- * detection on the CLI side is the responsibility of milestone 4.2
- * Task 6 (failure-model wiring).
+ * detection on the CLI side is wired in milestone 4.2 Task 6 (the
+ * Rust side maps a mid-action socket close to a structured
+ * {@code BAR-DAEMON-CRASHED} retryable error; see the Rust
+ * {@code barista_ipc::TransportError::DaemonCrashed} variant).
+ *
+ * <h3>Debug failure-model fixture (M4.2 T6)</h3>
+ *
+ * <p>The hidden {@code --crash-after <n>} flag arms the daemon for
+ * deliberate self-termination via {@link Runtime#halt(int)} after
+ * exactly {@code n} action envelopes have been dispatched. The exit
+ * code is {@link #CRASH_EXIT_CODE} (137 = {@code 128 + SIGKILL}). This
+ * is the fixture path the cross-language integration tests use to
+ * exercise the CLI-side failure-model wiring against a real daemon
+ * — see {@code crates/barista-ipc/tests/crash_recovery_conformance.rs}
+ * for the Rust side. The flag is intentionally absent from the
+ * {@link #main} usage string and the {@code SocketConfig} constructor
+ * chain defaults it to {@code 0} (disabled).
  *
  * <h2>Logging</h2>
  *
@@ -229,6 +244,18 @@ public final class Server implements AutoCloseable {
      */
     static final int DEFAULT_IDLE_SHUTDOWN_SECONDS = 1800;
 
+    /**
+     * POSIX exit code chosen for the {@code --crash-after} debug-flag
+     * self-immolation path. {@code 128 + SIGKILL(9) = 137} matches the
+     * status the kernel would have reported if an external
+     * {@code kill -9} had terminated the JVM, so logs and tests can
+     * pin to the canonical value regardless of how the crash was
+     * induced. See the {@code crashAfter} field of {@link SocketConfig}
+     * and the {@link #handleConnection} dispatch counter for the
+     * trigger path.
+     */
+    static final int CRASH_EXIT_CODE = 137;
+
     private final Path socketPath;
     private final ServerSocketChannel serverChannel;
     private final WorkerPool workerPool;
@@ -237,14 +264,30 @@ public final class Server implements AutoCloseable {
     private final AtomicBoolean shutdownRequested = new AtomicBoolean(false);
     private final CountDownLatch terminated = new CountDownLatch(1);
     private final AtomicLong nextConnectionId = new AtomicLong(0);
+    /**
+     * Count of action-dispatch envelopes routed so far. Wired only by
+     * the {@code --crash-after} debug path: every {@link Envelope.BodyCase#ACTION}
+     * that reaches {@link #dispatch} increments this counter, and once
+     * the value matches {@code crashAfter} the JVM self-terminates via
+     * {@link Runtime#halt(int)} mid-write. The increment site is
+     * <em>after</em> the action reply has been queued onto the socket
+     * but <em>before</em> the SocketChannel write has drained, which
+     * mirrors the realistic crash window the CLI must defend against —
+     * the daemon may have produced bytes the kernel never flushes.
+     */
+    private final AtomicLong actionsDispatched = new AtomicLong(0);
+    /** Trigger threshold for the {@code --crash-after} debug path; 0 disables. */
+    private final int crashAfter;
 
     private Server(Path socketPath,
                    ServerSocketChannel serverChannel,
                    WorkerPool workerPool,
-                   Duration idleTimeout) {
+                   Duration idleTimeout,
+                   int crashAfter) {
         this.socketPath = socketPath;
         this.serverChannel = serverChannel;
         this.workerPool = workerPool;
+        this.crashAfter = crashAfter;
         // The idle-timer callback is `this::shutdownDueToIdle` — a
         // method reference that flips the shutdown flag and closes
         // the listener, which is idempotent and safe to invoke from
@@ -282,7 +325,7 @@ public final class Server implements AutoCloseable {
      *     value before spawning the daemon; that wire-through is the
      *     companion follow-up to T2's worker-count plumbing.
      */
-    public record SocketConfig(Path socketPath, int workers, int idleShutdownSeconds) {
+    public record SocketConfig(Path socketPath, int workers, int idleShutdownSeconds, int crashAfter) {
 
         public SocketConfig {
             Objects.requireNonNull(socketPath, "socketPath");
@@ -294,15 +337,32 @@ public final class Server implements AutoCloseable {
                 throw new IllegalArgumentException(
                         "idleShutdownSeconds must be >= 1; got " + idleShutdownSeconds);
             }
+            if (crashAfter < 0) {
+                throw new IllegalArgumentException(
+                        "crashAfter must be >= 0 (0 disables); got " + crashAfter);
+            }
+        }
+
+        /**
+         * Three-arg compatibility constructor: picks {@code crashAfter
+         * = 0} (disabled) so production call sites that never need the
+         * debug self-immolation path keep compiling. The
+         * {@code --crash-after} flag exists exclusively to drive the
+         * M4.2 T6 failure-model integration tests against a real
+         * daemon — see {@link #CRASH_EXIT_CODE} for the trigger
+         * semantics.
+         */
+        public SocketConfig(Path socketPath, int workers, int idleShutdownSeconds) {
+            this(socketPath, workers, idleShutdownSeconds, 0);
         }
 
         /**
          * Two-arg compatibility constructor: picks the default idle
-         * window so existing call sites that only specify a worker
-         * count keep compiling.
+         * window + {@code crashAfter = 0} so existing call sites that
+         * only specify a worker count keep compiling.
          */
         public SocketConfig(Path socketPath, int workers) {
-            this(socketPath, workers, DEFAULT_IDLE_SHUTDOWN_SECONDS);
+            this(socketPath, workers, DEFAULT_IDLE_SHUTDOWN_SECONDS, 0);
         }
 
         /**
@@ -313,7 +373,7 @@ public final class Server implements AutoCloseable {
          * compiling.
          */
         public SocketConfig(Path socketPath) {
-            this(socketPath, DEFAULT_WORKERS, DEFAULT_IDLE_SHUTDOWN_SECONDS);
+            this(socketPath, DEFAULT_WORKERS, DEFAULT_IDLE_SHUTDOWN_SECONDS, 0);
         }
 
         /**
@@ -324,7 +384,19 @@ public final class Server implements AutoCloseable {
          * field without restating the others.
          */
         public SocketConfig withIdleShutdownSeconds(int seconds) {
-            return new SocketConfig(socketPath, workers, seconds);
+            return new SocketConfig(socketPath, workers, seconds, crashAfter);
+        }
+
+        /**
+         * Return a copy of this config with the given {@code crashAfter}
+         * threshold. {@code 0} disables. Used by the failure-model
+         * integration tests in {@link com.bluminal.barista.barback.integration.CrashFailureModelIT}
+         * to launch a daemon that self-terminates with {@link #CRASH_EXIT_CODE}
+         * after dispatching {@code n} action envelopes — the fixture
+         * for the cross-language M4.2 T6 acceptance criterion.
+         */
+        public SocketConfig withCrashAfter(int crashAfter) {
+            return new SocketConfig(socketPath, workers, idleShutdownSeconds, crashAfter);
         }
 
         /**
@@ -352,7 +424,8 @@ public final class Server implements AutoCloseable {
             return new SocketConfig(
                     base.resolve("barback.sock"),
                     DEFAULT_WORKERS,
-                    DEFAULT_IDLE_SHUTDOWN_SECONDS);
+                    DEFAULT_IDLE_SHUTDOWN_SECONDS,
+                    0);
         }
     }
 
@@ -426,9 +499,21 @@ public final class Server implements AutoCloseable {
                 config.socketPath(),
                 channel,
                 pool,
-                Duration.ofSeconds(config.idleShutdownSeconds()));
+                Duration.ofSeconds(config.idleShutdownSeconds()),
+                config.crashAfter());
         server.acceptThread.start();
         server.idleTimer.start();
+        if (config.crashAfter() > 0) {
+            // Surface the debug self-immolation arming at WARNING so a
+            // production deployment that accidentally enables it shows
+            // up loudly in the log stream. Tests under
+            // `integration/CrashFailureModelIT` opt in deliberately.
+            LOG.log(Level.WARNING,
+                    () -> "barback armed for self-termination after "
+                            + config.crashAfter()
+                            + " actions (debug failure-model path; exit "
+                            + CRASH_EXIT_CODE + ")");
+        }
         LOG.log(Level.INFO,
                 () -> "barback listening on " + config.socketPath()
                         + " (workers=" + pool.workers()
@@ -540,6 +625,7 @@ public final class Server implements AutoCloseable {
         Path socketPath = null;
         Integer workers = null;
         Integer idleShutdownSeconds = null;
+        Integer crashAfter = null;
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
             switch (arg) {
@@ -595,6 +681,35 @@ public final class Server implements AutoCloseable {
                     }
                     idleShutdownSeconds = parsed;
                 }
+                case "--crash-after" -> {
+                    // Debug-only failure-model fixture for M4.2 T6.
+                    // Hidden from the production usage string below;
+                    // documented in the class javadoc's "Robustness"
+                    // section and in CrashFailureModelIT. Arming it
+                    // makes the daemon call `Runtime.halt(137)` after
+                    // exactly N action envelopes — the canonical
+                    // "daemon kill -9 mid-action" reproducer.
+                    if (i + 1 >= args.length) {
+                        System.err.println("--crash-after requires an integer argument (action count)");
+                        System.exit(2);
+                        return;
+                    }
+                    int parsed;
+                    try {
+                        parsed = Integer.parseInt(args[++i]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("--crash-after requires an integer argument; got '"
+                                + args[i] + "'");
+                        System.exit(2);
+                        return;
+                    }
+                    if (parsed < 1) {
+                        System.err.println("--crash-after must be >= 1; got " + parsed);
+                        System.exit(2);
+                        return;
+                    }
+                    crashAfter = parsed;
+                }
                 default -> {
                     System.err.println(
                             "barback: unknown flag '" + arg + "'. "
@@ -612,8 +727,9 @@ public final class Server implements AutoCloseable {
         int effectiveIdle = idleShutdownSeconds == null
                 ? DEFAULT_IDLE_SHUTDOWN_SECONDS
                 : idleShutdownSeconds;
+        int effectiveCrashAfter = crashAfter == null ? 0 : crashAfter;
         SocketConfig config = new SocketConfig(
-                effectiveSocketPath, effectiveWorkers, effectiveIdle);
+                effectiveSocketPath, effectiveWorkers, effectiveIdle, effectiveCrashAfter);
         Server server = Server.start(config);
         Runtime.getRuntime().addShutdownHook(new Thread(server::shutdown, "barback-sigterm"));
         server.awaitShutdown();
@@ -821,6 +937,30 @@ public final class Server implements AutoCloseable {
                 yield true;
             }
             case ACTION -> {
+                long dispatched = actionsDispatched.incrementAndGet();
+                if (crashAfter > 0 && dispatched >= crashAfter) {
+                    // Debug self-immolation fixture for M4.2 T6. Halt
+                    // *before* writing the reply so the in-flight
+                    // action observes the canonical "daemon kill -9
+                    // mid-action" path: the connection's TCP/UDS
+                    // read returns EOF / ConnectionReset, and the
+                    // CLI-side mux maps that to BAR-DAEMON-CRASHED.
+                    // We log at SEVERE so the test harness's stderr
+                    // capture surfaces the trigger.
+                    //
+                    // `Runtime.halt(137)` (not `System.exit`) skips
+                    // shutdown hooks: the production accept loop's
+                    // socket-cleanup + worker-pool drain never runs,
+                    // which is exactly the failure shape we want to
+                    // exercise on the CLI side. 137 == 128 + SIGKILL
+                    // so logs/exit-status pin to the canonical
+                    // external-kill-9 value.
+                    LOG.log(Level.SEVERE,
+                            () -> "DEBUG-CRASH: action #" + dispatched
+                                    + " triggered --crash-after; calling Runtime.halt("
+                                    + CRASH_EXIT_CODE + ")");
+                    Runtime.getRuntime().halt(CRASH_EXIT_CODE);
+                }
                 Envelope reply = actionNotYetImplementedReply(requestId, envelope.getAction());
                 writeEnvelope(client, reply);
                 yield true;

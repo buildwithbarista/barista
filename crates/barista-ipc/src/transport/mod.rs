@@ -140,8 +140,44 @@ pub enum TransportError {
     /// The peer closed the socket cleanly (read returned EOF before a
     /// complete frame). Distinct from [`Self::Io`] so callers can
     /// distinguish "peer hung up" from "kernel error during read".
+    ///
+    /// This is the "clean disconnect" path — the peer called `close(2)`
+    /// at a frame boundary and we observed the resulting EOF before
+    /// any partial frame was buffered. Compare with
+    /// [`Self::DaemonCrashed`], which is the "peer died mid-frame"
+    /// path the M4.2 T6 failure-model wiring detects.
     #[error("peer closed the transport")]
     Closed,
+
+    /// The peer process disappeared mid-action: a `BrokenPipe` /
+    /// `ConnectionReset` / `UnexpectedEof` surfaced from the read or
+    /// write half of the socket, characteristic of an external
+    /// `kill -9` (or equivalent abrupt JVM exit via
+    /// `Runtime.halt`) while a frame was in flight.
+    ///
+    /// Distinct from [`Self::Io`] so the multiplex layer can map this
+    /// to the canonical `BAR-DAEMON-CRASHED` (PRD §A
+    /// {@code BAR-DAEMON-001}) retryable error without re-inspecting
+    /// the underlying `io::Error` kind. The caller decides per-action
+    /// whether to respawn-and-retry (idempotent actions) or surface
+    /// the error to the user (non-idempotent or already-side-effecting
+    /// actions). See `crate::mux::error::MuxError::DaemonCrashed` for
+    /// the action-scoped wrapper.
+    ///
+    /// The `kind` field carries the originating `io::ErrorKind` so
+    /// telemetry can distinguish the three crash flavours
+    /// (`BrokenPipe` on writes after the peer's TCP/UDS close;
+    /// `ConnectionReset` on resets from the kernel; `UnexpectedEof`
+    /// on truncated reads). Promotion to a stable string in the wire
+    /// error's `details` map is the multiplex layer's job — at the
+    /// transport layer we keep the raw kind for diagnostics.
+    #[error("daemon crashed mid-action ({kind:?})")]
+    DaemonCrashed {
+        /// The originating `io::ErrorKind` that triggered the crash
+        /// classification. Never `Other`; the mapping helper only
+        /// reclassifies the three canonical crash kinds.
+        kind: std::io::ErrorKind,
+    },
 
     /// I/O error from the OS — socket reset, broken pipe, permission
     /// denied on connect, etc. The wrapped [`std::io::Error`] retains
@@ -171,7 +207,10 @@ pub enum TransportError {
     /// returning `io::Error` with kind `InvalidData`; we surface that
     /// as this typed variant via the (crate-private)
     /// `map_codec_io_err` helper in this module.
-    #[error("frame size {announced} exceeds max-frame cap of {} bytes", MAX_FRAME_BYTES)]
+    #[error(
+        "frame size {announced} exceeds max-frame cap of {} bytes",
+        MAX_FRAME_BYTES
+    )]
     FrameTooLarge {
         /// The length the peer announced, as decoded from the 4-byte
         /// big-endian prefix. May be the inbound `u32` or an outbound
@@ -189,11 +228,22 @@ impl TransportError {
     pub fn is_terminal(&self) -> bool {
         match self {
             Self::Closed
+            | Self::DaemonCrashed { .. }
             | Self::Io(_)
             | Self::Encode(_)
             | Self::Decode(_)
             | Self::FrameTooLarge { .. } => true,
         }
+    }
+
+    /// `true` if this error is the failure-model "daemon died mid-
+    /// action" signal: an in-flight action should surface a
+    /// {@code BAR-DAEMON-CRASHED} retryable error rather than a hard
+    /// transport failure. Wraps the pattern-match so callers don't
+    /// have to import [`std::io::ErrorKind`] just to branch.
+    #[must_use]
+    pub fn is_daemon_crash(&self) -> bool {
+        matches!(self, Self::DaemonCrashed { .. })
     }
 }
 
@@ -374,6 +424,47 @@ pub(crate) fn map_codec_io_err(e: std::io::Error) -> TransportError {
             return TransportError::FrameTooLarge { announced: 0 };
         }
     }
+    // M4.2 T6 failure-model: classify the three canonical
+    // "peer died mid-frame" kinds as `DaemonCrashed`. The codec
+    // surfaces these unchanged from the underlying socket (a
+    // `read(2)` that returns EBADF / ECONNRESET / EPIPE, or a
+    // partial-frame `read(2) == 0` after the codec already buffered
+    // some bytes of the length prefix or payload).
+    //
+    // Why match on `ErrorKind` and not the error message: kinds are
+    // a stable contract; messages are upstream-defined and host-
+    // locale-dependent (libc strerror text differs across glibc /
+    // musl / macOS). The three kinds below are exactly the set the
+    // kernel emits on a kill-9'd peer; anything else passes through
+    // as `Io` so callers don't conflate a real bug (e.g. permission
+    // change mid-stream) with the crash path.
+    if matches!(
+        e.kind(),
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::UnexpectedEof
+    ) {
+        return TransportError::DaemonCrashed { kind: e.kind() };
+    }
+    // `tokio_util::codec::FramedRead` surfaces a partial-frame EOF
+    // (the peer closed the connection while bytes were still
+    // buffered for an incomplete length prefix or payload) as an
+    // `io::Error{ kind: Other, message: "bytes remaining on stream" }`.
+    // This is the exact shape `kill -9` produces when the daemon
+    // had queued part of a response onto its socket buffer before
+    // halting: the kernel flushes the partial bytes to us, then
+    // delivers EOF. Reclassify as `DaemonCrashed { UnexpectedEof }`
+    // so the multiplex layer can route it through the
+    // `BAR-DAEMON-CRASHED` synthesised reply. The string match is
+    // exact (upstream-stable: `LengthDelimitedCodec` constructs the
+    // literal "bytes remaining on stream" in its decode path; see
+    // tokio-util 0.7's `length_delimited.rs::FramedImpl`).
+    if e.kind() == std::io::ErrorKind::Other && e.to_string().contains("bytes remaining on stream")
+    {
+        return TransportError::DaemonCrashed {
+            kind: std::io::ErrorKind::UnexpectedEof,
+        };
+    }
     TransportError::Io(e)
 }
 
@@ -419,15 +510,27 @@ mod tests {
 
         let mut codec = framed_codec();
         let mut buf = BytesMut::new();
-        codec.encode(Bytes::from_static(&[0x00, 0x01, 0x02, 0x03]), &mut buf)
+        codec
+            .encode(Bytes::from_static(&[0x00, 0x01, 0x02, 0x03]), &mut buf)
             .unwrap();
 
         // First 4 bytes must be big-endian length = 4, then payload.
-        assert_eq!(&buf[..4], &[0, 0, 0, 4], "length prefix is 4-byte big-endian");
-        assert_eq!(&buf[4..], &[0x00, 0x01, 0x02, 0x03], "payload follows verbatim");
+        assert_eq!(
+            &buf[..4],
+            &[0, 0, 0, 4],
+            "length prefix is 4-byte big-endian"
+        );
+        assert_eq!(
+            &buf[4..],
+            &[0x00, 0x01, 0x02, 0x03],
+            "payload follows verbatim"
+        );
 
         // Round-trip through the decoder.
-        let decoded = codec.decode(&mut buf).unwrap().expect("frame should decode");
+        let decoded = codec
+            .decode(&mut buf)
+            .unwrap()
+            .expect("frame should decode");
         assert_eq!(&decoded[..], &[0x00, 0x01, 0x02, 0x03]);
     }
 
@@ -510,19 +613,43 @@ mod tests {
         // If a future variant becomes recoverable, this test fails and
         // forces an update of the predicate and the doc comment.
         assert!(TransportError::Closed.is_terminal());
+        assert!(
+            TransportError::DaemonCrashed {
+                kind: std::io::ErrorKind::BrokenPipe,
+            }
+            .is_terminal()
+        );
         assert!(TransportError::FrameTooLarge { announced: 1 }.is_terminal());
-        let io = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "test");
+        // `Io` carries an `io::Error` with a kind *other* than the three
+        // crash-kinds, since those are now reclassified upstream by
+        // `map_codec_io_err`. Pick `Other` to make the test pin both
+        // the terminal-ness and the kind-disjointness.
+        let io = std::io::Error::other("synthetic");
         assert!(TransportError::Io(io).is_terminal());
+    }
+
+    #[test]
+    fn is_daemon_crash_predicate_is_kind_independent() {
+        // The three canonical crash kinds all classify as DaemonCrashed.
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            assert!(TransportError::DaemonCrashed { kind }.is_daemon_crash());
+        }
+        // Other variants do not.
+        assert!(!TransportError::Closed.is_daemon_crash());
+        assert!(!TransportError::FrameTooLarge { announced: 1 }.is_daemon_crash());
+        let io = std::io::Error::other("not a crash");
+        assert!(!TransportError::Io(io).is_daemon_crash());
     }
 
     #[test]
     fn map_codec_io_err_routes_invalid_data_oversize_to_frame_too_large() {
         // Mirror the exact `io::Error` shape `LengthDelimitedCodec`
         // emits when the announced length exceeds `max_frame_length`.
-        let e = std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "frame size too big",
-        );
+        let e = std::io::Error::new(std::io::ErrorKind::InvalidData, "frame size too big");
         match map_codec_io_err(e) {
             TransportError::FrameTooLarge { .. } => {}
             other => panic!("expected FrameTooLarge, got: {other:?}"),
@@ -530,13 +657,56 @@ mod tests {
     }
 
     #[test]
-    fn map_codec_io_err_passes_through_real_io_errors() {
-        // A "real" IO error (BrokenPipe, ConnectionReset, etc.) must
-        // not be misclassified as FrameTooLarge.
-        let e = std::io::Error::new(std::io::ErrorKind::BrokenPipe, "peer hung up");
+    fn map_codec_io_err_routes_crash_kinds_to_daemon_crashed() {
+        // The three canonical "peer died mid-frame" `io::ErrorKind`s
+        // (M4.2 T6 failure model) must surface as `DaemonCrashed`
+        // rather than `Io`, so the multiplex layer can synthesise a
+        // `BAR-DAEMON-CRASHED` reply per in-flight action without
+        // re-inspecting the wrapped `io::Error`.
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            let e = std::io::Error::new(kind, "peer hung up mid-frame");
+            match map_codec_io_err(e) {
+                TransportError::DaemonCrashed { kind: reported } => {
+                    assert_eq!(reported, kind, "DaemonCrashed.kind preserves origin");
+                }
+                other => panic!("expected DaemonCrashed for {kind:?}, got: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn map_codec_io_err_routes_partial_frame_eof_to_daemon_crashed() {
+        // `LengthDelimitedCodec` emits an `io::Error{ Other, "bytes
+        // remaining on stream" }` when the peer closes mid-frame.
+        // This is the dominant shape on macOS + Linux when the
+        // daemon is `kill -9`'d while a reply is partially queued;
+        // M4.2 T6 requires it routes to `DaemonCrashed` not `Io`.
+        let e = std::io::Error::other("bytes remaining on stream");
+        match map_codec_io_err(e) {
+            TransportError::DaemonCrashed { kind } => {
+                assert_eq!(
+                    kind,
+                    std::io::ErrorKind::UnexpectedEof,
+                    "partial-frame EOF surfaces as synthesised UnexpectedEof"
+                );
+            }
+            other => panic!("expected DaemonCrashed (partial-frame EOF), got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn map_codec_io_err_passes_through_non_crash_io_errors() {
+        // A "real" non-crash IO error (PermissionDenied, NotFound, etc.)
+        // must NOT be misclassified as DaemonCrashed — those are bugs
+        // or misconfiguration, not the failure-model path.
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "EACCES");
         match map_codec_io_err(e) {
             TransportError::Io(inner) => {
-                assert_eq!(inner.kind(), std::io::ErrorKind::BrokenPipe);
+                assert_eq!(inner.kind(), std::io::ErrorKind::PermissionDenied);
             }
             other => panic!("expected Io, got: {other:?}"),
         }

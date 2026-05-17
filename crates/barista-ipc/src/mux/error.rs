@@ -42,6 +42,16 @@ use crate::TransportError;
 ///   sees this in non-blocking mode (`try_send`), it's a bug; the
 ///   public API uses `send().await` which blocks on the buffer being
 ///   drained.
+/// * [`DaemonCrashed`](Self::DaemonCrashed) — the M4.2 T6 failure-
+///   model signal: the daemon process died mid-action (typically a
+///   `kill -9` or an internal `Runtime.halt`), and at least one
+///   in-flight action never received its terminal `Result`/`Error`.
+///   This is the *retryable* path: a CLI driver may respawn the
+///   daemon and resubmit idempotent actions; non-idempotent actions
+///   must surface the error to the user. Maps 1:1 to the
+///   `BAR-DAEMON-CRASHED` wire code (PRD §A `BAR-DAEMON-001`). See
+///   the `kind` field for the originating `io::ErrorKind` that
+///   triggered the classification.
 ///
 /// The error is `Clone` for the test fixtures that need to inspect the
 /// same error across multiple `select!` arms; in production code,
@@ -76,6 +86,34 @@ pub enum MuxError {
     /// future awaits free buffer space.
     #[error("outbound send buffer full")]
     SendBufferFull,
+
+    /// The daemon crashed (or was `kill -9`'d) while this action was
+    /// in flight. Wire code: `BAR-DAEMON-CRASHED` (PRD §A
+    /// `BAR-DAEMON-001`). **Retryable:** the caller may respawn the
+    /// daemon and resubmit if the action is idempotent. Carries the
+    /// originating `io::ErrorKind` so callers can distinguish the
+    /// canonical crash flavours (`BrokenPipe`, `ConnectionReset`,
+    /// `UnexpectedEof`) — useful for telemetry but not for routing.
+    ///
+    /// The multiplex layer produces this error in two distinct
+    /// paths, both of which feed the connection-shutdown classifier
+    /// in `mux::mod::shutdown_state`:
+    ///
+    ///   * the underlying [`crate::TransportError::DaemonCrashed`]
+    ///     surfaces from `recv` (the OS told us a crash kind);
+    ///   * the underlying [`crate::TransportError::Closed`] surfaces
+    ///     with at least one in-flight client still registered — a
+    ///     graceful EOF that landed *during* an in-flight action is
+    ///     functionally indistinguishable from an abrupt crash and
+    ///     receives the same retryable classification.
+    #[error("daemon crashed mid-action ({kind:?}); BAR-DAEMON-CRASHED is retryable")]
+    DaemonCrashed {
+        /// The originating `io::ErrorKind`. For the "clean EOF
+        /// while in flight" path this is synthesized as
+        /// `UnexpectedEof` so callers don't have to special-case the
+        /// Closed origin.
+        kind: std::io::ErrorKind,
+    },
 }
 
 /// Convenience alias used throughout the multiplex layer.

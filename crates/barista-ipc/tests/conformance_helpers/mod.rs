@@ -26,7 +26,15 @@
     clippy::expect_used,
     clippy::panic,
     clippy::as_conversions,
-    dead_code
+    dead_code,
+    // The pub re-exports below (`JavaEchoServer`, `raw_*`,
+    // `JavaEchoPipeClient`, `unique_test_pipe_name`) are consumed by
+    // a subset of the integration-test binaries that mount this
+    // module via `mod conformance_helpers;`. Test binaries that only
+    // need the `jvm` ceremony (e.g. `crash_recovery_conformance`)
+    // trigger `unused_imports` on the re-exports they don't consume.
+    // Suppressing here keeps the shared module re-exports stable.
+    unused_imports
 )]
 
 pub mod jvm;

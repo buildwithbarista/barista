@@ -135,14 +135,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::envelope;
 use crate::{
-    ActionRequest, CancelRequest, Envelope, SplitTransport, TransportError, TransportReceiver,
-    TransportSender,
+    ActionRequest, CancelRequest, Envelope, Error as ProtoError, SplitTransport, TransportError,
+    TransportReceiver, TransportSender,
 };
 
 pub mod cancel;
@@ -175,6 +175,18 @@ pub const OUTBOUND_BUFFER: usize = 64;
 /// producer is bounded in memory at 32 envelopes × 32 actions =
 /// ~1024 in-flight events per connection.
 pub const PER_ACTION_BUFFER: usize = 32;
+
+/// Canonical wire error code surfaced to in-flight actions when the
+/// daemon process disappears mid-action (M4.2 T6 failure model).
+///
+/// The PRD §A error catalogue assigns `BAR-DAEMON-001` to "Daemon
+/// crash mid-action" (PRD §11.9). The mux layer mints an
+/// `Envelope.error` carrying this code and the action's id for every
+/// in-flight client at the moment the transport returns a crash
+/// classification, then tears state down. CLI callers branch on the
+/// code (not the message text) to drive the respawn-and-retry path
+/// for idempotent actions.
+pub const DAEMON_CRASHED_CODE: &str = "BAR-DAEMON-CRASHED";
 
 // ---------------------------------------------------------------------------
 // Connection-level state shared between the writer task, the reader
@@ -296,10 +308,7 @@ impl Multiplexer {
             state: Arc::clone(&state),
             outbound_tx: outbound_tx.clone(),
         };
-        let server = MuxServer {
-            state,
-            incoming_rx,
-        };
+        let server = MuxServer { state, incoming_rx };
 
         (mux, client, server)
     }
@@ -354,7 +363,11 @@ async fn reader_loop<R>(
             Err(e) => {
                 // Connection closed (or hard error). Surface as state
                 // shutdown so client `next_event` sees `None` and
-                // server `next_action` sees `None`.
+                // server `next_action` sees `None`. The M4.2 T6
+                // failure-model wiring lives inside `shutdown_state`:
+                // any client still registered at this point gets a
+                // synthesised `BAR-DAEMON-CRASHED` `StreamEvent::Error`
+                // before its channel is closed.
                 shutdown_state(&state, Some(e)).await;
                 break;
             }
@@ -379,8 +392,7 @@ async fn dispatch_inbound(
 
     match body {
         envelope::Body::Action(req) => {
-            handle_inbound_action(req, env.request_id, state, _outbound_tx, incoming_tx)
-                .await;
+            handle_inbound_action(req, env.request_id, state, _outbound_tx, incoming_tx).await;
         }
         envelope::Body::Stream(chunk) => {
             let id = chunk.action_id.clone();
@@ -496,16 +508,87 @@ async fn cleanup_client(state: &Arc<Mutex<MuxState>>, action_id: &str) {
     s.servers.remove(action_id);
 }
 
-async fn shutdown_state(state: &Arc<Mutex<MuxState>>, _cause: Option<TransportError>) {
+async fn shutdown_state(state: &Arc<Mutex<MuxState>>, cause: Option<TransportError>) {
+    // Classify the shutdown cause for the M4.2 T6 failure-model
+    // wiring: if the transport returned a `DaemonCrashed` kind, OR
+    // if the transport returned `Closed` while *any* per-action
+    // client is still registered (i.e. the EOF landed mid-action),
+    // treat this as a crash and synthesise a `BAR-DAEMON-CRASHED`
+    // terminal `StreamEvent::Error` for each in-flight client
+    // *before* dropping the sender. Two paths feed the same
+    // classifier so a kernel that drops the connection cleanly at
+    // a frame boundary (returning `Closed` rather than a typed
+    // crash kind) still produces a retryable error rather than a
+    // silent channel close.
+    //
+    // The synthesised kind for the EOF-mid-action path is
+    // `UnexpectedEof` — the closest stdlib `io::ErrorKind` for "we
+    // were waiting for a response and the peer disappeared".
+    let crash_kind = match &cause {
+        Some(TransportError::DaemonCrashed { kind }) => Some(*kind),
+        _ => None,
+    };
+
+    // Lock once for the whole shutdown so a concurrent
+    // `submit_action` cannot observe `shutdown=false` and register a
+    // new client *after* we've synthesised crash errors for the
+    // existing set.
     let mut s = state.lock().await;
+    let has_inflight = !s.clients.is_empty();
+    let effective_kind =
+        crash_kind.or_else(|| has_inflight.then_some(std::io::ErrorKind::UnexpectedEof));
+
     s.shutdown = true;
-    // Drop every per-action sender — clients see Receiver::recv()
-    // return None. Server cancel tokens are cancelled so in-flight
-    // bodies exit promptly.
+
+    // Cancel any server-side in-flight body. The cancel tokens are
+    // independent of the client-side synthesised error path; the
+    // daemon's worker pool observes the token cancel and exits any
+    // body still computing on the way down.
     for (_, st) in s.servers.drain() {
         st.cancel_token.cancel();
     }
-    s.clients.clear();
+
+    if let Some(kind) = effective_kind {
+        // Drain the clients map (we move out of the senders so we
+        // can `.send()` on them without holding the state lock; a
+        // `Sender::send().await` while holding the state mutex would
+        // deadlock against a concurrent `next_event` that tries to
+        // re-acquire the lock via `cleanup_client`). The drained
+        // entries are then dropped at the end of the function,
+        // closing the channels and surfacing the synthesised error
+        // as the *last* event each client sees.
+        let drained: Vec<(String, ClientActionState)> = s.clients.drain().collect();
+        // Release the state lock before awaiting on per-client sends.
+        drop(s);
+        for (action_id, st) in drained {
+            let err = ProtoError {
+                code: DAEMON_CRASHED_CODE.to_string(),
+                message: format!(
+                    "barback daemon disappeared mid-action ({kind:?}); the action is retryable"
+                ),
+                action_id: action_id.clone(),
+                details: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert("retryable".to_string(), "true".to_string());
+                    m.insert("kind".to_string(), format!("{kind:?}"));
+                    m
+                },
+            };
+            // Best-effort: if the per-action receiver has already
+            // been dropped (the caller went out of scope before
+            // the daemon died), the send returns `Err` which we
+            // intentionally swallow — there is no consumer left
+            // to observe the synthesised error.
+            let _ = st.inbound_tx.send(StreamEvent::Error(err)).await;
+            st.terminated.try_flag();
+            drop(st);
+        }
+    } else {
+        // No crash classification + no in-flight clients: this is
+        // the clean-shutdown path. Drop every per-action sender so
+        // any racing recv sees `None`.
+        s.clients.clear();
+    }
 }
 
 // ---------------------------------------------------------------------------
