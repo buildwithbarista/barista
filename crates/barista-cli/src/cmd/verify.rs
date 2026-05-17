@@ -282,6 +282,7 @@ pub fn dispatch_lifecycle(
                 &graph,
                 &root.root,
                 deploy_credentials.as_ref(),
+                ci_seed.as_ref(),
             )?
         } else {
             dispatch_reactor_modules(
@@ -292,6 +293,7 @@ pub fn dispatch_lifecycle(
                 &root.root,
                 deploy_credentials.as_ref(),
                 workers,
+                ci_seed.as_ref(),
             )?
         };
     let mut handle = final_handle;
@@ -331,6 +333,7 @@ fn dispatch_single_module(
     graph: &ActionGraph,
     project_root: &std::path::Path,
     deploy_credentials: Option<&CredentialsEnvelope>,
+    ci_seed: Option<&ReproducibilitySeed>,
 ) -> Result<
     (
         Vec<MojoInvocation>,
@@ -361,7 +364,7 @@ fn dispatch_single_module(
         // wasn't set. Merge is non-clobbering: explicit per-action
         // overrides (none in v0.1 outside `deploy`'s `extra_mvn_args`
         // path) survive.
-        if let Some(seed) = &ci_seed {
+        if let Some(seed) = ci_seed {
             apply_to_request(&mut request, seed);
         }
         let phase_name = action.phase.to_string();
@@ -430,6 +433,7 @@ fn dispatch_reactor_modules(
     project_root: &std::path::Path,
     deploy_credentials: Option<&CredentialsEnvelope>,
     workers_budget: usize,
+    ci_seed: Option<&ReproducibilitySeed>,
 ) -> Result<
     (
         Vec<MojoInvocation>,
@@ -462,6 +466,7 @@ fn dispatch_reactor_modules(
     let jvm_arc = Arc::new(jvm_entry.clone());
     let project_root_arc: Arc<std::path::PathBuf> = Arc::new(project_root.to_path_buf());
     let creds_arc: Arc<Option<CredentialsEnvelope>> = Arc::new(deploy_credentials.cloned());
+    let ci_seed_arc: Arc<Option<ReproducibilitySeed>> = Arc::new(ci_seed.cloned());
 
     let outcomes: Vec<Result<ModuleOutcome, VerifyError>> = runtime.block_on(async move {
         let mut all: Vec<Result<ModuleOutcome, VerifyError>> =
@@ -484,6 +489,7 @@ fn dispatch_reactor_modules(
                 let jvm_arc = Arc::clone(&jvm_arc);
                 let project_root_arc = Arc::clone(&project_root_arc);
                 let creds_arc = Arc::clone(&creds_arc);
+                let ci_seed_arc = Arc::clone(&ci_seed_arc);
                 let semaphore = Arc::clone(&semaphore);
                 tasks.push(tokio::spawn(async move {
                     let _permit = semaphore.acquire_owned().await;
@@ -501,6 +507,7 @@ fn dispatch_reactor_modules(
                             &module,
                             &project_root_arc,
                             creds_arc.as_ref().as_ref(),
+                            ci_seed_arc.as_ref().as_ref(),
                         )
                     })
                     .await
@@ -586,6 +593,7 @@ fn dispatch_one_module_blocking(
     module: &ModuleNode,
     project_root: &std::path::Path,
     deploy_credentials: Option<&CredentialsEnvelope>,
+    ci_seed: Option<&ReproducibilitySeed>,
 ) -> Result<ModuleOutcome, VerifyError> {
     // Each module connects fresh to the daemon socket. We don't
     // thread a `DaemonHandle` across modules because concurrent
@@ -618,6 +626,12 @@ fn dispatch_one_module_blocking(
             && let Some(env) = deploy_credentials
         {
             request.credentials = Some(env.clone());
+        }
+        // M4.3 T6: thread the `--ci` reproducibility seed onto every
+        // action (per-module reactor path; mirrors the
+        // dispatch_single_module site).
+        if let Some(seed) = ci_seed {
+            apply_to_request(&mut request, seed);
         }
         let phase_name = action.phase.to_string();
         let action_started = Instant::now();
