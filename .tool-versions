@@ -4,5 +4,5 @@
 #   asdf install
 #   asdf current
 rust 1.88.0
-java temurin-21.0.4+7
+java temurin-21.0.4+7.0.LTS
 maven 3.9.9
