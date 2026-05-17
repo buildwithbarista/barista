@@ -1,0 +1,7 @@
+# Spike output — never committed. The distribution is re-extracted by run.sh
+# from /tmp/maven-4.0.0-rc-3.tar.gz on demand.
+apache-maven-4.0.0-rc-3/
+extracted/
+classes/
+sample-project/target/
+logs/
