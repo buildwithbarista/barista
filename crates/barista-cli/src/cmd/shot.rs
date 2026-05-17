@@ -285,6 +285,7 @@ pub fn run_inner(
             exit_code,
             status,
             failure_message: outcome.result.failure_message.clone(),
+            error_code: String::new(),
             duration_ms,
         });
     }

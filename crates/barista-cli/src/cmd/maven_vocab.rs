@@ -111,7 +111,7 @@ pub fn run(global: &GlobalFlags, phase: MavenPhase, args: &MavenVocabArgs) -> i3
     // stub below.
     #[cfg(unix)]
     {
-        return crate::cmd::verify::run_phase(global, phase, args);
+        crate::cmd::verify::run_phase(global, phase, args)
     }
     #[cfg(not(unix))]
     {

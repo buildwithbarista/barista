@@ -78,8 +78,7 @@ fn phase_prefix_dispatch_covers_every_variant() {
         assert_eq!(
             phase_prefix(*phase),
             *want,
-            "phase {:?} prefix mismatch",
-            phase
+            "phase {phase:?} prefix mismatch"
         );
     }
 }
