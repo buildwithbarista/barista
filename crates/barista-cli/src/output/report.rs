@@ -187,3 +187,98 @@ impl PullReport {
         }
     }
 }
+
+/// Result reported by `barista verify` (and, eventually, every other
+/// Maven-vocabulary lifecycle command — `clean`, `compile`, `test`, …).
+///
+/// The shape covers the v0.1 single-module happy path: a sequence of
+/// mojo invocations, each carrying its lifecycle phase, the daemon-
+/// side `ActionResult` exit code, and the wall-clock duration. Multi-
+/// module reactor output (M4.3 Task 4) extends this with per-module
+/// grouping; the v0.1 shape leaves room (`module` field on each
+/// invocation) so the schema grows additively rather than via a
+/// breaking change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "command")]
+#[serde(rename = "verify")]
+pub struct VerifyReport {
+    /// Absolute path of the resolved project root.
+    pub project_root: PathBuf,
+    /// The terminal lifecycle phase the user asked for. Today always
+    /// `"verify"`; M4.3 Task 2 reuses the same `VerifyReport` shape
+    /// for the other Maven-vocabulary commands by setting `phase` to
+    /// the requested phase name.
+    pub phase: String,
+    /// Number of mojo invocations the action-graph contained.
+    pub planned_actions: usize,
+    /// Number of mojo invocations that completed (success or failure).
+    pub executed_actions: usize,
+    /// Number of mojo invocations that returned a non-zero exit code.
+    /// `0` on the happy path; any non-zero value means the build
+    /// failed (and `executed_actions` may be less than
+    /// `planned_actions` because execution stops at the first failure).
+    pub failed_actions: usize,
+    /// Number of times the daemon was auto-respawned because of a
+    /// `BAR-DAEMON-CRASHED` mid-action. `0` on the happy path; `>0`
+    /// surfaces the M4.2 T6 wire contract worked as intended.
+    pub daemon_respawns: u32,
+    /// Per-mojo invocation outcomes, in execution order.
+    pub invocations: Vec<MojoInvocation>,
+    /// Total wall-clock duration, milliseconds. Includes daemon
+    /// startup + dispatch + collection.
+    pub duration_ms: u64,
+}
+
+/// One mojo invocation result on the verify action graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct MojoInvocation {
+    /// Maven lifecycle phase this mojo binds to, e.g. `"compile"`.
+    pub phase: String,
+    /// Canonical Maven plugin coordinate, e.g.
+    /// `"org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile"`.
+    pub mojo: String,
+    /// Reactor module path (absolute), or the single project root in
+    /// the single-module case.
+    pub module: PathBuf,
+    /// Mojo exit code; 0 on success.
+    pub exit_code: i32,
+    /// Daemon-side `ActionResult.status` rendered as a stable string
+    /// (`"success" | "failure" | "timeout" | "crashed" | "cancelled"
+    /// | "unknown"`).
+    pub status: String,
+    /// Human-readable failure message; empty on success.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub failure_message: String,
+    /// Mojo wall-clock duration, milliseconds.
+    pub duration_ms: u64,
+}
+
+impl VerifyReport {
+    /// Human-readable summary line.
+    pub fn summary(&self) -> String {
+        let respawn_note = if self.daemon_respawns > 0 {
+            format!(" (auto-respawned {}×)", self.daemon_respawns)
+        } else {
+            String::new()
+        };
+        if self.failed_actions == 0 {
+            format!(
+                "{phase}: {n}/{planned} mojo(s) in {ms} ms{respawn_note}",
+                phase = self.phase,
+                n = self.executed_actions,
+                planned = self.planned_actions,
+                ms = self.duration_ms,
+            )
+        } else {
+            format!(
+                "{phase}: {failed} mojo(s) failed (executed {n}/{planned}) in {ms} ms{respawn_note}",
+                phase = self.phase,
+                failed = self.failed_actions,
+                n = self.executed_actions,
+                planned = self.planned_actions,
+                ms = self.duration_ms,
+            )
+        }
+    }
+}

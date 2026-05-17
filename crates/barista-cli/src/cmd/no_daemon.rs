@@ -61,8 +61,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cli::GlobalFlags;
-use crate::cmd::MavenPhase;
 use crate::cli::MavenVocabArgs;
+use crate::cmd::MavenPhase;
 
 /// Exit code returned when `mvn` cannot be located. Aligned with
 /// other CLI surfaces in this crate that use `2` as the
@@ -179,11 +179,7 @@ pub fn dispatch_with(
             .map(|a| format!("`{}`", a.to_string_lossy()))
             .collect::<Vec<_>>()
             .join(" ");
-        eprintln!(
-            "barista: --no-daemon → {} {}",
-            mvn_path.display(),
-            pretty,
-        );
+        eprintln!("barista: --no-daemon → {} {}", mvn_path.display(), pretty,);
     }
 
     match spawner.spawn(&mvn_path, &argv, &working_dir) {
@@ -362,14 +358,12 @@ mod tests {
     }
 
     impl Spawner for RecordingSpawner {
-        fn spawn(
-            &self,
-            mvn_path: &Path,
-            args: &[OsString],
-            working_dir: &Path,
-        ) -> SpawnOutcome {
-            *self.last.borrow_mut() =
-                Some((mvn_path.to_path_buf(), args.to_vec(), working_dir.to_path_buf()));
+        fn spawn(&self, mvn_path: &Path, args: &[OsString], working_dir: &Path) -> SpawnOutcome {
+            *self.last.borrow_mut() = Some((
+                mvn_path.to_path_buf(),
+                args.to_vec(),
+                working_dir.to_path_buf(),
+            ));
             SpawnOutcome::Exited(self.exit)
         }
     }
@@ -387,7 +381,10 @@ mod tests {
     fn build_argv_minimal_compile() {
         let g = default_globals();
         let argv = build_mvn_argv(&g, MavenPhase::Compile, &MavenVocabArgs { args: vec![] });
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(strs, vec!["compile"]);
     }
 
@@ -401,7 +398,10 @@ mod tests {
                 args: vec!["-DskipTests=false".into(), "-Dprop=value".into()],
             },
         );
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(strs, vec!["test", "-DskipTests=false", "-Dprop=value"]);
     }
 
@@ -409,10 +409,16 @@ mod tests {
     fn build_argv_quiet_emits_minus_q() {
         use crate::cli::Cli;
         use clap::Parser;
-        let cli =
-            Cli::try_parse_from(["barista", "--no-daemon", "--quiet", "compile"]).unwrap();
-        let argv = build_mvn_argv(&cli.global, MavenPhase::Compile, &MavenVocabArgs { args: vec![] });
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let cli = Cli::try_parse_from(["barista", "--no-daemon", "--quiet", "compile"]).unwrap();
+        let argv = build_mvn_argv(
+            &cli.global,
+            MavenPhase::Compile,
+            &MavenVocabArgs { args: vec![] },
+        );
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(strs, vec!["-q", "compile"]);
     }
 
@@ -420,10 +426,16 @@ mod tests {
     fn build_argv_double_verbose_emits_minus_x() {
         use crate::cli::Cli;
         use clap::Parser;
-        let cli =
-            Cli::try_parse_from(["barista", "--no-daemon", "-vv", "compile"]).unwrap();
-        let argv = build_mvn_argv(&cli.global, MavenPhase::Compile, &MavenVocabArgs { args: vec![] });
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let cli = Cli::try_parse_from(["barista", "--no-daemon", "-vv", "compile"]).unwrap();
+        let argv = build_mvn_argv(
+            &cli.global,
+            MavenPhase::Compile,
+            &MavenVocabArgs { args: vec![] },
+        );
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(strs, vec!["-X", "compile"]);
     }
 
@@ -431,10 +443,16 @@ mod tests {
     fn build_argv_no_color_emits_minus_b() {
         use crate::cli::Cli;
         use clap::Parser;
-        let cli =
-            Cli::try_parse_from(["barista", "--no-daemon", "--no-color", "compile"]).unwrap();
-        let argv = build_mvn_argv(&cli.global, MavenPhase::Compile, &MavenVocabArgs { args: vec![] });
-        let strs: Vec<String> = argv.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let cli = Cli::try_parse_from(["barista", "--no-daemon", "--no-color", "compile"]).unwrap();
+        let argv = build_mvn_argv(
+            &cli.global,
+            MavenPhase::Compile,
+            &MavenVocabArgs { args: vec![] },
+        );
+        let strs: Vec<String> = argv
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(strs, vec!["-B", "compile"]);
     }
 
@@ -457,7 +475,9 @@ mod tests {
 
     #[test]
     fn resolve_mvn_not_found_error_renders_code() {
-        let err = ResolveMvnError::NotFound { tried_maven_home: None };
+        let err = ResolveMvnError::NotFound {
+            tried_maven_home: None,
+        };
         let rendered = err.render();
         assert!(rendered.contains(ERR_CODE_MVN_NOT_FOUND));
         assert!(rendered.contains("MAVEN_HOME is unset"));
@@ -520,8 +540,10 @@ mod tests {
         let last = spawner.last.borrow();
         let (path, args, wd) = last.as_ref().unwrap();
         assert_eq!(path, &fake_mvn);
-        let arg_strs: Vec<String> =
-            args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        let arg_strs: Vec<String> = args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
         assert_eq!(arg_strs, vec!["compile", "-DskipTests"]);
         assert_eq!(wd, td.path());
     }

@@ -61,7 +61,8 @@ pub use progress::{
     HumanSink, NdjsonSink, NullSink, ProgressSink, make_progress_sink, make_runtime_progress_sink,
 };
 pub use report::{
-    GrindTreeReport, LockfileStatus, PourReport, PullReport, ReactorModule, TreeNode,
+    GrindTreeReport, LockfileStatus, MojoInvocation, PourReport, PullReport, ReactorModule,
+    TreeNode, VerifyReport,
 };
 
 use crate::cli::OutputFormat;
@@ -102,6 +103,16 @@ pub trait Renderer {
 
     /// Render the result of `barista pour`.
     fn render_pour(&mut self, report: &PourReport) -> RenderResult<()>;
+
+    /// Render the result of `barista verify` (and, eventually, every
+    /// other Maven-vocabulary lifecycle command — the same shape
+    /// covers `clean`/`compile`/`test`/…). Default implementation
+    /// returns `Ok(())` so renderers that don't yet know how to
+    /// surface this shape don't have to be touched until they grow
+    /// human-format affordances.
+    fn render_verify(&mut self, _report: &VerifyReport) -> RenderResult<()> {
+        Ok(())
+    }
 
     /// Render a terminal error. Commands call this from their error
     /// arm before exiting non-zero. Renderers in machine-readable

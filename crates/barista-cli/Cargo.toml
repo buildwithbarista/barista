@@ -31,6 +31,20 @@ barista-resolver = { path = "../barista-resolver" }
 barista-cache = { path = "../barista-cache" }
 barista-lockfile = { path = "../barista-lockfile" }
 barista-coords = { path = "../barista-coords" }
+# `barista-ipc` carries the wire types + Multiplexer used by
+# `barista verify` (M4.3 T1) to dispatch ActionRequest envelopes to
+# the barback daemon and collect ActionResult envelopes back. The
+# `BAR-DAEMON-CRASHED` wire-error contract (M4.2 T6) is exposed via
+# `barista_ipc::mux::DAEMON_CRASHED_CODE`; verify honours it via the
+# auto-respawn path in `cmd::daemon`.
+barista-ipc = { path = "../barista-ipc" }
+# Minimal tokio runtime to drive the async IPC `Multiplexer`. The
+# verify command spawns a current-thread runtime around the IPC
+# dispatch so the rest of the CLI stays synchronous; `rt` + `net`
+# + `io-util` + `macros` + `sync` + `time` are the features mux +
+# UDS transport depend on (mirrors `barista-ipc`'s own feature set).
+# `time` is also used by the auto-respawn ready-poll loop.
+tokio = { version = "1", features = ["rt", "io-util", "net", "macros", "sync", "time"] }
 
 [dev-dependencies]
 insta = "1.47"

@@ -18,7 +18,7 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use super::report::{GrindTreeReport, PourReport, PullReport};
+use super::report::{GrindTreeReport, PourReport, PullReport, VerifyReport};
 use super::{RenderError, RenderResult, Renderer};
 
 /// Renderer for `OutputFormat::Json`.
@@ -73,6 +73,10 @@ impl Renderer for JsonRenderer {
     }
 
     fn render_pour(&mut self, report: &PourReport) -> RenderResult<()> {
+        self.write_doc(report)
+    }
+
+    fn render_verify(&mut self, report: &VerifyReport) -> RenderResult<()> {
         self.write_doc(report)
     }
 

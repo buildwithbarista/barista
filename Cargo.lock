@@ -178,6 +178,7 @@ dependencies = [
  "barista-cache",
  "barista-config",
  "barista-coords",
+ "barista-ipc",
  "barista-lockfile",
  "barista-pom",
  "barista-resolver",
@@ -188,6 +189,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "toml",
  "which",
 ]

@@ -34,7 +34,7 @@ use std::time::SystemTime;
 
 use serde::Serialize;
 
-use super::report::{GrindTreeReport, PourReport, PullReport};
+use super::report::{GrindTreeReport, PourReport, PullReport, VerifyReport};
 use super::{RenderResult, Renderer};
 
 /// Renderer for `OutputFormat::Ndjson`.
@@ -238,6 +238,15 @@ impl Renderer for NdjsonRenderer {
     }
 
     fn render_pour(&mut self, report: &PourReport) -> RenderResult<()> {
+        let ts = self.now();
+        self.write_line(&Envelope {
+            event: "result",
+            timestamp: &ts,
+            payload: report,
+        })
+    }
+
+    fn render_verify(&mut self, report: &VerifyReport) -> RenderResult<()> {
         let ts = self.now();
         self.write_line(&Envelope {
             event: "result",

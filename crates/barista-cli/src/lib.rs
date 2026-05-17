@@ -20,8 +20,10 @@
 //! construct a `Cli` from an argv slice without re-invoking the
 //! process.
 
+pub mod action_graph;
 pub mod cli;
 pub mod cmd;
+pub mod daemon;
 pub mod output;
 pub mod project;
 

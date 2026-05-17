@@ -19,7 +19,7 @@ use std::io::Write;
 
 use barista_lockfile::LockfileEntry;
 
-use super::report::{GrindTreeReport, PourReport, PullReport, TreeNode};
+use super::report::{GrindTreeReport, PourReport, PullReport, TreeNode, VerifyReport};
 use super::{RenderResult, Renderer};
 
 /// Renderer for `OutputFormat::Human`.
@@ -63,6 +63,33 @@ impl Renderer for HumanRenderer {
         // Pre-renderer: `pour: <summary>` to stderr (gated on quiet
         // by the caller).
         writeln!(self.err, "pour: {}", report.summary())?;
+        Ok(())
+    }
+
+    fn render_verify(&mut self, report: &VerifyReport) -> RenderResult<()> {
+        // Mirror the `pull` / `pour` shape: `<phase>: <summary>` to
+        // stderr. The caller has already filtered on `--quiet`.
+        writeln!(self.err, "{}: {}", report.phase, report.summary())?;
+        // For non-trivial action graphs, surface a per-invocation
+        // summary so the developer can see which mojo took how long.
+        // Failed invocations include their `failure_message` for a
+        // one-glance diagnosis.
+        for inv in &report.invocations {
+            if inv.exit_code != 0 {
+                writeln!(
+                    self.err,
+                    "  ✗ {phase} :: {mojo} (exit={code}) — {msg}",
+                    phase = inv.phase,
+                    mojo = inv.mojo,
+                    code = inv.exit_code,
+                    msg = if inv.failure_message.is_empty() {
+                        inv.status.as_str()
+                    } else {
+                        inv.failure_message.as_str()
+                    },
+                )?;
+            }
+        }
         Ok(())
     }
 

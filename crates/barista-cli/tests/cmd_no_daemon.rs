@@ -278,7 +278,11 @@ fn sha256_file(path: &Path) -> String {
     // Use barista-cache's hash::sha256_hex if exposed; otherwise
     // shell out to `shasum`/`sha256sum` which are universally
     // available on macOS / Linux CI runners.
-    if let Ok(out) = Command::new("shasum").args(["-a", "256"]).arg(path).output() {
+    if let Ok(out) = Command::new("shasum")
+        .args(["-a", "256"])
+        .arg(path)
+        .output()
+    {
         if out.status.success() {
             let s = String::from_utf8_lossy(&out.stdout);
             if let Some(hex) = s.split_whitespace().next() {

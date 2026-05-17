@@ -10,6 +10,8 @@ pub mod maven_vocab;
 pub mod no_daemon;
 pub mod pour;
 pub mod pull;
+#[cfg(unix)]
+pub mod verify;
 pub mod wrapper;
 
 pub use maven_vocab::MavenPhase;
