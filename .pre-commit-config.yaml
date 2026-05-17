@@ -115,10 +115,19 @@ repos:
       # Docker or pip. CONTRIBUTING.md has the install instructions
       # alongside the gitleaks ones.
       # -----------------------------------------------------------------
+      # `--exclude tests/fixtures/sast/` keeps the synthetic-violation
+      # fixtures out of this scan: they are *required* to fire the
+      # custom rules (the entire point of the
+      # `semgrep-fixture-round-trip` CI job is to assert the exact
+      # finding count), so on a workstation `--all-files` scan they
+      # would otherwise produce three guaranteed findings on every
+      # run and block the commit. CI keeps scanning them via the
+      # round-trip job which targets the directory explicitly with
+      # the custom rule pack only.
       - id: semgrep
         name: semgrep (.semgrep/ rule pack)
         description: Run the curated Semgrep rules over staged Rust files.
-        entry: semgrep --config .semgrep/ --error --timeout=30 --max-target-bytes=1000000 --quiet
+        entry: semgrep --config .semgrep/ --exclude tests/fixtures/sast/ --error --timeout=30 --max-target-bytes=1000000 --quiet
         language: system
         types: [rust]
         pass_filenames: false

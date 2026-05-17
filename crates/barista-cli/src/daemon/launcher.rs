@@ -302,7 +302,6 @@ pub fn spawn_daemon(plan: &LaunchPlan, entry: &JvmEntry) -> Result<Child, Launch
     let java = locate_java()?;
 
     let mut argv_for_diag: Vec<String> = vec![java.to_string_lossy().into_owned()];
-    // nosemgrep: barista-rust-unchecked-command-new
     // The program path is the resolved `java` binary from
     // `locate_java()` — either `$JAVA_HOME/bin/java` (a configured
     // toolchain path) or `which::which("java")` (a $PATH lookup
@@ -311,6 +310,7 @@ pub fn spawn_daemon(plan: &LaunchPlan, entry: &JvmEntry) -> Result<Child, Launch
     // exactly the same trust boundary as the `--no-daemon` path:
     // we trust the user's $PATH / $JAVA_HOME the same way every
     // build tool does.
+    // nosemgrep: barista-rust-unchecked-command-new
     let mut cmd = Command::new(&java);
 
     match entry {
@@ -640,11 +640,11 @@ fn mvn_binary_name() -> &'static str {
 }
 
 fn mvn_dependency_classpath(barback_dir: &Path) -> Result<String, LauncherError> {
-    // nosemgrep: barista-rust-unchecked-command-new
     // `mvn_binary_name()` returns a `&'static str` literal ("mvn" /
     // "mvn.cmd"). The cfg-gated helper exists to keep the Windows
     // / Unix branch in one place, not to introduce a dynamic name —
     // semgrep flags the function call shape, not a real risk.
+    // nosemgrep: barista-rust-unchecked-command-new
     let out = Command::new(mvn_binary_name())
         .arg("-f")
         .arg(barback_dir.join("pom.xml"))
@@ -668,9 +668,9 @@ fn mvn_dependency_classpath(barback_dir: &Path) -> Result<String, LauncherError>
 }
 
 fn mvn_compile(barback_dir: &Path) -> Result<(), LauncherError> {
-    // nosemgrep: barista-rust-unchecked-command-new
     // See `mvn_dependency_classpath` above — `mvn_binary_name()`
     // is a static-`&str` cfg-gated literal, not a dynamic name.
+    // nosemgrep: barista-rust-unchecked-command-new
     let out = Command::new(mvn_binary_name())
         .arg("-f")
         .arg(barback_dir.join("pom.xml"))

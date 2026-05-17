@@ -50,9 +50,19 @@ rules:
       - pattern-not: std::process::Command::new("...")
       - pattern-not: process::Command::new("...")
       - pattern-not: Command::new("...")
+    # Scope the rule to production source under `crates/barista-cli/src/`
+    # (the only place we shell out to external Maven/Java toolchains in
+    # the wild) plus the synthetic-violation fixtures the round-trip
+    # job asserts against. Integration tests under
+    # `crates/barista-cli/tests/` are excluded: they invoke the
+    # binary-under-test via `barista_bin()` (a `CARGO_BIN_EXE_barista`
+    # path emitted by cargo), which is structurally identical to the
+    # production false-positive shape and has no user-controlled
+    # interpolation — the rule was firing on test harness boilerplate,
+    # not real risk.
     paths:
       include:
-        - "**/crates/barista-cli/**/*.rs"
+        - "**/crates/barista-cli/src/**/*.rs"
         - "**/tests/fixtures/sast/**/*.rs"
 
   - id: barista-rust-string-from-utf8-unchecked
