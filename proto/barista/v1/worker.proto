@@ -1,0 +1,684 @@
+// =============================================================================
+// Barista worker IPC — protocol v1
+// =============================================================================
+//
+// This file is the canonical wire-protocol contract between the `barista`
+// CLI (Rust) and the `barback` daemon (Java). The CLI submits actions
+// (mojo invocations), the daemon executes them inside an embedded Maven
+// core, and streams progress + a terminal result back. Multiple actions
+// may be in-flight concurrently on the same connection, discriminated by
+// `Envelope.request_id` and `ActionRequest.action_id`.
+//
+// Transport (out of scope for this file):
+//
+//   * Unix:    SOCK_STREAM UDS at `~/.barista/run/barback-<id>.sock`,
+//              file mode 0600 (owner-only). The kernel-enforced
+//              permission is the *only* authentication this protocol
+//              relies on. Anything readable on disk by the user is
+//              implicitly trusted on the wire.
+//   * Windows: Named pipe `\\.\pipe\barback-<id>`, DACL'd to the
+//              current user SID plus `NT AUTHORITY\SYSTEM`.
+//
+// Framing: each message is preceded by a 4-byte big-endian unsigned
+// length, followed by exactly that many bytes of `Envelope` payload.
+// `Envelope` is the only top-level type — every other message is
+// embedded in `Envelope.body`.
+//
+// -----------------------------------------------------------------------------
+// Schema-evolution policy
+// -----------------------------------------------------------------------------
+//
+// proto3 semantics apply: unknown fields are preserved on round-trip and
+// ignored by readers that do not know them. The following rules govern
+// changes to this file across releases:
+//
+//   1. **Field tag numbers are permanent.** Once a tag is assigned and
+//      shipped, it MUST NOT be reused for a different field — even if
+//      the original field is removed. Removed fields move to a `reserved`
+//      block in their parent message so future authors can't accidentally
+//      collide.
+//
+//   2. **Forward-compatible changes** are permitted on the v1 line:
+//        - Adding a new field with a fresh tag number.
+//        - Adding a new variant to `Envelope.body` (fresh tag in the
+//          oneof).
+//        - Adding a new top-level message type.
+//        - Adding a new enum value (readers default to the zero value
+//          on unknown).
+//      These changes do not require a protocol-version bump. Older
+//      readers ignore unknown fields; newer readers tolerate the
+//      absence of fields older peers don't send.
+//
+//   3. **Backward-incompatible changes** require a new package
+//      (`barista.v2`) and a fresh `proto/barista/v2/` directory. The
+//      v1 line keeps shipping until v2 is negotiable end-to-end. See
+//      PRD §12.9 for the negotiation mechanism (`Envelope.version`
+//      and `BAR-PROTO-001` error code).
+//
+//   4. **Field renames are wire-invisible**, but agents reading this
+//      file rely on names. A rename without a strong justification
+//      churns downstream code (Rust prost types, Java POJOs, JSON
+//      reflection) for no benefit. Prefer adding a new field and
+//      deprecating the old one with a comment.
+//
+// Generated bindings:
+//   * Rust:   `crates/barista-ipc/src/proto.rs` (prost/tonic, generated
+//             by `build.rs` — landed in M4.1 Task 2).
+//   * Java:   `barback/src/main/java/com/bluminal/barista/barback/proto/`
+//             (protoc-gen-java, wired into the barback Maven build —
+//             landed in M4.1 Task 3).
+//
+// Neither generated tree exists yet at the time this file is authored;
+// the binding-generation tasks add them.
+// =============================================================================
+
+syntax = "proto3";
+
+package barista.v1;
+
+option java_package = "com.bluminal.barista.barback.proto";
+option java_multiple_files = true;
+option java_outer_classname = "WorkerProto";
+option optimize_for = SPEED;
+
+// -----------------------------------------------------------------------------
+// Envelope — every wire message is an Envelope.
+// -----------------------------------------------------------------------------
+//
+// `version` lets readers reject an Envelope from an incompatible peer
+// before attempting to decode the body. v0.x always speaks v1; v1.x
+// introduces explicit negotiation (see PRD §12.9).
+//
+// `request_id` is CLI-generated, unique per connection, and echoed by
+// the daemon on every response that pertains to this request. Combined
+// with `ActionRequest.action_id` (and `ActionResult.action_id`,
+// `ProgressEvent.action_id`, `CancelRequest.action_id`,
+// `ActionStream.action_id`) it lets concurrent actions multiplex on a
+// single socket without head-of-line blocking.
+//
+// `body` is a `oneof` so exactly one message variant is set per
+// Envelope. Tag numbers in the oneof are stable across the v1 line; new
+// variants get fresh tags only.
+message Envelope {
+  // Protocol version. v0.x daemons + CLIs always send `1`. Mismatched
+  // peers respond with `Error{code: "BAR-PROTO-001"}` and close the
+  // connection (PRD §12.9).
+  uint32 version = 1;
+
+  // CLI-generated, unique per connection. Echoed on every response.
+  uint64 request_id = 2;
+
+  // Exactly one body is set per Envelope.
+  oneof body {
+    // Connection liveness — see Ping/Pong.
+    Ping ping = 10;
+    Pong pong = 11;
+
+    // Action submission and reporting.
+    ActionRequest action = 12;
+    ActionStream stream = 13;
+    ActionResult result = 14;
+    ProgressEvent progress = 18;
+    CancelRequest cancel = 19;
+
+    // Daemon lifecycle and introspection.
+    Shutdown shutdown = 15;
+    StatusRequest status_request = 16;
+    StatusResponse status = 17;
+
+    // Terminal error envelope (tag 99 is reserved by convention for
+    // diagnostic shapes — keep new tags away from it).
+    Error error = 99;
+  }
+
+  // Reserved tag space:
+  //   3..9   reserved for future Envelope-level metadata (e.g.
+  //          tracing context, compression flags per PRD §12.10).
+  //   20..98 reserved for future body variants.
+  reserved 3 to 9, 20 to 98;
+}
+
+// -----------------------------------------------------------------------------
+// Ping / Pong — connection liveness handshake (PRD §12.3).
+// -----------------------------------------------------------------------------
+
+// `Ping` is sent by the CLI as the first message on a fresh
+// connection. Daemons that do not respond with `Pong` within 1s are
+// considered unhealthy and the CLI tears the connection down.
+message Ping {
+  // Free-form client identification, e.g. `"barista 0.1.0"`.
+  string client = 1;
+
+  // CLI's monotonic-ish wall clock at send. Echoed in `Pong` so the CLI
+  // can compute round-trip time without keeping side state.
+  int64 sent_at_unix_micros = 2;
+}
+
+// `Pong` answers a `Ping`. Carries enough metadata for the CLI to
+// confirm the daemon's toolchain matches expectations (e.g. JDK
+// version) before submitting actions.
+message Pong {
+  // Free-form daemon identification, e.g. `"barback 0.1.0"`.
+  string daemon = 1;
+
+  // Toolchain identifier — `<vendor>-<feature>` style, e.g.
+  // `"temurin-21"`.
+  string jdk_id = 2;
+
+  // JDK version string, e.g. `"21.0.3"`.
+  string jdk_version = 3;
+
+  // Daemon's wall clock at response. Useful for clock-skew detection.
+  int64 server_unix_micros = 4;
+
+  // Echo of `Ping.sent_at_unix_micros`. CLI uses (now - this) as RTT.
+  int64 client_unix_micros = 5;
+}
+
+// -----------------------------------------------------------------------------
+// ActionRequest — submit a single mojo invocation to the daemon.
+// -----------------------------------------------------------------------------
+//
+// Mirrors PRD §12.2's `ActionRequest` shape. The fields below are the
+// minimum set the daemon needs to construct a `MojoExecution` and
+// dispatch it inside the embedded Maven core. Anything that requires
+// privileged access (e.g. repository credentials for `deploy`) flows
+// in via `credentials`; everything else is plain build context.
+message ActionRequest {
+  // CLI-generated UUID. Echoed on every response that pertains to this
+  // action (`ActionStream`, `ActionResult`, `ProgressEvent`,
+  // `CancelRequest`). Stable for the lifetime of the action; the CLI
+  // uses it as the cross-referencing key in user-facing output.
+  string action_id = 1;
+
+  // Canonical Maven mojo coordinate, e.g.
+  // `"org.apache.maven.plugins:maven-compiler-plugin:3.11.0:compile"`.
+  // Daemon parses this into a structured `MojoCoordinate`; see
+  // `Mojo` below for the same data in structured form (used in
+  // `ProgressEvent` where the structure aids UI rendering).
+  string mojo_coords = 2;
+
+  // Absolute path to the reactor root for this build. Maven plugins
+  // that consult `MavenSession.getExecutionRootDirectory()` see this.
+  string project_root = 3;
+
+  // Absolute path to the `pom.xml` for the module this action targets.
+  string pom_path = 4;
+
+  // CBOR-encoded effective POM blob, per PRD §12.7. The Java side
+  // decodes via `jackson-dataformat-cbor` into Maven's `Model` /
+  // `MavenProject` domain types, avoiding a full POM-resolver pass
+  // inside the daemon. See PRD §12.7 for the document shape.
+  bytes effective_pom_blob = 5;
+
+  // Project classpath — paths to JARs in the content-addressed cache.
+  // Order matters; this is the order Maven sees on the compiler /
+  // surefire / etc. classpath.
+  repeated string classpath = 6;
+
+  // Plugin classpath — paths to JARs that load *the plugin itself*,
+  // distinct from the build classpath above. Maven's plugin
+  // classloader is constructed from this.
+  repeated string plugin_classpath = 7;
+
+  // `-Dkey=value` system properties for this action's JVM context.
+  // Includes both user-supplied `-D` flags and properties derived from
+  // the effective POM (e.g. `<properties>` block).
+  map<string, string> system_properties = 8;
+
+  // Environment variables to expose to the mojo. Subset of the CLI's
+  // own environment; the CLI filters out anything sensitive that the
+  // user did not explicitly opt into.
+  map<string, string> environment = 9;
+
+  // Working directory for the mojo invocation. Typically equals the
+  // directory containing `pom_path`; isolated for plugins that consult
+  // `System.getProperty("user.dir")`.
+  string working_directory = 10;
+
+  // Stream identifier the daemon should tag this action's stdout
+  // chunks with (`ActionStream.stream_id`). Allocated by the CLI.
+  int32 stdout_stream_id = 11;
+
+  // Stream identifier for stderr chunks.
+  int32 stderr_stream_id = 12;
+
+  // If true, suppress non-essential console output. Maps to Maven's
+  // `--quiet` / `-q` semantics.
+  bool quiet = 13;
+
+  // Maven compatibility mode for this action: `"3"` or `"4"`. The
+  // daemon dispatches to the embedded core selected at startup; this
+  // field exists primarily to detect a CLI-vs-daemon mismatch and
+  // surface a clear error before the mojo runs.
+  string maven_compat = 14;
+
+  // Additional JVM args. Forwarded from `.mvn/jvm.config` plus any
+  // user-supplied flags. The daemon validates these against an
+  // allowlist before honoring them (out of scope for this schema).
+  repeated string jvm_args = 15;
+
+  // Optional credentials envelope. Populated ONLY for actions that
+  // demonstrably need it — e.g. mojos that perform repository deploys
+  // (`maven-deploy-plugin:deploy`, `maven-deploy-plugin:deploy-file`),
+  // mojos that fetch from authenticated mirrors, or release-plugin
+  // goals that push tags via SCM. Compile / test / package mojos
+  // MUST NOT receive credentials. See the `CredentialsEnvelope`
+  // message below for the security contract.
+  CredentialsEnvelope credentials = 16;
+
+  // Reserved tag space for future ActionRequest fields:
+  //   17..29 reserved (mojo-execution metadata, e.g. forked-lifecycle
+  //          hints, plugin-specific overrides).
+  reserved 17 to 29;
+}
+
+// -----------------------------------------------------------------------------
+// Mojo — structured Maven plugin coordinate.
+// -----------------------------------------------------------------------------
+//
+// The wire format for action submission is `ActionRequest.mojo_coords`
+// (a colon-joined string). This message is the same data in
+// structured form, used in `ProgressEvent` where the UI may want to
+// render groupId, artifactId, version, and goal independently.
+//
+// `version` is optional — Maven plugin coordinates can be
+// `groupId:artifactId:goal` (version resolved from `<pluginManagement>`)
+// or `groupId:artifactId:version:goal`.
+message Mojo {
+  string group_id = 1;
+  string artifact_id = 2;
+  // Optional. Empty when the version is resolved from the project's
+  // `<pluginManagement>` block at execution time.
+  string version = 3;
+  string goal = 4;
+
+  // Optional execution-id (`<execution><id>...`); identifies which
+  // configured execution within the plugin's lifecycle binding this
+  // event refers to.
+  string execution_id = 5;
+}
+
+// -----------------------------------------------------------------------------
+// CredentialsEnvelope — repository auth payload for IPC.
+// -----------------------------------------------------------------------------
+//
+// CONTRACT
+//
+//   - Source. Entries are populated from `barista-config`'s
+//     `settings.xml` parser (one entry per `<server>` element). The
+//     password is the *decrypted* value: if `<server><password>` was
+//     `{...}`-wrapped, `barista-config` ran it through the Maven
+//     master-password pipeline before this envelope was constructed.
+//     If decryption failed, the action MUST be aborted before reaching
+//     IPC — encrypted ciphertext MUST NOT cross the wire.
+//
+//   - Lifetime. The envelope exists only for the duration of a single
+//     action. It is constructed by the CLI immediately before sending
+//     the `ActionRequest`, transported across the 0600 UDS (Unix) or
+//     ACL'd named pipe (Windows), consumed by the daemon to authorize
+//     the mojo invocation, and then dropped. The transport-level
+//     buffer (CLI send buffer, daemon receive buffer) MUST be zeroed
+//     after the message has been parsed by the receiving end — this is
+//     a Task 5 implementation concern; the schema documents the
+//     contract.
+//
+//   - Scope. The envelope is OPTIONAL on `ActionRequest`. It MUST only
+//     be populated for actions whose mojo requires authenticated
+//     repository access:
+//
+//         * `maven-deploy-plugin:deploy` / `:deploy-file`
+//         * `maven-release-plugin:perform`
+//         * any mojo configured to fetch from an authenticated
+//           `<mirror>` or `<repository>` not satisfied by the local
+//           CAS.
+//
+//     Compile, test, package, and other no-auth mojos MUST NOT receive
+//     this envelope. The CLI is the authority on "does this mojo need
+//     creds" — the daemon does not infer scope.
+//
+//   - Schema. Entries are server-id keyed (matching `settings.xml`
+//     `<server><id>...`). Each entry carries a username and a
+//     credential discriminated by `oneof`: password, token, or
+//     SSH key material. Mutually exclusive at the message level so
+//     consumers can dispatch via a single `match` / `switch`.
+//
+//   - Logging. NEITHER side may log the contents of this envelope.
+//     Diagnostics referencing a credential SHOULD identify the entry
+//     by `server_id` only.
+//
+//   - Wire protection. The schema does NOT carry transport-layer
+//     guarantees (no TLS-equivalent envelope encryption). The 0600
+//     UDS / per-user-SID-DACL'd named pipe established in M4.1
+//     Task 5 is the sole protection in flight. Off-host transport
+//     (e.g. roastery deploys, taps in v0.2+) requires a different
+//     envelope shape that includes wire-level encryption.
+message CredentialsEnvelope {
+  // One entry per `<server>` in the originating settings.xml that the
+  // action's resolved repository / mirror / SCM endpoint matches.
+  // Empty entries vec is legal (means "the CLI evaluated scope and
+  // determined no credentials are needed for this action"); in that
+  // case the envelope should normally be omitted entirely, but
+  // tolerating an empty vec keeps the construction code simpler.
+  repeated Credential entries = 1;
+}
+
+// Single credential entry. The `secret` oneof carries exactly one of
+// {password, token, ssh_key} — mutually exclusive at the schema level.
+// `username` is independent and may be set in combination with any
+// secret variant (or alone for SSH-agent / kerberos-style flows where
+// the username is the only secret material).
+message Credential {
+  // `<server><id>` from settings.xml. Used by the daemon to look up
+  // the matching repository / mirror / SCM endpoint at mojo
+  // configuration time.
+  string server_id = 1;
+
+  // Optional. `<server><username>`. Some auth flows (e.g.
+  // anonymous-token-only deploys) don't carry a username.
+  string username = 2;
+
+  // Decrypted secret material. Exactly one variant is set.
+  oneof secret {
+    // Decrypted plaintext password from `<server><password>`. If the
+    // settings.xml value was `{...}`-wrapped, this is the result of
+    // running it through the Maven master-password pipeline.
+    string password = 3;
+
+    // Bearer / API token from `<server><token>` or equivalent
+    // configuration. Conventionally distinguished from `password` so
+    // the daemon can pick the right `Authorization: Bearer` vs
+    // `Authorization: Basic` header at the HTTP layer.
+    string token = 4;
+
+    // SSH key material — concatenated private key (PEM) + optional
+    // passphrase, for `<server><privateKey>` / `<passphrase>` style
+    // entries. v0.1 sends both as a single struct so SSH-based SCM
+    // pushes from `maven-release-plugin` work without a follow-up
+    // round trip.
+    SshKey ssh_key = 5;
+  }
+
+  // Reserved tag space:
+  //   6..15 reserved for future credential metadata (e.g. expiry,
+  //         per-entry scope hints, OAuth client-id).
+  reserved 6 to 15;
+}
+
+// SSH key material. Carries the private key in PEM form and an
+// optional passphrase. Both fields receive the same lifetime + zero-on-
+// drop treatment as `Credential.password`.
+message SshKey {
+  // PEM-encoded private key bytes. Held as `bytes` (not `string`) so
+  // binary key formats don't have to round-trip through UTF-8.
+  bytes private_key_pem = 1;
+
+  // Optional decrypted passphrase. Empty when the key is unencrypted.
+  string passphrase = 2;
+}
+
+// -----------------------------------------------------------------------------
+// ActionStream — chunked stdout/stderr from an in-flight action.
+// -----------------------------------------------------------------------------
+//
+// The daemon emits zero or more `ActionStream` envelopes per action,
+// each carrying a slice of the mojo's stdout or stderr. `stream_id`
+// matches `ActionRequest.stdout_stream_id` or `stderr_stream_id`.
+// `end == true` on the terminal chunk for that stream (so the CLI
+// knows it can flush + close the corresponding output buffer
+// without waiting for `ActionResult`).
+message ActionStream {
+  // Which stream this chunk belongs to. Matches one of the IDs the
+  // CLI assigned in `ActionRequest`.
+  int32 stream_id = 1;
+
+  // Raw bytes. UTF-8 text in practice, but the protocol is byte-clean
+  // so non-text plugin output (binary logs, ANSI escape sequences)
+  // survives round-trip.
+  bytes payload = 2;
+
+  // True on the final chunk for this `stream_id`.
+  bool end = 3;
+
+  // Action identifier the chunk is associated with. Required for
+  // multiplexed connections so the CLI can route output to the right
+  // user-facing buffer.
+  string action_id = 4;
+}
+
+// -----------------------------------------------------------------------------
+// ProgressEvent — structured in-flight progress notification.
+// -----------------------------------------------------------------------------
+//
+// Distinct from `ActionStream` (which carries raw stdout/stderr).
+// `ProgressEvent` is the wire form of the v0.1 NDJSON progress event
+// schema (`schema/output/v1/progress-event.json`) — same semantic
+// shape, encoded in protobuf for IPC efficiency. The CLI translates
+// these into the NDJSON event stream the user sees when
+// `--output ndjson` is in effect, and aggregates into the terminal-UI
+// progress bars otherwise.
+//
+// `kind` is the discriminator. The set is fixed by the v0.1 schema and
+// is enumerated below; additions are forward-compatible (older readers
+// see `KIND_UNSPECIFIED` and degrade gracefully).
+message ProgressEvent {
+  // Discriminator. Mirrors the `event` field of the NDJSON schema.
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    STARTED = 1;
+    RESOLVING = 2;
+    FETCHING = 3;
+    FETCHED = 4;
+    CACHED = 5;
+    WRITING_LOCKFILE = 6;
+    COMPLETED = 7;
+    // ERROR / RESULT are intentionally NOT modeled here — terminal
+    // status is reported via `ActionResult`. `ProgressEvent` is purely
+    // for in-flight signal.
+  }
+  Kind kind = 1;
+
+  // Action this event pertains to. Required.
+  string action_id = 2;
+
+  // RFC 3339 timestamp with millisecond precision, e.g.
+  // `"2026-05-14T12:34:56.789Z"`. String-encoded to match the NDJSON
+  // schema's `timestamp` field byte-for-byte after translation.
+  string timestamp = 3;
+
+  // Optional Maven coordinate the event refers to (`group:artifact:version`
+  // form). Required by the NDJSON schema for `FETCHING`/`FETCHED`/
+  // `CACHED`; absent for run-level events.
+  string coord = 4;
+
+  // Optional coarse-grained phase tag. Free-form string ("resolve",
+  // "fetch", "lock-write", "pour") — kept open-ended in the wire
+  // schema so phase taxonomy can evolve without a tag bump.
+  string phase = 5;
+
+  // Optional progress percentage in [0, 100]. Encoded as double so
+  // sub-percent precision survives the wire trip.
+  double progress = 6;
+
+  // Optional structured mojo coordinate. Populated for events the
+  // daemon emits from inside a mojo execution; absent for events
+  // emitted by the daemon's outer scheduler.
+  Mojo mojo = 7;
+
+  // Optional free-form per-event details. Mirrors the NDJSON schema's
+  // `payload` (sized for diagnostic strings, plugin-specific counters,
+  // and similar tag-value pairs). Keep small — bulk output goes via
+  // `ActionStream`.
+  map<string, string> details = 8;
+}
+
+// -----------------------------------------------------------------------------
+// CancelRequest — abort an in-flight action.
+// -----------------------------------------------------------------------------
+//
+// Sent by the CLI (typically in response to SIGINT) to abort a single
+// in-flight action without tearing down the connection. The daemon
+// responds by interrupting the worker thread (see PRD §12.6); the
+// terminal `ActionResult` for the action carries `Status.CANCELLED`.
+//
+// Multiple concurrent cancellations are supported — each
+// `CancelRequest` targets exactly one `action_id`.
+message CancelRequest {
+  // Action to cancel. Must match a previously-submitted
+  // `ActionRequest.action_id` that has not yet produced a terminal
+  // `ActionResult`. Unknown action IDs produce
+  // `Error{code: "BAR-DAEMON-CANCEL-UNKNOWN"}` and are otherwise
+  // ignored.
+  string action_id = 1;
+
+  // Optional cooperative-cancel deadline. The daemon attempts a soft
+  // `Thread.interrupt()` for this many milliseconds; if the worker has
+  // not surrendered by the deadline, the daemon force-stops it (per
+  // PRD §12.6, default 5000ms when unset).
+  uint32 grace_period_ms = 2;
+}
+
+// -----------------------------------------------------------------------------
+// ActionResult — terminal outcome for a single action.
+// -----------------------------------------------------------------------------
+//
+// Exactly one `ActionResult` is emitted per `ActionRequest`. After
+// this envelope is sent, no further `ActionStream` / `ProgressEvent`
+// for the same `action_id` is valid.
+message ActionResult {
+  // Echo of `ActionRequest.action_id`.
+  string action_id = 1;
+
+  // Coarse-grained outcome. `UNKNOWN` is the zero value and indicates
+  // a daemon-internal bug if observed in the wild.
+  enum Status {
+    UNKNOWN = 0;
+    SUCCESS = 1;
+    FAILURE = 2;
+    TIMEOUT = 3;
+    CRASHED = 4;
+    CANCELLED = 5;
+  }
+  Status status = 2;
+
+  // Mojo exit code. Convention: 0 == success, non-zero == failure
+  // (mirrors `mvn` exit semantics). When `status == CRASHED` the
+  // exit code reflects the JVM's signal-derived exit, e.g. 134 for
+  // SIGABRT.
+  int32 exit_code = 3;
+
+  // Wall-clock duration of the action, microseconds.
+  int64 duration_micros = 4;
+
+  // Artifacts produced by the action (output JARs, generated sources,
+  // etc.). Used by the CLI to compute output-divergence hashes and
+  // populate the structured-output schemas. May be empty for actions
+  // that produce no artifacts.
+  repeated ProducedArtifact artifacts = 5;
+
+  // Human-readable failure summary. Populated only when `status` is
+  // not `SUCCESS`. Mirrors `Error.message` semantically but lives on
+  // `ActionResult` so the failure is delivered atomically with the
+  // outcome.
+  string failure_message = 6;
+
+  // Optional stack trace for daemon-side or plugin-side exceptions.
+  // Captured verbatim; the daemon does not redact.
+  string failure_stack = 7;
+
+  // Counters and plugin-specific structured data. E.g.
+  // `{"tests.run": "142", "tests.failed": "0"}` for surefire.
+  // Free-form by design — adding a typed field for every plugin is
+  // out of scope.
+  map<string, string> attributes = 8;
+
+  // Optional structured error envelope. Mutually informative with
+  // `failure_message` / `failure_stack`; the typed envelope is
+  // preferred for programmatic consumers (CI integrations, autofix
+  // tooling), the strings remain for human display.
+  Error error = 9;
+
+  // Reserved for future ActionResult extensions:
+  //   10..19 reserved (per-mojo structured outputs, e.g. test
+  //          reports, coverage summaries).
+  reserved 10 to 19;
+}
+
+// ProducedArtifact — a file the action wrote to the project's build
+// output. The CLI hashes these against the lockfile's expected outputs
+// and against the parity-check fixture (M4.3) to detect divergence.
+message ProducedArtifact {
+  // Absolute path on the daemon side. The CLI translates to its own
+  // view of the filesystem before user-facing display.
+  string path = 1;
+
+  // Size in bytes. Filled in by the daemon after the artifact is
+  // closed.
+  int64 size_bytes = 2;
+
+  // SHA-256 of the artifact content, lowercase hex.
+  string sha256 = 3;
+}
+
+// -----------------------------------------------------------------------------
+// Shutdown / StatusRequest / StatusResponse — daemon lifecycle.
+// -----------------------------------------------------------------------------
+
+// `Shutdown` asks the daemon to drain in-flight actions and terminate.
+// The daemon stops accepting new `ActionRequest`s immediately, waits
+// up to `drain_seconds` for in-flight actions to complete (or
+// cancels them past that), and then closes the socket and exits.
+message Shutdown {
+  // Maximum time to wait for in-flight actions before force-cancel.
+  // 0 means "cancel immediately, do not drain".
+  int32 drain_seconds = 1;
+}
+
+// `StatusRequest` triggers a single `StatusResponse`. Used by
+// `barista barback status` and by health-check probes.
+message StatusRequest {}
+
+// `StatusResponse` reports daemon health and capacity at the moment
+// the request was handled. All fields are point-in-time snapshots.
+message StatusResponse {
+  int64 uptime_seconds = 1;
+  int32 workers_total = 2;
+  int32 workers_busy = 3;
+  int64 actions_executed = 4;
+  int64 actions_failed = 5;
+  int64 cached_classloaders = 6;
+  int64 heap_used_bytes = 7;
+  int64 heap_max_bytes = 8;
+
+  // JIT-warmup state, one of `"cold"`, `"warming"`, `"warm"`. Free-form
+  // string in the wire schema so the taxonomy can evolve without a
+  // tag bump.
+  string jit_state = 9;
+}
+
+// -----------------------------------------------------------------------------
+// Error — terminal error envelope.
+// -----------------------------------------------------------------------------
+//
+// Used both as a top-level `Envelope.body` variant (protocol-level
+// errors, connection-level errors) and embedded inside `ActionResult`
+// (action-scoped errors). `code` is the canonical machine-readable
+// identifier (e.g. `"BAR-DEPLOY-AUTH-MISSING"`, `"BAR-PROTO-001"`);
+// `message` is the human-readable summary; `details` carries optional
+// structured context (e.g. `{"server_id": "central"}`).
+message Error {
+  // Canonical error code, e.g. `"BAR-DEPLOY-AUTH-MISSING"`. See PRD
+  // §A (error catalogue) for the registered set.
+  string code = 1;
+
+  // Human-readable summary.
+  string message = 2;
+
+  // Optional structured context. Keys are short identifiers,
+  // values are stringified. Never carries secret material.
+  map<string, string> details = 3;
+
+  // Optional action identifier when the error is scoped to a single
+  // action. Empty for connection-level / protocol-level errors.
+  string action_id = 4;
+}
