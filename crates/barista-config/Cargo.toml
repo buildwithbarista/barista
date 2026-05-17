@@ -18,10 +18,15 @@ quick-xml = "0.40"
 tempfile = "3"
 barista-test-fixtures = { path = "../barista-test-fixtures" }
 insta = "1.47"
+criterion = { version = "0.8", default-features = false, features = ["plotters", "cargo_bench_support"] }
 
 [[example]]
 name = "survey-extensions"
 path = "examples/survey-extensions.rs"
+
+[[bench]]
+name = "load"
+harness = false
 
 [lints]
 workspace = true

@@ -196,6 +196,7 @@ name = "barista-config"
 version = "0.1.0-alpha.0"
 dependencies = [
  "barista-test-fixtures",
+ "criterion",
  "insta",
  "quick-xml",
  "serde",
@@ -208,6 +209,7 @@ dependencies = [
 name = "barista-coords"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "criterion",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
