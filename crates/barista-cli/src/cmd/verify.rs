@@ -51,10 +51,11 @@ use std::time::Instant;
 use barista_config::{Config, LoadAudit, LoaderError, LoaderInputs, load_effective_config};
 use barista_ipc::{Credential, CredentialsEnvelope, credential};
 
-use crate::action_graph::{ActionGraph, PlannedAction, build_action_request, lifecycle_graph};
+use crate::action_graph::{ActionGraph, PlannedAction, build_action_request};
 use crate::cli::{GlobalFlags, MavenVocabArgs, OutputFormat, PourArgs};
 use crate::cmd::MavenPhase;
 use crate::cmd::pour::{PourError, PourReport, run_inner as pour_run};
+use crate::cmd::reactor::{ModuleNode, Reactor, ReactorError};
 use crate::daemon::launcher::{LaunchPlan, LauncherError};
 use crate::daemon::respawn::{RespawnError, submit_with_respawn};
 use crate::daemon::{
@@ -207,7 +208,16 @@ pub fn dispatch_lifecycle(
     }
 
     // -- 4. Action graph --------------------------------------------------
-    let graph = lifecycle_graph(phase, root.root.clone(), /* include_clean: */ false);
+    //
+    // Build a Reactor (M4.3 T4). Single-module projects produce a
+    // 1-module / 1-level reactor and dispatch the existing serial
+    // loop unchanged. Multi-module projects activate the per-level
+    // `tokio::join_all` dispatcher gated by the worker budget.
+    let reactor = Reactor::from_project_root(&root.root, phase, /* include_clean: */ false)
+        .map_err(VerifyError::from_reactor)?;
+    // Back-compat: single-module path keeps using the local `graph`
+    // binding so the existing dispatch loop below is untouched.
+    let graph = reactor.modules[0].action_graph.clone();
 
     // -- 5. Credentials envelope for deploy ------------------------------
     // Only `deploy` ships credentials. Other phases (including
@@ -236,6 +246,86 @@ pub fn dispatch_lifecycle(
     let initial_handle = discover_or_spawn(&plan, || Ok(jvm_entry.clone()))?;
 
     // -- 8. Dispatch + collect --------------------------------------------
+    //
+    // Single-module fast path: walk the action graph sequentially,
+    // reusing the existing serial dispatcher. The single-module case
+    // is the M4.3 T1 happy path and the reactor wrapper is a no-op
+    // overhead for it; bypassing the async `reactor::run` keeps the
+    // pre-T4 byte-equality invariants intact.
+    //
+    // Multi-module path: dispatch through `reactor::run` with per-
+    // level `tokio::join_all` parallelism. Per-module action streams
+    // remain sequential (Maven lifecycle ordering inside a module is
+    // load-bearing); the parallelism is at the module level.
+    let total_planned: usize = reactor.modules.iter().map(|m| m.action_graph.actions.len()).sum();
+    let (invocations, executed, failed_actions, total_respawns, final_handle) =
+        if reactor.is_single_module() {
+            dispatch_single_module(
+                &plan,
+                &jvm_entry,
+                initial_handle,
+                &graph,
+                &root.root,
+                deploy_credentials.as_ref(),
+            )?
+        } else {
+            dispatch_reactor_modules(
+                &plan,
+                &jvm_entry,
+                initial_handle,
+                &reactor,
+                &root.root,
+                deploy_credentials.as_ref(),
+                workers,
+            )?
+        };
+    let mut handle = final_handle;
+
+    // Best-effort: if we spawned the child, leave it running for
+    // subsequent invocations (the daemon's idle-shutdown timer will
+    // reap it). We do NOT join — joining would block until the
+    // daemon's idle-shutdown fires (30 min by default).
+    if let Some(child) = handle.child.as_mut() {
+        // Detach: we want the child to outlive this process.
+        let _ = child;
+    }
+
+    let total_ms = u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+    Ok(VerifyReport {
+        project_root: root.root.clone(),
+        phase: phase.as_str().to_string(),
+        planned_actions: total_planned,
+        executed_actions: executed,
+        failed_actions,
+        daemon_respawns: total_respawns,
+        invocations,
+        duration_ms: total_ms,
+    })
+}
+
+/// Serial single-module dispatcher (pre-T4 behaviour).
+///
+/// Walks the action graph one action at a time; on Maven failure,
+/// aborts the lifecycle (matching `mvn`'s own "stop on first error"
+/// default).
+#[allow(clippy::too_many_arguments)]
+fn dispatch_single_module(
+    plan: &LaunchPlan,
+    jvm_entry: &crate::daemon::launcher::JvmEntry,
+    initial_handle: crate::daemon::launcher::DaemonHandle,
+    graph: &ActionGraph,
+    project_root: &std::path::Path,
+    deploy_credentials: Option<&CredentialsEnvelope>,
+) -> Result<
+    (
+        Vec<MojoInvocation>,
+        usize,
+        usize,
+        u32,
+        crate::daemon::launcher::DaemonHandle,
+    ),
+    VerifyError,
+> {
     let mut handle = initial_handle;
     let mut invocations = Vec::with_capacity(graph.actions.len());
     let mut failed_actions = 0usize;
@@ -243,18 +333,11 @@ pub fn dispatch_lifecycle(
     let mut executed = 0usize;
     for action in &graph.actions {
         if failed_actions > 0 {
-            // Maven aborts the lifecycle on the first failure; we
-            // honour the same semantics. The unexecuted invocations
-            // remain absent from the report so JSON consumers can see
-            // "we stopped here".
             break;
         }
-        let mut request = build_action_request(&graph, action, &root.root);
-        // Attach credentials ONLY to the deploy action itself. Earlier
-        // phases (compile/test/package/verify/install) in a `deploy`
-        // graph run un-credentialled — they don't need server auth.
+        let mut request = build_action_request(graph, action, project_root);
         if action.phase == "deploy"
-            && let Some(env) = &deploy_credentials
+            && let Some(env) = deploy_credentials
         {
             request.credentials = Some(env.clone());
         }
@@ -262,7 +345,7 @@ pub fn dispatch_lifecycle(
         let module = graph.module_root.clone();
 
         let action_started = Instant::now();
-        let (outcome, next_handle) = submit_with_respawn(&plan, handle, &jvm_entry, request)
+        let (outcome, next_handle) = submit_with_respawn(plan, handle, jvm_entry, request)
             .map_err(|e| classify_respawn_error(&phase_name, e))?;
         handle = next_handle;
         let duration_ms = u64::try_from(action_started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -292,26 +375,262 @@ pub fn dispatch_lifecycle(
             duration_ms,
         });
     }
+    Ok((invocations, executed, failed_actions, total_respawns, handle))
+}
 
-    // Best-effort: if we spawned the child, leave it running for
-    // subsequent invocations (the daemon's idle-shutdown timer will
-    // reap it). We do NOT join — joining would block until the
-    // daemon's idle-shutdown fires (30 min by default).
-    if let Some(child) = handle.child.as_mut() {
-        // Detach: we want the child to outlive this process.
-        let _ = child;
+/// Multi-module reactor dispatcher (M4.3 T4).
+///
+/// Walks the reactor level-by-level. Within a level, modules dispatch
+/// in parallel through `tokio::join_all`, capped at `workers_budget`
+/// concurrent modules by a `tokio::sync::Semaphore`. Within a module,
+/// the action stream stays sequential.
+///
+/// On the first module failure the reactor short-circuits subsequent
+/// levels (Maven `--fail-fast` default) but lets every other module
+/// in the same level run to completion — cancelling a module mid-
+/// action would corrupt its `target/` state.
+///
+/// The daemon handle threading model is intentionally different from
+/// the single-module path: each module's per-action loop runs against
+/// a *fresh* `submit_with_respawn` chain rooted at the initial
+/// handle's socket. Concurrent modules connect to the same daemon
+/// socket through independent `Multiplexer` sessions (which the M4.2
+/// T2 daemon's `WorkerPool` is designed to serve), so the handle is
+/// not threaded across module boundaries. The reactor only needs the
+/// final handle for the caller's "detach the spawned child" step.
+#[allow(clippy::too_many_arguments)]
+fn dispatch_reactor_modules(
+    plan: &LaunchPlan,
+    jvm_entry: &crate::daemon::launcher::JvmEntry,
+    initial_handle: crate::daemon::launcher::DaemonHandle,
+    reactor: &Reactor,
+    project_root: &std::path::Path,
+    deploy_credentials: Option<&CredentialsEnvelope>,
+    workers_budget: usize,
+) -> Result<
+    (
+        Vec<MojoInvocation>,
+        usize,
+        usize,
+        u32,
+        crate::daemon::launcher::DaemonHandle,
+    ),
+    VerifyError,
+> {
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
+
+    // Build a multi-thread tokio runtime sized to the worker budget.
+    // We need `rt-multi-thread` for true parallel module dispatch —
+    // the current-thread runtime in `submit_with_respawn` is per-
+    // module-action, not per-module.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers_budget.max(1))
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|e| VerifyError::Workers {
+            detail: format!("tokio multi-thread runtime build: {e}"),
+        })?;
+
+    let budget = workers_budget.max(1);
+    let semaphore = Arc::new(Semaphore::new(budget));
+    let plan_arc = Arc::new(plan.clone());
+    let jvm_arc = Arc::new(jvm_entry.clone());
+    let project_root_arc: Arc<std::path::PathBuf> = Arc::new(project_root.to_path_buf());
+    let creds_arc: Arc<Option<CredentialsEnvelope>> = Arc::new(deploy_credentials.cloned());
+
+    let outcomes: Vec<Result<ModuleOutcome, VerifyError>> = runtime.block_on(async move {
+        let mut all: Vec<Result<ModuleOutcome, VerifyError>> =
+            Vec::with_capacity(reactor.modules.len());
+        let mut module_results: std::collections::HashMap<
+            usize,
+            Result<ModuleOutcome, VerifyError>,
+        > = std::collections::HashMap::new();
+        let mut aborted = false;
+        for (level_idx, level) in reactor.topo_levels.iter().enumerate() {
+            if aborted {
+                break;
+            }
+            let mut tasks: Vec<
+                tokio::task::JoinHandle<(usize, Result<ModuleOutcome, VerifyError>)>,
+            > = Vec::with_capacity(level.len());
+            for &module_idx in level {
+                let module = reactor.modules[module_idx].clone();
+                let plan_arc = Arc::clone(&plan_arc);
+                let jvm_arc = Arc::clone(&jvm_arc);
+                let project_root_arc = Arc::clone(&project_root_arc);
+                let creds_arc = Arc::clone(&creds_arc);
+                let semaphore = Arc::clone(&semaphore);
+                tasks.push(tokio::spawn(async move {
+                    let _permit = semaphore.acquire_owned().await;
+                    tracing::info!(
+                        target: "barista::reactor",
+                        level = level_idx,
+                        module = %module.id.to_ga(),
+                        "dispatching module"
+                    );
+                    let module_root = module.root.clone();
+                    let outcome = tokio::task::spawn_blocking(move || {
+                        dispatch_one_module_blocking(
+                            &plan_arc,
+                            &jvm_arc,
+                            &module,
+                            &project_root_arc,
+                            creds_arc.as_ref().as_ref(),
+                        )
+                    })
+                    .await
+                    .map_err(|e| VerifyError::Ipc {
+                        phase: "reactor".into(),
+                        detail: format!("module task panicked at {module_root:?}: {e}"),
+                    });
+                    let outcome = match outcome {
+                        Ok(r) => r,
+                        Err(e) => Err(e),
+                    };
+                    (module_idx, outcome)
+                }));
+            }
+            for handle in tasks {
+                match handle.await {
+                    Ok((idx, Ok(out))) => {
+                        let failed = out.failed_actions > 0;
+                        module_results.insert(idx, Ok(out));
+                        if failed {
+                            aborted = true;
+                        }
+                    }
+                    Ok((idx, Err(e))) => {
+                        module_results.insert(idx, Err(e));
+                        aborted = true;
+                    }
+                    Err(_join_err) => {
+                        aborted = true;
+                    }
+                }
+            }
+        }
+        for idx in 0..reactor.modules.len() {
+            if let Some(r) = module_results.remove(&idx) {
+                all.push(r);
+            }
+        }
+        all
+    });
+
+    // Drop the runtime — every spawned task is done.
+    drop(runtime);
+
+    // Aggregate. Module index order = `reactor.modules` order =
+    // depth-first discovery order; this is the same order Maven's
+    // own reactor reporter uses for its "Reactor Summary".
+    let mut invocations: Vec<MojoInvocation> = Vec::new();
+    let mut executed = 0usize;
+    let mut failed_actions = 0usize;
+    let mut total_respawns: u32 = 0;
+    for o in outcomes {
+        match o {
+            Ok(out) => {
+                executed += out.executed;
+                failed_actions += out.failed_actions;
+                total_respawns = total_respawns.saturating_add(out.respawns);
+                invocations.extend(out.invocations);
+            }
+            Err(e) => return Err(e),
+        }
     }
+    Ok((invocations, executed, failed_actions, total_respawns, initial_handle))
+}
 
-    let total_ms = u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-    Ok(VerifyReport {
-        project_root: root.root.clone(),
-        phase: phase.as_str().to_string(),
-        planned_actions: graph.actions.len(),
-        executed_actions: executed,
-        failed_actions,
-        daemon_respawns: total_respawns,
+/// Per-module outcome from the multi-module dispatcher.
+#[derive(Debug)]
+struct ModuleOutcome {
+    invocations: Vec<MojoInvocation>,
+    executed: usize,
+    failed_actions: usize,
+    respawns: u32,
+}
+
+/// Synchronously walk one module's action stream against the daemon.
+///
+/// Identical loop to the single-module path; carved out so the
+/// reactor's `spawn_blocking` task can call it without duplicating
+/// the action-stream + failure semantics.
+fn dispatch_one_module_blocking(
+    plan: &LaunchPlan,
+    jvm_entry: &crate::daemon::launcher::JvmEntry,
+    module: &ModuleNode,
+    project_root: &std::path::Path,
+    deploy_credentials: Option<&CredentialsEnvelope>,
+) -> Result<ModuleOutcome, VerifyError> {
+    // Each module connects fresh to the daemon socket. We don't
+    // thread a `DaemonHandle` across modules because concurrent
+    // modules each open their own `Multiplexer` session against the
+    // same daemon — the daemon's worker pool muxes them safely.
+    let initial_handle = crate::daemon::launcher::DaemonHandle {
+        socket_path: plan.socket_path.clone(),
+        child: None,
+    };
+    let mut handle = initial_handle;
+    let graph = &module.action_graph;
+    let mut invocations = Vec::with_capacity(graph.actions.len());
+    let mut failed_actions = 0usize;
+    let mut total_respawns: u32 = 0;
+    let mut executed = 0usize;
+    for action in &graph.actions {
+        if failed_actions > 0 {
+            break;
+        }
+        let mut request = build_action_request(graph, action, project_root);
+        // Per-module working directory + pom path. The reactor sets
+        // these on the action graph at construction time, so
+        // `build_action_request` already uses the correct module
+        // root — but we also override `project_root` here to keep
+        // the daemon's resolver scoped per-module (the daemon-side
+        // dispatcher resolves the effective POM relative to the
+        // request's `pom_path`, not `project_root`).
+        request.project_root = module.root.display().to_string();
+        if action.phase == "deploy"
+            && let Some(env) = deploy_credentials
+        {
+            request.credentials = Some(env.clone());
+        }
+        let phase_name = action.phase.to_string();
+        let action_started = Instant::now();
+        let (outcome, next_handle) = submit_with_respawn(plan, handle, jvm_entry, request)
+            .map_err(|e| classify_respawn_error(&phase_name, e))?;
+        handle = next_handle;
+        let duration_ms = u64::try_from(action_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        executed += 1;
+        total_respawns = total_respawns.saturating_add(outcome.respawns);
+        let exit_code = outcome.result.exit_code;
+        let status = action_status_str(outcome.result.status);
+        if exit_code != 0 {
+            failed_actions += 1;
+        }
+        let error_code = outcome
+            .result
+            .error
+            .as_ref()
+            .map(|e| e.code.clone())
+            .unwrap_or_default();
+        invocations.push(MojoInvocation {
+            phase: phase_name,
+            mojo: outcome.result.action_id.clone(),
+            module: module.root.clone(),
+            exit_code,
+            status,
+            failure_message: outcome.result.failure_message.clone(),
+            error_code,
+            duration_ms,
+        });
+    }
+    Ok(ModuleOutcome {
         invocations,
-        duration_ms: total_ms,
+        executed,
+        failed_actions,
+        respawns: total_respawns,
     })
 }
 
@@ -512,6 +831,12 @@ pub enum VerifyError {
     /// Per-action channel closed without a terminal event.
     #[error("phase {phase}: daemon disconnected before action terminated")]
     PrematureClose { phase: String },
+
+    /// Reactor construction failed (POM read/parse error, cycle, etc.).
+    /// M4.3 T4: surfaced when the multi-module reactor can't be built
+    /// before any action dispatches.
+    #[error("reactor: {0}")]
+    Reactor(#[from] ReactorError),
 }
 
 impl VerifyError {
@@ -524,6 +849,13 @@ impl VerifyError {
         }
     }
 
+    /// Reactor errors (POM read/parse, cycle detection) come in via
+    /// `Reactor::from_project_root`; wrapped here so the verify-side
+    /// caller can `?` them through the same error shape.
+    fn from_reactor(r: ReactorError) -> Self {
+        VerifyError::Reactor(r)
+    }
+
     /// Process exit code for the error. Mirrors the pour / pull
     /// convention: precondition / user-fixable errors → 2; internal /
     /// unexpected errors → 1; deploy-auth errors → 3 (a distinct
@@ -534,7 +866,8 @@ impl VerifyError {
             VerifyError::Project(_)
             | VerifyError::Config(_)
             | VerifyError::Workers { .. }
-            | VerifyError::Pour { .. } => 2,
+            | VerifyError::Pour { .. }
+            | VerifyError::Reactor(_) => 2,
             VerifyError::DeployAuthEncrypted { .. } => 3,
             VerifyError::DaemonError { code, .. } if code.starts_with("BAR-DEPLOY-AUTH-") => 3,
             VerifyError::Launcher(_)

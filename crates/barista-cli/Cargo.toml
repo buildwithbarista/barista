@@ -49,13 +49,19 @@ barista-ipc = { path = "../barista-ipc" }
 # + `io-util` + `macros` + `sync` + `time` are the features mux +
 # UDS transport depend on (mirrors `barista-ipc`'s own feature set).
 # `time` is also used by the auto-respawn ready-poll loop.
-tokio = { version = "1", features = ["rt", "io-util", "net", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "net", "macros", "sync", "time"] }
+# `tracing` is used by the multi-module reactor (M4.3 T4) for
+# observability spans per topo-level and per-module. The facade is
+# already in the workspace via `barista-telemetry`; surfacing events
+# here lets the telemetry subscriber pick them up when wired.
+tracing = "0.1"
 
 [dev-dependencies]
 insta = "1.47"
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"
 toml = "0.8"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 
 [lints]
 workspace = true
