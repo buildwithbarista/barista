@@ -107,6 +107,7 @@ async fn cancel_aborts_within_100ms() {
         maven_compat: "3".to_string(),
         jvm_args: Vec::new(),
         credentials: None,
+        extra_mvn_args: Vec::new(),
     };
     let handle = client.submit_action(req).await.expect("submit");
 

@@ -128,6 +128,7 @@ async fn submit_one_action_round_trips_progress_and_result() {
         maven_compat: "3".to_string(),
         jvm_args: Vec::new(),
         credentials: None,
+        extra_mvn_args: Vec::new(),
     };
 
     let mut handle = client.submit_action(req).await.expect("submit");
@@ -234,6 +235,7 @@ async fn next_event_survives_select_drop() {
         maven_compat: "3".to_string(),
         jvm_args: Vec::new(),
         credentials: None,
+        extra_mvn_args: Vec::new(),
     };
     let mut handle = client.submit_action(req).await.expect("submit");
 

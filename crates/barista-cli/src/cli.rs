@@ -441,18 +441,15 @@ pub fn dispatch(cli: Cli) -> i32 {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Package, &a)
         }
         Command::Verify(a) => {
-            // M4.3 T1: `barista verify` is the headline end-to-end
-            // command. The Unix daemon path lives in `cmd::verify`;
-            // Windows builds (no production daemon yet) fall back to
-            // the `maven_vocab` stub which honours `--no-daemon`.
-            #[cfg(unix)]
-            {
-                crate::cmd::verify::run(&global, &a)
-            }
-            #[cfg(not(unix))]
-            {
-                crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Verify, &a)
-            }
+            // M4.3 T2: every Maven-vocab command — verify included —
+            // routes through the shared maven_vocab dispatcher, which
+            // forwards to {@code cmd::verify::run_phase} on Unix and
+            // falls back to the structured "not yet executable" stub
+            // on Windows. The dedicated dispatch entry that landed in
+            // T1 is preserved for back-compat (see
+            // {@code cmd::verify::run}) but no longer the routing
+            // point.
+            crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Verify, &a)
         }
         Command::Install(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Install, &a)

@@ -13,6 +13,9 @@ import com.bluminal.barista.barback.proto.Ping;
 import com.bluminal.barista.barback.proto.Pong;
 import com.bluminal.barista.barback.proto.RedactedCredential;
 import com.bluminal.barista.barback.proto.Shutdown;
+import com.bluminal.barista.barback.core.EmbeddedMaven;
+import com.bluminal.barista.barback.core.EmbeddedMavenActionDispatcher;
+import com.bluminal.barista.barback.core.EmbeddedMavenFactory;
 import com.bluminal.barista.barback.lifecycle.IdleTimer;
 import com.bluminal.barista.barback.workers.WorkerPool;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -256,6 +259,50 @@ public final class Server implements AutoCloseable {
      */
     static final int CRASH_EXIT_CODE = 137;
 
+    /**
+     * Strategy seam between the connection-handling layer and whatever
+     * actually executes a mojo. The production implementation is
+     * {@link EmbeddedMavenActionDispatcher}, which drives the
+     * daemon-resident Maven core; tests substitute a fake that returns
+     * a canned {@link ActionResult} without spinning up Maven.
+     */
+    @FunctionalInterface
+    public interface ActionDispatcher {
+        /**
+         * Run one action and return the terminal {@link ActionResult}.
+         * Implementations may block; the caller invokes this on a
+         * worker thread.
+         */
+        ActionResult dispatch(ActionRequest request);
+    }
+
+    /**
+     * Sentinel dispatcher used by {@link #startWith(SocketConfig, WorkerPool)}
+     * — the four-arg compatibility entry point retained for the M4.2
+     * conformance and worker-pool integration tests, which pin to the
+     * historical {@code BAR-DAEMON-NOT-YET-IMPLEMENTED} stub response
+     * shape. Production callers go through
+     * {@link #startWithEmbeddedMaven(SocketConfig)} or pass an
+     * explicit dispatcher to {@link #startWith(SocketConfig, WorkerPool,
+     * ActionDispatcher)}; this constant is the M4.2-compat fallback
+     * only.
+     */
+    public static final ActionDispatcher NOT_YET_IMPLEMENTED_DISPATCHER = request -> {
+        Error err = Error.newBuilder()
+                .setCode(NOT_YET_IMPLEMENTED_CODE)
+                .setMessage("embedded Maven core is wired in M4.2 T3; "
+                        + "this daemon build cannot yet execute mojos")
+                .setActionId(request.getActionId())
+                .build();
+        return ActionResult.newBuilder()
+                .setActionId(request.getActionId())
+                .setStatus(ActionResult.Status.FAILURE)
+                .setExitCode(1)
+                .setError(err)
+                .setFailureMessage(err.getMessage())
+                .build();
+    };
+
     private final Path socketPath;
     private final ServerSocketChannel serverChannel;
     private final WorkerPool workerPool;
@@ -278,16 +325,41 @@ public final class Server implements AutoCloseable {
     private final AtomicLong actionsDispatched = new AtomicLong(0);
     /** Trigger threshold for the {@code --crash-after} debug path; 0 disables. */
     private final int crashAfter;
+    /**
+     * Per-server action dispatcher. The production path
+     * ({@link #startWithEmbeddedMaven}) installs an
+     * {@link EmbeddedMavenActionDispatcher} that drives the resident
+     * Maven core; tests and the M4.2 {@link #startWith(SocketConfig,
+     * WorkerPool)} compatibility entry point install
+     * {@link #NOT_YET_IMPLEMENTED_DISPATCHER} which preserves the
+     * historical "BAR-DAEMON-NOT-YET-IMPLEMENTED" response — the
+     * stub-shaped digest contract the M4.2 conformance suites
+     * exercise stays byte-identical on that path.
+     */
+    private final ActionDispatcher actionDispatcher;
+    /**
+     * Optional resource handle that lives as long as this server and
+     * gets closed during {@link #shutdown()}. The production entry
+     * point parks the daemon-owned {@link EmbeddedMaven} here so the
+     * core's class-world + resident invoker are torn down cleanly on
+     * idle-shutdown / SIGTERM. {@code null} on the test paths where
+     * no embedded core was built.
+     */
+    private final AutoCloseable ownedResource;
 
     private Server(Path socketPath,
                    ServerSocketChannel serverChannel,
                    WorkerPool workerPool,
                    Duration idleTimeout,
-                   int crashAfter) {
+                   int crashAfter,
+                   ActionDispatcher actionDispatcher,
+                   AutoCloseable ownedResource) {
         this.socketPath = socketPath;
         this.serverChannel = serverChannel;
         this.workerPool = workerPool;
         this.crashAfter = crashAfter;
+        this.actionDispatcher = Objects.requireNonNull(actionDispatcher, "actionDispatcher");
+        this.ownedResource = ownedResource;
         // The idle-timer callback is `this::shutdownDueToIdle` — a
         // method reference that flips the shutdown flag and closes
         // the listener, which is idempotent and safe to invoke from
@@ -463,8 +535,69 @@ public final class Server implements AutoCloseable {
                             + "conformance-validated wire format pending the production "
                             + "server binding");
         }
+        // Default production wiring: install the embedded Maven core.
+        // Callers that want a stub dispatcher (the M4.2 conformance
+        // suites) go through {@link #startWith(SocketConfig, WorkerPool)}.
+        return startWithEmbeddedMaven(config);
+    }
+
+    /**
+     * Bind the socket and start the accept loop with the production
+     * action dispatcher installed: an {@link EmbeddedMavenActionDispatcher}
+     * wrapping an {@link EmbeddedMaven} core built from the host's
+     * Maven&nbsp;4 distribution (see {@link EmbeddedMavenFactory#discover()}
+     * for the resolution rules). The embedded core's lifetime tracks
+     * this server: {@link #shutdown()} closes it.
+     *
+     * <p>This is the M4.3 T2 entry point that closes the T1 caveat —
+     * before T2, every ACTION envelope reached the
+     * {@code BAR-DAEMON-NOT-YET-IMPLEMENTED} stub even though the
+     * embedded core was already wired (M4.2 T3). After T2, the
+     * production daemon path is end-to-end: connection &rarr; dispatch
+     * &rarr; embedded Maven &rarr; {@link ActionResult}.
+     *
+     * @throws IOException if the socket bind fails or the embedded
+     *     core's distribution discovery fails
+     *     ({@link EmbeddedMavenFactory#resolveMavenHome()} surfaces
+     *     the canonical error message).
+     */
+    public static Server startWithEmbeddedMaven(SocketConfig config) throws IOException {
+        Objects.requireNonNull(config, "config");
+        if (isWindows()) {
+            throw new UnsupportedOperationException(
+                    "barback server on Windows is deferred to a follow-up task; "
+                            + "see Server.start(SocketConfig)");
+        }
         WorkerPool pool = WorkerPool.create(config.workers());
-        return startWith(config, pool);
+        EmbeddedMaven embedded;
+        try {
+            embedded = EmbeddedMavenFactory.discover();
+        } catch (IOException | RuntimeException e) {
+            // Discovery failed (no maven.home, malformed distribution,
+            // etc.). The worker pool we just built is dead weight at
+            // this point — close it before we propagate so the JVM
+            // doesn't leak the executor threads.
+            try {
+                pool.close();
+            } catch (Exception ignored) {
+                // Best-effort.
+            }
+            if (e instanceof IOException io) {
+                throw io;
+            }
+            throw new IOException("failed to discover embedded Maven distribution: "
+                    + e.getMessage(), e);
+        }
+        EmbeddedMavenActionDispatcher dispatcher = new EmbeddedMavenActionDispatcher(embedded);
+        // The concrete dispatcher's method signature is structurally
+        // identical to {@link ActionDispatcher#dispatch}, but Java's
+        // structural-typing-via-functional-interface doesn't pick up
+        // the relationship from class declaration alone. Convert via a
+        // method reference. The dispatcher also owns the cleanup of
+        // any per-action temp resources; the embedded core is closed
+        // as the {@code ownedResource} below.
+        ActionDispatcher seam = dispatcher::dispatch;
+        return startWith(config, pool, seam, embedded);
     }
 
     /**
@@ -485,8 +618,35 @@ public final class Server implements AutoCloseable {
      * @throws IOException if the socket bind fails.
      */
     public static Server startWith(SocketConfig config, WorkerPool pool) throws IOException {
+        return startWith(config, pool, NOT_YET_IMPLEMENTED_DISPATCHER, null);
+    }
+
+    /**
+     * Start a server with a caller-supplied {@link WorkerPool} and a
+     * caller-supplied {@link ActionDispatcher}. The dispatcher receives
+     * every ACTION envelope after the worker-pool dispatch + idle-timer
+     * activity reset; the production path supplies an
+     * {@link EmbeddedMavenActionDispatcher}, tests supply a fake.
+     */
+    public static Server startWith(SocketConfig config, WorkerPool pool, ActionDispatcher dispatcher)
+            throws IOException {
+        return startWith(config, pool, dispatcher, null);
+    }
+
+    /**
+     * Internal startWith that additionally accepts an owned resource
+     * (typically the {@link EmbeddedMaven} wrapped by the production
+     * dispatcher) so the server can close it during
+     * {@link #shutdown()}. Package-private so test fixtures that own
+     * their own resource lifetimes don't accidentally hand them off.
+     */
+    static Server startWith(SocketConfig config,
+                            WorkerPool pool,
+                            ActionDispatcher dispatcher,
+                            AutoCloseable ownedResource) throws IOException {
         Objects.requireNonNull(config, "config");
         Objects.requireNonNull(pool, "pool");
+        Objects.requireNonNull(dispatcher, "dispatcher");
         if (isWindows()) {
             throw new UnsupportedOperationException(
                     "barback server on Windows is deferred to a follow-up task; "
@@ -500,7 +660,9 @@ public final class Server implements AutoCloseable {
                 channel,
                 pool,
                 Duration.ofSeconds(config.idleShutdownSeconds()),
-                config.crashAfter());
+                config.crashAfter(),
+                dispatcher,
+                ownedResource);
         server.acceptThread.start();
         server.idleTimer.start();
         if (config.crashAfter() > 0) {
@@ -832,6 +994,19 @@ public final class Server implements AutoCloseable {
             // WorkerPool.SHUTDOWN_GRACE and forces shutdownNow() if
             // any remain.
             workerPool.close();
+            // Close the dispatcher-owned resource (the embedded Maven
+            // core on the production path). The accept loop has already
+            // drained, so no further dispatches can race this close.
+            // Best-effort: a teardown failure here is logged but does
+            // not block the rest of the shutdown sequence.
+            if (ownedResource != null) {
+                try {
+                    ownedResource.close();
+                } catch (Exception e) {
+                    LOG.log(Level.WARNING,
+                            "ignored failure closing server-owned resource", e);
+                }
+            }
             try {
                 Files.deleteIfExists(socketPath);
             } catch (IOException e) {
@@ -961,7 +1136,46 @@ public final class Server implements AutoCloseable {
                                     + CRASH_EXIT_CODE + ")");
                     Runtime.getRuntime().halt(CRASH_EXIT_CODE);
                 }
-                Envelope reply = actionNotYetImplementedReply(requestId, envelope.getAction());
+                // M4.3 T2 — execute the action against the installed
+                // dispatcher. The production path
+                // ({@link #startWithEmbeddedMaven}) installs an
+                // {@link EmbeddedMavenActionDispatcher} that drives the
+                // resident Maven core; the legacy M4.2 conformance
+                // path ({@link #startWith(SocketConfig, WorkerPool)})
+                // installs {@link #NOT_YET_IMPLEMENTED_DISPATCHER}
+                // which preserves the historical stub response shape
+                // so byte-identical replays under that fixture stay
+                // green. Any RuntimeException thrown by the dispatcher
+                // is caught and surfaced as a FAILURE result so a
+                // per-action bug cannot take out the connection
+                // handler thread.
+                ActionRequest req = envelope.getAction();
+                ActionResult result;
+                try {
+                    result = actionDispatcher.dispatch(req);
+                } catch (RuntimeException re) {
+                    LOG.log(Level.WARNING,
+                            "action " + req.getActionId() + " threw from dispatcher", re);
+                    Error err = Error.newBuilder()
+                            .setCode("BAR-DAEMON-DISPATCH-INTERNAL")
+                            .setMessage("dispatcher threw "
+                                    + re.getClass().getSimpleName() + ": "
+                                    + (re.getMessage() != null ? re.getMessage() : "(no message)"))
+                            .setActionId(req.getActionId())
+                            .build();
+                    result = ActionResult.newBuilder()
+                            .setActionId(req.getActionId())
+                            .setStatus(ActionResult.Status.FAILURE)
+                            .setExitCode(1)
+                            .setError(err)
+                            .setFailureMessage(err.getMessage())
+                            .build();
+                }
+                Envelope reply = Envelope.newBuilder()
+                        .setVersion(PROTOCOL_VERSION)
+                        .setRequestId(requestId)
+                        .setResult(result)
+                        .build();
                 writeEnvelope(client, reply);
                 yield true;
             }
@@ -1021,26 +1235,6 @@ public final class Server implements AutoCloseable {
                         // CLI tolerates that; M4.2 T5 will plumb the
                         // ping payload through.
                         .setClientUnixMicros(0L)
-                        .build())
-                .build();
-    }
-
-    private static Envelope actionNotYetImplementedReply(long requestId, ActionRequest req) {
-        Error err = Error.newBuilder()
-                .setCode(NOT_YET_IMPLEMENTED_CODE)
-                .setMessage("embedded Maven core is wired in M4.2 T3; "
-                        + "this daemon build cannot yet execute mojos")
-                .setActionId(req.getActionId())
-                .build();
-        return Envelope.newBuilder()
-                .setVersion(PROTOCOL_VERSION)
-                .setRequestId(requestId)
-                .setResult(ActionResult.newBuilder()
-                        .setActionId(req.getActionId())
-                        .setStatus(ActionResult.Status.FAILURE)
-                        .setExitCode(1)
-                        .setError(err)
-                        .setFailureMessage(err.getMessage())
                         .build())
                 .build();
     }

@@ -267,10 +267,24 @@ message ActionRequest {
   // message below for the security contract.
   CredentialsEnvelope credentials = 16;
 
+  // Extra arguments forwarded verbatim to the embedded Maven invocation,
+  // appended to the CLI argv after `-f`, `-q`, and `-D` flags but before
+  // the trailing `mojo_coords`. Used by the daemon-side dispatcher to
+  // splice in flags that are not first-class on `ActionRequest`,
+  // notably `-s <settings.xml>` when a synthesized ephemeral settings
+  // file was written from the `credentials` envelope (the Maven CLI
+  // surface for repository auth — there is no `-D` equivalent for
+  // `<servers>`).
+  //
+  // The CLI normally leaves this empty; the daemon populates it at
+  // dispatch time when a settings.xml must be threaded into the embedded
+  // invoker for one action without mutating the JVM-wide configuration.
+  repeated string extra_mvn_args = 17;
+
   // Reserved tag space for future ActionRequest fields:
-  //   17..29 reserved (mojo-execution metadata, e.g. forked-lifecycle
+  //   18..29 reserved (mojo-execution metadata, e.g. forked-lifecycle
   //          hints, plugin-specific overrides).
-  reserved 17 to 29;
+  reserved 18 to 29;
 }
 
 // -----------------------------------------------------------------------------

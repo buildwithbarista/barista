@@ -523,6 +523,16 @@ public final class EmbeddedMaven implements AutoCloseable {
                 args.add("-D" + entry.getKey() + "=" + entry.getValue());
             }
         }
+        // Extra Maven CLI args forwarded by the daemon-side dispatcher.
+        // Used (today) for `-s <ephemeral-settings.xml>` when a deploy
+        // action carried credentials — the dispatcher writes the
+        // settings file and threads the flag through here so the
+        // embedded core sees it identically to a CLI `mvn -s ...` run.
+        // Position: after -D flags, before the trailing mojo coord, so
+        // a settings-XML pointer takes effect before goal resolution.
+        for (int i = 0; i < action.getExtraMvnArgsCount(); i++) {
+            args.add(action.getExtraMvnArgs(i));
+        }
         // mojo_coords is the trailing arg, matching `mvn compile` /
         // `mvn org.apache.maven.plugins:maven-compiler-plugin:compile`.
         String coords = action.getMojoCoords();

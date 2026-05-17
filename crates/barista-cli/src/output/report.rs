@@ -250,6 +250,13 @@ pub struct MojoInvocation {
     /// Human-readable failure message; empty on success.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub failure_message: String,
+    /// Daemon-side error code on failure (e.g. `"BAR-MAVEN-CORE"`,
+    /// `"BAR-DEPLOY-AUTH-INVALID"`). Empty on success or when the
+    /// daemon did not surface a structured code. CI pipelines branch
+    /// on the `BAR-DEPLOY-AUTH-*` prefix to distinguish auth failures
+    /// from generic build failures.
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub error_code: String,
     /// Mojo wall-clock duration, milliseconds.
     pub duration_ms: u64,
 }

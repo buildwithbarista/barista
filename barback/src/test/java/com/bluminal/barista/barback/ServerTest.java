@@ -370,8 +370,25 @@ class ServerTest {
         // Short suffix so the absolute path does not exceed the
         // platform's UDS sun_path limit (~104 chars on macOS,
         // ~108 on Linux) when the @TempDir prefix is long.
+        //
+        // We go through startWith(SocketConfig, WorkerPool) — the
+        // M4.2-compat entry point that installs the
+        // NOT_YET_IMPLEMENTED_DISPATCHER — rather than the production
+        // {@link Server#start} (which now bootstraps an
+        // {@link com.bluminal.barista.barback.core.EmbeddedMaven} per
+        // M4.3 T2). ServerTest covers the protocol-layer fundamentals
+        // (Ping/Pong, frame tolerance, 0600 perms, concurrent
+        // dispatch) — those are independent of which dispatcher is
+        // installed, and we don't want to require a Maven distribution
+        // on the host for this suite to pass. End-to-end action
+        // execution against the embedded core is covered by
+        // {@code core/EmbeddedMavenTest} and
+        // {@code integration/ActionDispatchIT}.
         Path sock = tempDir.resolve("b.sock");
-        return Server.start(new Server.SocketConfig(sock));
+        com.bluminal.barista.barback.workers.WorkerPool pool =
+                com.bluminal.barista.barback.workers.WorkerPool.create(
+                        Server.DEFAULT_WORKERS);
+        return Server.startWith(new Server.SocketConfig(sock), pool);
     }
 
     private static SocketChannel openClient(Path socketPath) throws IOException {

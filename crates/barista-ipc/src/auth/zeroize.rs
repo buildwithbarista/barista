@@ -213,6 +213,7 @@ mod tests {
                     )),
                 }],
             }),
+            extra_mvn_args: vec![],
         }
     }
 

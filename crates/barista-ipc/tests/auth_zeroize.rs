@@ -106,6 +106,7 @@ fn sample_action_with_creds() -> ActionRequest {
         maven_compat: "3".to_string(),
         jvm_args: vec![],
         credentials: Some(sample_credentials_envelope()),
+        extra_mvn_args: vec![],
     }
 }
 

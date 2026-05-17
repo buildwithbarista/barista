@@ -49,6 +49,8 @@ use std::path::{Path, PathBuf};
 
 use barista_ipc::ActionRequest;
 
+use crate::cmd::MavenPhase;
+
 /// The `verify` lifecycle phase prefix per Maven's default
 /// lifecycle (see `mvn help:describe -Dcmd=verify` for the
 /// canonical list).
@@ -63,6 +65,137 @@ pub const VERIFY_PHASE_PREFIX: &[&str] = &[
     "integration-test",
     "verify",
 ];
+
+/// `compile` lifecycle phase prefix. Stops at `compile`.
+pub const COMPILE_PHASE_PREFIX: &[&str] = &["process-resources", "compile"];
+
+/// `test` lifecycle phase prefix. Stops at `test`.
+pub const TEST_PHASE_PREFIX: &[&str] = &[
+    "process-resources",
+    "compile",
+    "process-test-resources",
+    "test-compile",
+    "test",
+];
+
+/// `package` lifecycle phase prefix. Stops at `package`.
+pub const PACKAGE_PHASE_PREFIX: &[&str] = &[
+    "process-resources",
+    "compile",
+    "process-test-resources",
+    "test-compile",
+    "test",
+    "prepare-package",
+    "package",
+];
+
+/// `install` lifecycle phase prefix. Extends `verify` with `install`.
+pub const INSTALL_PHASE_PREFIX: &[&str] = &[
+    "process-resources",
+    "compile",
+    "process-test-resources",
+    "test-compile",
+    "test",
+    "prepare-package",
+    "package",
+    "integration-test",
+    "verify",
+    "install",
+];
+
+/// `deploy` lifecycle phase prefix. Extends `install` with `deploy`.
+pub const DEPLOY_PHASE_PREFIX: &[&str] = &[
+    "process-resources",
+    "compile",
+    "process-test-resources",
+    "test-compile",
+    "test",
+    "prepare-package",
+    "package",
+    "integration-test",
+    "verify",
+    "install",
+    "deploy",
+];
+
+/// `clean` lifecycle: a single action. (Maven's `clean` is a separate
+/// lifecycle from `default`; per its own definition it has no prefix.)
+pub const CLEAN_PHASE_PREFIX: &[&str] = &["clean"];
+
+/// `site` lifecycle: a single action in v0.1. (Maven's `site` lifecycle
+/// has `pre-site`, `site`, `post-site`, `site-deploy`; for v0.1 we
+/// dispatch the `site` phase verbatim and let the daemon's embedded
+/// Maven core inflate the constituent mojos.)
+pub const SITE_PHASE_PREFIX: &[&str] = &["site"];
+
+/// Return the lifecycle phase prefix for the given [`MavenPhase`].
+///
+/// Each prefix is the ordered list of phase names the daemon must
+/// execute to satisfy the requested goal. The list is what `mvn
+/// help:describe -Dcmd=<phase>` would produce for the same phase
+/// against Maven's default lifecycle binding.
+///
+/// `install` and `deploy` are non-idempotent (they publish artifacts);
+/// the per-phase `retryable` flag on [`PlannedAction`] flips to false
+/// for those two terminal steps so the M4.2 T6 auto-respawn driver
+/// does not double-publish on a daemon-crash retry.
+#[must_use]
+pub fn phase_prefix(phase: MavenPhase) -> &'static [&'static str] {
+    match phase {
+        MavenPhase::Clean => CLEAN_PHASE_PREFIX,
+        MavenPhase::Compile => COMPILE_PHASE_PREFIX,
+        MavenPhase::Test => TEST_PHASE_PREFIX,
+        MavenPhase::Package => PACKAGE_PHASE_PREFIX,
+        MavenPhase::Verify => VERIFY_PHASE_PREFIX,
+        MavenPhase::Install => INSTALL_PHASE_PREFIX,
+        MavenPhase::Deploy => DEPLOY_PHASE_PREFIX,
+        MavenPhase::Site => SITE_PHASE_PREFIX,
+    }
+}
+
+/// Whether a given lifecycle phase is safe to retry after an
+/// auto-respawn (M4.2 T6 retry path). `install` and `deploy` mutate
+/// remote / shared state (the local `~/.m2/repository`, or a remote
+/// Nexus / Artifactory) so retrying them after a partial failure
+/// risks double-publishing. Every other phase is idempotent within
+/// a single module.
+#[must_use]
+pub fn phase_is_retryable(phase_name: &str) -> bool {
+    !matches!(phase_name, "install" | "deploy")
+}
+
+/// Build a lifecycle [`ActionGraph`] for the given phase against a
+/// single module. The `include_clean` flag, when true, prepends a
+/// `clean` phase action so callers can express `barista verify clean`
+/// semantics; the bare `barista clean` command already has `clean` as
+/// its prefix, so the flag is a no-op there.
+#[must_use]
+pub fn lifecycle_graph(
+    phase: MavenPhase,
+    module_root: PathBuf,
+    include_clean: bool,
+) -> ActionGraph {
+    let prefix = phase_prefix(phase);
+    let mut actions = Vec::with_capacity(prefix.len() + 1);
+    if include_clean && !prefix.contains(&"clean") {
+        actions.push(PlannedAction {
+            phase: "clean",
+            retryable: true,
+        });
+    }
+    for p in prefix {
+        actions.push(PlannedAction {
+            phase: p,
+            retryable: phase_is_retryable(p),
+        });
+    }
+    let pom_path = module_root.join("pom.xml");
+    ActionGraph {
+        module_root,
+        pom_path,
+        actions,
+    }
+}
 
 /// An ordered list of mojo invocations for one module.
 #[derive(Debug, Clone)]
@@ -293,12 +426,82 @@ mod tests {
     #[test]
     fn verify_graph_phases_are_all_retryable_in_v01() {
         // M4.3 T1 only covers idempotent lifecycle phases; T2 makes
-        // install/deploy non-retryable. Pinning the v0.1 invariant
-        // here surfaces a delta when T2 lands.
+        // install/deploy non-retryable. The verify graph stops at
+        // `verify` so every phase here remains retryable.
         let g = verify_graph(PathBuf::from("/tmp/project"), true);
         for a in &g.actions {
             assert!(a.retryable, "phase {} must be retryable in v0.1", a.phase);
         }
+    }
+
+    #[test]
+    fn install_graph_marks_install_non_retryable() {
+        // M4.3 T2: `install` / `deploy` are non-idempotent terminal
+        // steps. The auto-respawn driver consults the per-action
+        // retryable flag, so flipping it to false here is what stops
+        // the M4.2 T6 retry path from double-publishing.
+        let g = lifecycle_graph(MavenPhase::Install, PathBuf::from("/tmp/p"), false);
+        let install = g.actions.iter().find(|a| a.phase == "install").unwrap();
+        assert!(
+            !install.retryable,
+            "install must not be retryable — double-publish risk"
+        );
+        // Every preceding phase remains retryable.
+        for a in g.actions.iter().take_while(|a| a.phase != "install") {
+            assert!(a.retryable, "{} must be retryable", a.phase);
+        }
+    }
+
+    #[test]
+    fn deploy_graph_marks_install_and_deploy_non_retryable() {
+        let g = lifecycle_graph(MavenPhase::Deploy, PathBuf::from("/tmp/p"), false);
+        for a in &g.actions {
+            let want_retryable = !matches!(a.phase, "install" | "deploy");
+            assert_eq!(
+                a.retryable, want_retryable,
+                "phase {} retryable={}",
+                a.phase, want_retryable
+            );
+        }
+    }
+
+    #[test]
+    fn clean_graph_is_single_action() {
+        let g = lifecycle_graph(MavenPhase::Clean, PathBuf::from("/tmp/p"), false);
+        assert_eq!(g.actions.len(), 1);
+        assert_eq!(g.actions[0].phase, "clean");
+    }
+
+    #[test]
+    fn compile_graph_stops_at_compile() {
+        let g = lifecycle_graph(MavenPhase::Compile, PathBuf::from("/tmp/p"), false);
+        let names: Vec<&str> = g.actions.iter().map(|a| a.phase).collect();
+        assert_eq!(names, vec!["process-resources", "compile"]);
+    }
+
+    #[test]
+    fn package_graph_stops_at_package_no_integration_tests() {
+        let g = lifecycle_graph(MavenPhase::Package, PathBuf::from("/tmp/p"), false);
+        let names: Vec<&str> = g.actions.iter().map(|a| a.phase).collect();
+        assert!(!names.contains(&"integration-test"));
+        assert!(!names.contains(&"verify"));
+        assert_eq!(names.last(), Some(&"package"));
+    }
+
+    #[test]
+    fn lifecycle_graph_include_clean_prepends_for_default_lifecycle() {
+        let g = lifecycle_graph(MavenPhase::Compile, PathBuf::from("/tmp/p"), true);
+        assert_eq!(g.actions.first().map(|a| a.phase), Some("clean"));
+    }
+
+    #[test]
+    fn lifecycle_graph_clean_phase_no_double_clean_prefix() {
+        // `barista clean --clean` (or whatever opt-in path) must not
+        // produce two "clean" actions; phase_prefix(Clean) already
+        // contains "clean".
+        let g = lifecycle_graph(MavenPhase::Clean, PathBuf::from("/tmp/p"), true);
+        assert_eq!(g.actions.len(), 1);
+        assert_eq!(g.actions[0].phase, "clean");
     }
 
     #[test]

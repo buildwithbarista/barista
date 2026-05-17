@@ -140,6 +140,7 @@ async fn thirty_two_concurrent_actions_round_trip_independently() {
             maven_compat: "3".to_string(),
             jvm_args: Vec::new(),
             credentials: None,
+            extra_mvn_args: Vec::new(),
         };
         let action_handle = client.submit_action(req).await.expect("submit");
         handles.push((seq, action_handle));

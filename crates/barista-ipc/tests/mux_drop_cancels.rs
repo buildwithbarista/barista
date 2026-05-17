@@ -106,6 +106,7 @@ async fn handle_drop_triggers_cancel_request() {
         maven_compat: "3".to_string(),
         jvm_args: Vec::new(),
         credentials: None,
+        extra_mvn_args: Vec::new(),
     };
     let handle = client.submit_action(req).await.expect("submit");
     let id = handle.action_id().to_string();

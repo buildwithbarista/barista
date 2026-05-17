@@ -96,15 +96,28 @@ impl MavenPhase {
 /// another process still sees the explanation.
 pub fn run(global: &GlobalFlags, phase: MavenPhase, args: &MavenVocabArgs) -> i32 {
     // R2 mitigation: `--no-daemon` short-circuits to a forked
-    // upstream `mvn` invocation. The daemon-backed path (the
-    // default) still produces the "not yet executable" stub
-    // below until the lifecycle wiring lands in a subsequent
-    // milestone.
+    // upstream `mvn` invocation. Always honoured first regardless of
+    // which path the daemon-backed branch ultimately picks.
     if global.no_daemon {
         return crate::cmd::no_daemon::dispatch(global, phase, args);
     }
-    eprint!("{}", render(global, phase, args));
-    2
+    // M4.3 T2: all eight Maven-vocab commands route through the
+    // shared lifecycle dispatcher. The dispatcher's
+    // {@code dispatch_lifecycle} entry point builds the phase prefix
+    // (clean | compile | test | package | verify | install | deploy
+    // | site), discovers / spawns the daemon, and submits each action
+    // through the M4.2 T6 auto-respawn driver. Windows (no production
+    // daemon yet) falls back to the historical "not yet executable"
+    // stub below.
+    #[cfg(unix)]
+    {
+        return crate::cmd::verify::run_phase(global, phase, args);
+    }
+    #[cfg(not(unix))]
+    {
+        eprint!("{}", render(global, phase, args));
+        2
+    }
 }
 
 /// Render the structured error message as a single string.

@@ -49,8 +49,9 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use barista_config::{Config, LoadAudit, LoaderError, LoaderInputs, load_effective_config};
+use barista_ipc::{Credential, CredentialsEnvelope, credential};
 
-use crate::action_graph::{ActionGraph, PlannedAction, build_action_request, verify_graph};
+use crate::action_graph::{ActionGraph, PlannedAction, build_action_request, lifecycle_graph};
 use crate::cli::{GlobalFlags, MavenVocabArgs, OutputFormat, PourArgs};
 use crate::cmd::MavenPhase;
 use crate::cmd::pour::{PourError, PourReport, run_inner as pour_run};
@@ -74,27 +75,60 @@ const DEFAULT_WORKERS_EXPR: &str = "1C";
 const DEFAULT_RUN_DIR_LEAF: &str = ".barista/run";
 
 /// Run `barista verify`. Returns the process exit code.
+///
+/// Thin wrapper around [`run_phase`] pinning the phase to
+/// [`MavenPhase::Verify`]. Retained as the cmd/verify entry point so
+/// the CLI dispatch in [`crate::cli::dispatch`] doesn't have to know
+/// that verify is a generic lifecycle command under the hood.
 pub fn run(global: &GlobalFlags, args: &MavenVocabArgs) -> i32 {
-    // `--no-daemon` fork: delegate to forked upstream `mvn verify`.
+    run_phase(global, MavenPhase::Verify, args)
+}
+
+/// Run an arbitrary Maven lifecycle phase end-to-end (`clean`,
+/// `compile`, `test`, `package`, `verify`, `install`, `deploy`,
+/// `site`). M4.3 T2 entry point.
+///
+/// Routes through the daemon by default; `--no-daemon` short-circuits
+/// to a forked upstream `mvn <phase>` invocation per M4.2 T8.
+pub fn run_phase(global: &GlobalFlags, phase: MavenPhase, args: &MavenVocabArgs) -> i32 {
+    // `--no-daemon` fork: delegate to forked upstream `mvn`.
     if global.no_daemon {
-        return crate::cmd::no_daemon::dispatch(global, MavenPhase::Verify, args);
+        return crate::cmd::no_daemon::dispatch(global, phase, args);
     }
 
     let mut renderer = make_runtime_renderer(global);
-    let exit = match run_inner(global, args) {
+    let exit = match dispatch_lifecycle(global, phase, args) {
         Ok(report) => {
             if !global.quiet
                 && let Err(e) = renderer.render_verify(&report)
             {
-                eprintln!("error: rendering verify report failed: {e}");
+                eprintln!("error: rendering {} report failed: {e}", phase.as_str());
                 return 1;
             }
-            if report.failed_actions > 0 { 1 } else { 0 }
+            if report.failed_actions > 0 {
+                // Deploy auth failures get a distinct exit code so CI
+                // pipelines can branch on "fix your creds" vs "fix
+                // your code". Daemon-side dispatcher classifies the
+                // failure (BAR-DEPLOY-AUTH-INVALID | -MISSING |
+                // -ENCRYPTED) and the code propagates through the
+                // ActionResult.error → MojoInvocation.error_code path.
+                if report
+                    .invocations
+                    .iter()
+                    .any(|i| i.error_code.starts_with("BAR-DEPLOY-AUTH-"))
+                {
+                    3
+                } else {
+                    1
+                }
+            } else {
+                0
+            }
         }
         Err(e) => {
             let code = e.exit_code();
             if matches!(global.output, OutputFormat::Human) {
-                eprintln!("error: barista verify failed: {e}");
+                eprintln!("error: barista {} failed: {e}", phase.as_str());
             } else if let Err(re) = renderer.render_error(&e) {
                 eprintln!("error: rendering error report failed: {re}");
             }
@@ -108,14 +142,33 @@ pub fn run(global: &GlobalFlags, args: &MavenVocabArgs) -> i32 {
     exit
 }
 
+/// Back-compat alias for the M4.3 T1 entry point. Calls
+/// [`dispatch_lifecycle`] with [`MavenPhase::Verify`].
+///
+/// Kept so external callers (and the existing integration test
+/// imports) compile without churn. Prefer [`dispatch_lifecycle`] in
+/// new code so the phase is explicit.
+pub fn run_inner(global: &GlobalFlags, args: &MavenVocabArgs) -> Result<VerifyReport, VerifyError> {
+    dispatch_lifecycle(global, MavenPhase::Verify, args)
+}
+
 /// Library-friendly entry point. Returns a structured report on
 /// success (including the failed-build case — `report.failed_actions
 /// > 0` signals a Maven-side failure that ran to completion).
 ///
 /// Hard errors (missing project, daemon spawn failure, IPC poison)
 /// surface as [`VerifyError`].
-pub fn run_inner(
+///
+/// The implementation walks the lifecycle phase prefix for `phase`
+/// (see [`crate::action_graph::phase_prefix`]) and dispatches each
+/// action through the daemon. For `Deploy`, the parsed `settings.xml`
+/// (from the M1.3 T2 loader output) is converted into a
+/// [`CredentialsEnvelope`] and attached to the action request so the
+/// daemon-side dispatcher can write an ephemeral settings.xml for
+/// the embedded Maven invocation.
+pub fn dispatch_lifecycle(
     global: &GlobalFlags,
+    phase: MavenPhase,
     _args: &MavenVocabArgs,
 ) -> Result<VerifyReport, VerifyError> {
     let started_at = Instant::now();
@@ -137,37 +190,52 @@ pub fn run_inner(
     // -- 3. Pour ----------------------------------------------------------
     // `pour` is idempotent and cheap on a no-op run — re-materialising
     // the same locked artifacts into ~/.m2 takes a small wall-clock
-    // budget. If the user already ran `barista pull` + `barista pour`
-    // separately, this step is a no-op modulo the directory stat.
+    // budget. `clean` skips this step because it doesn't need
+    // dependencies; every other phase needs the compile classpath.
     //
     // Note: `pour` requires a `barista.lock` to exist. The CLI tells
     // the user to run `barista pull` first when missing — same
-    // expectation `barista verify` inherits today.
-    let pour_args = PourArgs {
-        target: None,
-        scope: crate::cli::ScopeArg::Compile,
-        dry_run: false,
-    };
-    // If `pour` fails because the project never ran `barista pull`,
-    // we surface a verify-specific hint that names both prerequisites.
-    let _pour_report: PourReport = pour_run(global, &pour_args).map_err(VerifyError::from_pour)?;
+    // expectation the lifecycle commands inherit.
+    if !matches!(phase, MavenPhase::Clean) {
+        let pour_args = PourArgs {
+            target: None,
+            scope: crate::cli::ScopeArg::Compile,
+            dry_run: false,
+        };
+        let _pour_report: PourReport =
+            pour_run(global, &pour_args).map_err(VerifyError::from_pour)?;
+    }
 
     // -- 4. Action graph --------------------------------------------------
-    let graph = verify_graph(root.root.clone(), /* include_clean: */ false);
+    let graph = lifecycle_graph(phase, root.root.clone(), /* include_clean: */ false);
 
-    // -- 5. Daemon configuration -----------------------------------------
+    // -- 5. Credentials envelope for deploy ------------------------------
+    // Only `deploy` ships credentials. Other phases (including
+    // `install`, which only writes to the local repo) MUST NOT — the
+    // CredentialsEnvelope contract is "populated only for actions
+    // that demonstrably need it".
+    let deploy_credentials: Option<CredentialsEnvelope> = if matches!(phase, MavenPhase::Deploy) {
+        match build_deploy_credentials(&config) {
+            Ok(env) => Some(env),
+            Err(e) => return Err(e),
+        }
+    } else {
+        None
+    };
+
+    // -- 6. Daemon configuration -----------------------------------------
     let workers = resolve_workers_from_config(&config)?;
     let socket_dir = resolve_socket_dir(&config);
     let idle_shutdown_secs = config.daemon.idle_shutdown_secs;
 
     let plan = LaunchPlan::new(socket_dir, workers, idle_shutdown_secs);
 
-    // -- 6. Discover / spawn daemon --------------------------------------
+    // -- 7. Discover / spawn daemon --------------------------------------
     let cwd = std::env::current_dir().unwrap_or_else(|_| root.root.clone());
     let jvm_entry = discover_jvm_entry(&cwd)?;
     let initial_handle = discover_or_spawn(&plan, || Ok(jvm_entry.clone()))?;
 
-    // -- 7. Dispatch + collect --------------------------------------------
+    // -- 8. Dispatch + collect --------------------------------------------
     let mut handle = initial_handle;
     let mut invocations = Vec::with_capacity(graph.actions.len());
     let mut failed_actions = 0usize;
@@ -181,13 +249,21 @@ pub fn run_inner(
             // "we stopped here".
             break;
         }
-        let request = build_action_request(&graph, action, &root.root);
-        let phase = action.phase.to_string();
+        let mut request = build_action_request(&graph, action, &root.root);
+        // Attach credentials ONLY to the deploy action itself. Earlier
+        // phases (compile/test/package/verify/install) in a `deploy`
+        // graph run un-credentialled — they don't need server auth.
+        if action.phase == "deploy"
+            && let Some(env) = &deploy_credentials
+        {
+            request.credentials = Some(env.clone());
+        }
+        let phase_name = action.phase.to_string();
         let module = graph.module_root.clone();
 
         let action_started = Instant::now();
         let (outcome, next_handle) = submit_with_respawn(&plan, handle, &jvm_entry, request)
-            .map_err(|e| classify_respawn_error(&phase, e))?;
+            .map_err(|e| classify_respawn_error(&phase_name, e))?;
         handle = next_handle;
         let duration_ms = u64::try_from(action_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
@@ -199,13 +275,20 @@ pub fn run_inner(
         if exit_code != 0 {
             failed_actions += 1;
         }
+        let error_code = outcome
+            .result
+            .error
+            .as_ref()
+            .map(|e| e.code.clone())
+            .unwrap_or_default();
         invocations.push(MojoInvocation {
-            phase,
+            phase: phase_name,
             mojo: outcome.result.action_id.clone(),
             module,
             exit_code,
             status,
             failure_message: outcome.result.failure_message.clone(),
+            error_code,
             duration_ms,
         });
     }
@@ -215,16 +298,14 @@ pub fn run_inner(
     // reap it). We do NOT join — joining would block until the
     // daemon's idle-shutdown fires (30 min by default).
     if let Some(child) = handle.child.as_mut() {
-        // Detach: we want the child to outlive this process. The
-        // `Child` destructor on Drop does not `kill` or `wait` —
-        // letting it drop here is the right behaviour.
+        // Detach: we want the child to outlive this process.
         let _ = child;
     }
 
     let total_ms = u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
     Ok(VerifyReport {
         project_root: root.root.clone(),
-        phase: "verify".to_string(),
+        phase: phase.as_str().to_string(),
         planned_actions: graph.actions.len(),
         executed_actions: executed,
         failed_actions,
@@ -232,6 +313,49 @@ pub fn run_inner(
         invocations,
         duration_ms: total_ms,
     })
+}
+
+/// Convert the parsed `settings.xml` `<servers>` block (M1.3 T2
+/// output) into a [`CredentialsEnvelope`] suitable for attaching to a
+/// `deploy` action request.
+///
+/// Entries whose password is `{...}`-wrapped surface as
+/// [`VerifyError::DeployAuthEncrypted`] — master-password decryption
+/// is a documented follow-up (see `barista-config::decrypt_password`)
+/// and we refuse to send ciphertext across the wire.
+///
+/// An empty `<servers>` block is NOT an error here: maven-deploy-plugin
+/// can still succeed against an unauthenticated repository (e.g. a
+/// local `file://` URL in `<distributionManagement>`). The daemon-side
+/// dispatcher surfaces `BAR-DEPLOY-AUTH-MISSING` when the remote
+/// actually rejects the un-credentialled request.
+pub(crate) fn build_deploy_credentials(
+    config: &Config,
+) -> Result<CredentialsEnvelope, VerifyError> {
+    let mut entries = Vec::with_capacity(config.maven_settings.servers.len());
+    for server in &config.maven_settings.servers {
+        if server.id.is_empty() {
+            // Skip malformed entries silently — Maven itself ignores
+            // <server> elements without an <id>.
+            continue;
+        }
+        let mut cred = Credential {
+            server_id: server.id.clone(),
+            username: server.username.clone().unwrap_or_default(),
+            secret: None,
+        };
+        if let Some(pw) = &server.password {
+            let decrypted =
+                barista_config::settings_xml::decrypt_password(pw, None).map_err(|_| {
+                    VerifyError::DeployAuthEncrypted {
+                        server_id: server.id.clone(),
+                    }
+                })?;
+            cred.secret = Some(credential::Secret::Password(decrypted));
+        }
+        entries.push(cred);
+    }
+    Ok(CredentialsEnvelope { entries })
 }
 
 /// Resolve the per-call worker count.
@@ -363,6 +487,19 @@ pub enum VerifyError {
         message: String,
     },
 
+    /// Deploy attempted with a `{...}`-wrapped (master-password-
+    /// encrypted) credential in settings.xml. The CLI refuses to send
+    /// ciphertext across the wire (per the CredentialsEnvelope
+    /// contract); decryption is a documented follow-up.
+    #[error(
+        "deploy: server '{server_id}' has a master-password-encrypted credential in settings.xml; \n  \
+           code: BAR-DEPLOY-AUTH-ENCRYPTED\n  \
+           hint: master-password decryption is a documented follow-up; \
+                 use a plaintext credential or configure auth via environment \
+                 variables until barista grows the decryption pipeline"
+    )]
+    DeployAuthEncrypted { server_id: String },
+
     /// Daemon crashed twice in a row on the same phase.
     #[error(
         "phase {phase}: persistent daemon crash — barback crashed mid-action twice in a row \
@@ -389,13 +526,21 @@ impl VerifyError {
 
     /// Process exit code for the error. Mirrors the pour / pull
     /// convention: precondition / user-fixable errors → 2; internal /
-    /// unexpected errors → 1.
+    /// unexpected errors → 1; deploy-auth errors → 3 (a distinct
+    /// "your credentials are wrong" sentinel CI pipelines can branch
+    /// on without parsing the rendered message).
     fn exit_code(&self) -> i32 {
         match self {
             VerifyError::Project(_)
             | VerifyError::Config(_)
             | VerifyError::Workers { .. }
             | VerifyError::Pour { .. } => 2,
+            VerifyError::DeployAuthEncrypted { .. } => 3,
+            VerifyError::DaemonError { code, .. }
+                if code.starts_with("BAR-DEPLOY-AUTH-") =>
+            {
+                3
+            }
             VerifyError::Launcher(_)
             | VerifyError::DaemonConnect { .. }
             | VerifyError::Ipc { .. }
@@ -471,5 +616,100 @@ mod tests {
             phase: "compile".into(),
         };
         assert_eq!(e.exit_code(), 1);
+    }
+
+    #[test]
+    fn deploy_auth_errors_use_exit_code_3() {
+        let e = VerifyError::DeployAuthEncrypted {
+            server_id: "central".into(),
+        };
+        assert_eq!(e.exit_code(), 3, "encrypted-credential errors → exit 3");
+
+        let e = VerifyError::DaemonError {
+            phase: "deploy".into(),
+            code: "BAR-DEPLOY-AUTH-INVALID".into(),
+            message: "401".into(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            3,
+            "daemon-reported auth-invalid errors → exit 3"
+        );
+
+        let e = VerifyError::DaemonError {
+            phase: "deploy".into(),
+            code: "BAR-DEPLOY-AUTH-MISSING".into(),
+            message: "no creds".into(),
+        };
+        assert_eq!(
+            e.exit_code(),
+            3,
+            "daemon-reported missing-creds errors → exit 3"
+        );
+
+        // A non-auth daemon error stays at the generic exit 1.
+        let e = VerifyError::DaemonError {
+            phase: "compile".into(),
+            code: "BAR-MAVEN-CORE".into(),
+            message: "boom".into(),
+        };
+        assert_eq!(e.exit_code(), 1);
+    }
+
+    #[test]
+    fn build_deploy_credentials_skips_blank_server_ids() {
+        let mut cfg = Config::default();
+        cfg.maven_settings.servers.push(barista_config::Server {
+            id: String::new(),
+            username: Some("anon".into()),
+            password: Some("p".into()),
+            ..Default::default()
+        });
+        cfg.maven_settings.servers.push(barista_config::Server {
+            id: "real-repo".into(),
+            username: Some("u".into()),
+            password: Some("p".into()),
+            ..Default::default()
+        });
+        let env = build_deploy_credentials(&cfg).unwrap();
+        assert_eq!(env.entries.len(), 1, "blank-id server entries are skipped");
+        assert_eq!(env.entries[0].server_id, "real-repo");
+    }
+
+    #[test]
+    fn build_deploy_credentials_surfaces_encrypted_passwords() {
+        let mut cfg = Config::default();
+        cfg.maven_settings.servers.push(barista_config::Server {
+            id: "encrypted-repo".into(),
+            username: Some("u".into()),
+            // `{...}`-wrapped → recognised as encrypted by
+            // barista-config::decrypt_password.
+            password: Some("{COQLCE53YjsoAtFt3PNZuyP+sb9D9Mr7Hp0/mAtNNNk=}".into()),
+            ..Default::default()
+        });
+        let err = build_deploy_credentials(&cfg).unwrap_err();
+        match err {
+            VerifyError::DeployAuthEncrypted { server_id } => {
+                assert_eq!(server_id, "encrypted-repo");
+            }
+            other => panic!("expected DeployAuthEncrypted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_deploy_credentials_passes_plaintext_through() {
+        let mut cfg = Config::default();
+        cfg.maven_settings.servers.push(barista_config::Server {
+            id: "plain".into(),
+            username: Some("u".into()),
+            password: Some("hunter2".into()),
+            ..Default::default()
+        });
+        let env = build_deploy_credentials(&cfg).unwrap();
+        assert_eq!(env.entries.len(), 1);
+        match &env.entries[0].secret {
+            Some(credential::Secret::Password(p)) => assert_eq!(p, "hunter2"),
+            other => panic!("expected Password secret, got {other:?}"),
+        }
     }
 }
