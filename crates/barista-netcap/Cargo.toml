@@ -8,5 +8,47 @@ publish = false
 
 [lib]
 
+[dependencies]
+# `serde` + `serde_json` model the typed capture configuration and parse the
+# HAR (HTTP Archive) output emitted by mitmproxy's `--save-har` flag. HAR is
+# a JSON dialect, so `serde_json::Value` is sufficient for the minimal
+# validation pass this crate performs today — full schema modelling lands in
+# the analysis crate (`barista-netanalyze`).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `thiserror` keeps the public error enum (`NetcapError`) ergonomic for
+# downstream callers (`barista-bench`, `barista-cli`) without forcing them
+# onto a particular error-handling style.
+thiserror = "2"
+
+# `tokio` drives the capture-session subprocess. The `process` feature gives
+# us `Command::kill_on_drop` semantics (critical so a panicking caller does
+# not orphan an mitmdump process); `time` powers the stop-deadline; the
+# remaining features are the standard async-runtime surface used elsewhere
+# in the workspace (see `barista-cache` for the canonical feature list).
+tokio = { version = "1", features = ["process", "time", "macros", "rt", "rt-multi-thread", "sync", "fs", "io-util"] }
+
+# `which` locates `mitmdump` / `mitmproxy` on the user's `$PATH` so we can
+# report a clear "mitmproxy is not installed" status from `CaSetup` and
+# `CaptureSession` without raising an opaque ENOENT.
+which = "8"
+
+[dev-dependencies]
+# `tempfile` gives the integration tests a sandboxed output directory for
+# the HAR file emitted by the stub-subprocess lifecycle test.
+tempfile = "3"
+
 [lints]
 workspace = true
+
+# --------------------------------------------------------------------------
+# Supply-chain notes
+# --------------------------------------------------------------------------
+# All five new deps (`serde`, `serde_json`, `thiserror`, `tokio`, `which`)
+# are already present in `Cargo.lock` at compatible majors via other
+# workspace crates (e.g. `barista-cache` pulls `tokio 1.52.3`,
+# `barista-bench` pulls `thiserror 2.0.18`, dev-dep `tempfile 3.27.0` is
+# already used in 5+ crates, `which 8.0.2` is a transitive of `reqwest`).
+# This crate therefore inherits the existing supply-chain posture rather
+# than introducing a net-new third-party surface.
