@@ -217,8 +217,14 @@ dependencies = [
 name = "barista-ipc"
 version = "0.1.0-alpha.0"
 dependencies = [
+ "bytes",
+ "futures-util",
  "prost",
  "prost-build",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
  "zeroize",
 ]
 

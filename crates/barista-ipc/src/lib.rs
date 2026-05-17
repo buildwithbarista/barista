@@ -1,7 +1,7 @@
 //! Worker-protocol IPC transport between the CLI and the barback daemon.
 //!
 //! This crate hosts the Rust side of the IPC wire contract defined in
-//! `proto/barista/v1/worker.proto`. At this milestone it ships:
+//! `proto/barista/v1/worker.proto`. It ships:
 //!
 //! * The generated message types under [`proto`], produced by `prost-build`
 //!   from the canonical schema at compile time.
@@ -11,13 +11,36 @@
 //! * Redacted `Debug` impls and `ZeroizeOnDrop` derives on the credential
 //!   types (`Credential`, `CredentialsEnvelope`, `SshKey`,
 //!   `credential::Secret`) — see [`proto`] for the contract.
+//! * A framed bidirectional transport under [`transport`] (UDS on Unix,
+//!   named pipe on Windows) implementing the 4-byte big-endian length-
+//!   prefix wire format from PRD §12.1. The transport hands callers
+//!   `async fn send(Envelope) -> Result<()>` / `async fn recv() ->
+//!   Result<Envelope>` and hides codec / framing / buffering details.
 //!
-//! The framed-transport layer (4-byte big-endian length prefix over a
-//! 0600 UDS or DACL'd named pipe) is intentionally not in this milestone —
-//! it lands in a subsequent task. This crate is byte-shape-only until then.
+//! The socket-permission layer (0600 UDS mode, DACL'd named pipe) and the
+//! streaming/multiplexing/cancellation layer ride on top of [`transport`]
+//! in subsequent tasks. This crate ships the framing primitive; higher
+//! protocol semantics layer on the `Transport` trait.
 
 /// Generated wire types and their redacted-`Debug` overrides.
 pub mod proto;
+
+// The module's own `//!` doc-comment in `src/transport/mod.rs` is
+// authoritative — see there for the wire format, the `Transport`
+// trait, the typed error model, and the cross-platform submodule
+// layout (UDS / named pipe). We deliberately don't repeat that here
+// in an outer doc-comment: doing so would create a second copy of the
+// same intra-doc links resolved from a different scope, which
+// rustdoc reports as broken when the linked items live inside the
+// child module.
+pub mod transport;
+
+// Re-export the transport surface at the crate root so downstream
+// callers can write `barista_ipc::Transport` / `barista_ipc::
+// TransportError`. The concrete `UdsTransport` and `NamedPipeTransport`
+// stay namespaced under `transport::` to keep the crate root focused on
+// the trait + error model + the wire types from `proto`.
+pub use transport::{MAX_FRAME_BYTES, Transport, TransportError};
 
 // Re-export every top-level message at the crate root.
 //

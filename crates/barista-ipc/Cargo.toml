@@ -28,6 +28,41 @@ prost = "0.13"
 # transport-buffer zeroization.
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 
+# Async runtime + UDS (Unix) / named-pipe (Windows) transports for the
+# framed wire protocol in `src/transport/`. tokio's named-pipe surface is
+# Windows-only; the rest is cross-platform. We avoid the `process` feature
+# (not needed on the IPC hot path) and `signal` (the CLI owns signal
+# handling). `sync` enables `oneshot` / `mpsc` for the per-stream channels
+# T6 will wire on top of this transport.
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "net", "macros", "sync"] }
+
+# `tokio-util::codec::LengthDelimitedCodec` already implements the exact
+# 4-byte big-endian length-prefix framing PRD §12.1 specifies. Reusing it
+# avoids a hand-rolled `AsyncRead`/`AsyncWrite` framer (and the subtle
+# torn-write / partial-frame bugs that live in such code). Configured in
+# `src/transport/mod.rs` with `length_field_length(4)`, big-endian by
+# default, and a 16 MiB max-frame guardrail (see `MAX_FRAME_BYTES`).
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# `bytes` is `tokio-util`'s buffer currency — `LengthDelimitedCodec`
+# yields `BytesMut` frames on read and accepts `Bytes` on write. Adding
+# it explicitly (rather than re-exporting via `tokio-util`) keeps the
+# public types in `src/transport/` self-documenting.
+bytes = "1"
+
+# `thiserror` is used by the rest of the workspace for typed error
+# enums; matching the style for `TransportError`. Pinned to the same
+# major as `barista-cache`, `barista-cli`, etc.
+thiserror = "2"
+
+# `futures-util` is needed for the `SinkExt::send` and
+# `StreamExt::next` adapters on `tokio_util::codec::Framed` — the
+# adapter methods live in `futures-util` even though the underlying
+# traits are in `futures-core` / `futures-sink`. Only the `sink` +
+# `std` features are needed (we don't pull executors, channels, or
+# the macro half of the crate).
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+
 [build-dependencies]
 # `prost-build` invokes `protoc` at compile time and turns the `.proto`
 # files in `proto/` into Rust types under `OUT_DIR`. Version locked to the
@@ -39,6 +74,20 @@ zeroize = { version = "1.8", features = ["zeroize_derive"] }
 # `*` bullets + backticked tokens that rustdoc would otherwise try to
 # parse as indented code blocks, producing spurious lex errors).
 prost-build = { version = "0.13", features = ["cleanup-markdown"] }
+
+[dev-dependencies]
+# `tempfile` provides a per-test tmpdir so concurrent UDS tests don't
+# collide on socket paths. macOS' 104-char `sun_path` limit means we
+# can't blindly use `std::env::temp_dir()` — `tempdir()` returns a
+# short, unique path the test cleans up on drop.
+tempfile = "3"
+
+# Tests use `tokio::time::sleep` to break up writes and prove the
+# codec resumes correctly across stalled writes. The `time` feature
+# isn't required by the production transport (the codec yields based
+# on socket readiness, not wall-clock timers), so we keep it confined
+# to dev-deps.
+tokio = { version = "1", features = ["rt-multi-thread", "io-util", "net", "macros", "sync", "time"] }
 
 [lints]
 workspace = true
