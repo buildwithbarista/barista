@@ -1,0 +1,7 @@
+schema = "barista.bench.manifest/v1"
+id = "version-compare"
+display_name = "Version comparison hot path"
+category = "microbench"
+command = "cargo bench -p barista-version --bench version_compare"
+metrics = ["wall_ms"]
+hardware_tier = 1

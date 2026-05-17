@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/bench/manifest/v1.json",
+  "title": "Barista benchmark manifest (Bench.toml)",
+  "description": "Per-project benchmark manifest. Authored as TOML; this schema describes the equivalent JSON document so external validators can check manifests without parsing TOML. Field naming matches `barista-bench` Rust types.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "display_name",
+    "category",
+    "command",
+    "metrics",
+    "hardware_tier"
+  ],
+  "properties": {
+    "schema": {
+      "const": "barista.bench.manifest/v1",
+      "description": "Schema discriminator. Bump the trailing `vN` to introduce a breaking change."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+      "description": "Stable identifier for this benchmark target."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name for dashboards and reports."
+    },
+    "category": {
+      "type": "string",
+      "enum": ["microbench", "corpus"],
+      "description": "Kind of benchmark target. `microbench` for Tier-1 in-process benches; `corpus` for Tier-2/3 reference projects."
+    },
+    "corpus_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional foreign key into the project corpus directory."
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Shell command line invoked under measurement."
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Metrics the harness captures per iteration. Known values: `wall_ms`, `cpu_user_ms`, `cpu_sys_ms`, `peak_rss_kb`, `network_bytes`, `disk_read_bytes`, `disk_write_bytes`. Producers may emit additional metric names; consumers should ignore unknown entries."
+    },
+    "hardware_tier": {
+      "type": "integer",
+      "enum": [1, 2, 3],
+      "description": "Hardware tier this manifest targets. 1 = local developer; 2 = self-hosted CI runner; 3 = public reference hardware."
+    },
+    "iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 5,
+      "description": "Number of measured iterations."
+    },
+    "warmup_iterations": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 1,
+      "description": "Number of un-measured warmup iterations."
+    },
+    "allowed_variance": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0.0
+      },
+      "description": "Per-metric variance budget enforced by the regression gate."
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Free-form labels attached to dashboard rows."
+    }
+  }
+}

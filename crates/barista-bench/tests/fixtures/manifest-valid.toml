@@ -1,0 +1,16 @@
+schema = "barista.bench.manifest/v1"
+id = "P02"
+display_name = "Spring PetClinic"
+category = "corpus"
+corpus_id = "spring-petclinic-3.3.0"
+command = "barista verify"
+metrics = ["wall_ms", "cpu_user_ms", "peak_rss_kb"]
+hardware_tier = 3
+iterations = 5
+warmup_iterations = 1
+
+[allowed_variance]
+wall_ms_p95 = 0.1
+
+[labels]
+shape = "small-spring"

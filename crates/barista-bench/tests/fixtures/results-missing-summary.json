@@ -1,0 +1,21 @@
+{
+  "schema": "barista.bench.results/v1",
+  "manifest_id": "P02",
+  "run_id": "run-002",
+  "timestamp": "2026-05-10T18:30:00Z",
+  "git_sha": "abcd1234abcd1234abcd1234abcd1234abcd1234",
+  "barista_version": "0.1.0",
+  "hardware_tier": 3,
+  "runner_id": "R-Bench-3",
+  "hardware": {
+    "id": "R-Bench-3",
+    "cpu": "AMD EPYC 7R32",
+    "cores_physical": 16,
+    "cores_logical": 32,
+    "memory_gb": 64,
+    "os": "Ubuntu 24.04"
+  },
+  "iterations": [
+    { "iteration": 0, "wall_ms": 100, "exit_code": 0 }
+  ]
+}

@@ -1,0 +1,6 @@
+schema = "barista.bench.manifest/v1"
+display_name = "no id here"
+category = "corpus"
+command = "barista verify"
+metrics = ["wall_ms"]
+hardware_tier = 2

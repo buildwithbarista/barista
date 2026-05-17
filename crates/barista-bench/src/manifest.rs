@@ -1,0 +1,243 @@
+//! `Bench.toml` — per-project benchmark manifest schema.
+//!
+//! Every benchmark target (a Tier-1 microbench fixture inside a crate's
+//! `benches/` directory, or a Tier-2/3 reference project checked in under
+//! `bench/projects/`) ships with a `Bench.toml` declaring **how to run
+//! it**, **what to measure**, and **what tier of hardware it targets**.
+//! The manifest is the only on-disk source of truth for those facts —
+//! the harness reads it, the regression gate reads it, the dashboard
+//! reads it.
+//!
+//! # Example
+//!
+//! ```toml
+//! schema = "barista.bench.manifest/v1"
+//! id = "P02"
+//! display_name = "Spring PetClinic"
+//! category = "corpus"
+//! corpus_id = "spring-petclinic-3.3.0"
+//! command = "barista verify"
+//! hardware_tier = 3
+//! iterations = 5
+//! warmup_iterations = 1
+//! metrics = ["wall_ms", "cpu_user_ms", "peak_rss_kb"]
+//!
+//! [allowed_variance]
+//! wall_ms_p95 = 0.10
+//! ```
+
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{MANIFEST_SCHEMA, error::Error};
+
+/// Top-level `Bench.toml` document.
+///
+/// Field naming and structure track PRD §17.8. The harness in
+/// `barista-bench` (CLI) and the Tier-2 regression gate both
+/// deserialize this struct directly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Manifest {
+    /// Schema discriminator. Must equal [`crate::MANIFEST_SCHEMA`]
+    /// (`"barista.bench.manifest/v1"`).
+    ///
+    /// Future revisions will bump the suffix; consumers should reject
+    /// unknown values rather than guess.
+    pub schema: String,
+
+    /// Stable identifier for this benchmark target. For Tier-3 corpus
+    /// projects this matches the `P01..P12` IDs from PRD §17.5; for
+    /// Tier-1 microbenches it is a `kebab-case` slug unique to the
+    /// crate.
+    pub id: String,
+
+    /// Human-readable name for dashboard rows and report headings.
+    pub display_name: String,
+
+    /// What kind of benchmark target this manifest describes.
+    pub category: Category,
+
+    /// Optional foreign key into a checked-in project corpus
+    /// (`bench/projects/<corpus_id>/`) or microbench fixture
+    /// (`crates/<crate>/benches/fixtures/<corpus_id>/`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_id: Option<String>,
+
+    /// Shell command line to invoke under measurement. The harness
+    /// runs this in a subprocess with a clean environment; per-shell
+    /// quoting is not interpreted (the harness uses `argv`-style
+    /// splitting).
+    pub command: String,
+
+    /// Which counters the harness should capture for every iteration.
+    /// The set must be non-empty.
+    pub metrics: Vec<Metric>,
+
+    /// Which hardware tier this manifest targets.
+    pub hardware_tier: HardwareTier,
+
+    /// Number of measured iterations. Default 5; the harness reports
+    /// median + p95 across these.
+    #[serde(default = "default_iterations")]
+    pub iterations: u32,
+
+    /// Number of un-measured warmup iterations. Default 1.
+    #[serde(default = "default_warmup_iterations")]
+    pub warmup_iterations: u32,
+
+    /// Optional per-metric variance budget. Map key is a metric name
+    /// (e.g. `"wall_ms_p95"`); value is the fractional drift tolerated
+    /// by the regression gate (e.g. `0.10` for 10%).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub allowed_variance: BTreeMap<String, f64>,
+
+    /// Free-form labels attached to dashboard rows (e.g. `"shape": "library"`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+}
+
+/// Benchmark category — drives which harness consumes the manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Category {
+    /// Tier-1 in-process microbenchmark driven by `criterion`.
+    Microbench,
+    /// Tier-2 / Tier-3 task-oriented reference project.
+    Corpus,
+}
+
+/// Hardware tier the manifest is calibrated for. See PRD §17.6.
+///
+/// The discriminant values match the `1..=3` integers used in the
+/// JSON-Schema for results documents so the wire format and the Rust
+/// type stay in lock-step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub enum HardwareTier {
+    /// Tier 1 — local developer machine. Variance acceptable; used
+    /// for `cargo bench` style microbenches.
+    Tier1,
+    /// Tier 2 — self-hosted CI runner (e.g. `R-Bench-1`). Concurrency
+    /// pinned to 1; controlled variance.
+    Tier2,
+    /// Tier 3 — public reference hardware (e.g. `R-Bench-3` on AWS).
+    /// Publishable results.
+    Tier3,
+}
+
+impl From<HardwareTier> for u8 {
+    fn from(t: HardwareTier) -> u8 {
+        match t {
+            HardwareTier::Tier1 => 1,
+            HardwareTier::Tier2 => 2,
+            HardwareTier::Tier3 => 3,
+        }
+    }
+}
+
+impl TryFrom<u8> for HardwareTier {
+    type Error = String;
+    fn try_from(v: u8) -> Result<Self, Self::Error> {
+        match v {
+            1 => Ok(HardwareTier::Tier1),
+            2 => Ok(HardwareTier::Tier2),
+            3 => Ok(HardwareTier::Tier3),
+            other => Err(format!("hardware_tier must be 1, 2, or 3 (got {other})")),
+        }
+    }
+}
+
+/// Named metric counter the harness can capture per iteration.
+///
+/// `Other` carries an arbitrary string so a manifest can request a
+/// metric that the harness emits but this enum does not yet enumerate
+/// (e.g. `cache_hit_rate`). Unknown metric names round-trip cleanly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", untagged)]
+pub enum Metric {
+    /// Well-known metric (closed enum).
+    Known(KnownMetric),
+    /// Free-form metric name, e.g. `"cache_hit_rate"`.
+    Other(String),
+}
+
+/// Closed enumeration of metrics the harness knows how to capture
+/// natively. New entries are additive (forward-compatible).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KnownMetric {
+    /// Wall-clock time, milliseconds.
+    WallMs,
+    /// User-mode CPU time, milliseconds.
+    CpuUserMs,
+    /// System-mode CPU time, milliseconds.
+    CpuSysMs,
+    /// Peak resident-set size, kibibytes.
+    PeakRssKb,
+    /// Bytes read from the network during the run.
+    NetworkBytes,
+    /// Bytes read from disk during the run.
+    DiskReadBytes,
+    /// Bytes written to disk during the run.
+    DiskWriteBytes,
+}
+
+fn default_iterations() -> u32 {
+    5
+}
+
+fn default_warmup_iterations() -> u32 {
+    1
+}
+
+impl Manifest {
+    /// Parse a manifest from a TOML string.
+    ///
+    /// Performs structural validation beyond what `serde` can express:
+    /// `schema` must match [`crate::MANIFEST_SCHEMA`], `id` /
+    /// `display_name` / `command` must be non-empty, and `metrics`
+    /// must contain at least one entry.
+    pub fn from_toml_str(input: &str) -> Result<Self, Error> {
+        let manifest: Manifest = toml::from_str(input)?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    /// Serialize the manifest back to TOML.
+    pub fn to_toml_string(&self) -> Result<String, Error> {
+        // toml::to_string never fails for our owned types, but we
+        // surface the error path defensively in case of future fields.
+        toml::to_string(self).map_err(|e| Error::ManifestInvalid(e.to_string()))
+    }
+
+    fn validate(&self) -> Result<(), Error> {
+        if self.schema != MANIFEST_SCHEMA {
+            return Err(Error::ManifestInvalid(format!(
+                "schema must be `{MANIFEST_SCHEMA}` (got `{}`)",
+                self.schema
+            )));
+        }
+        if self.id.trim().is_empty() {
+            return Err(Error::ManifestInvalid("id must not be empty".into()));
+        }
+        if self.display_name.trim().is_empty() {
+            return Err(Error::ManifestInvalid(
+                "display_name must not be empty".into(),
+            ));
+        }
+        if self.command.trim().is_empty() {
+            return Err(Error::ManifestInvalid("command must not be empty".into()));
+        }
+        if self.metrics.is_empty() {
+            return Err(Error::ManifestInvalid(
+                "metrics must contain at least one entry".into(),
+            ));
+        }
+        if self.iterations == 0 {
+            return Err(Error::ManifestInvalid("iterations must be >= 1".into()));
+        }
+        Ok(())
+    }
+}

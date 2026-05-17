@@ -1,0 +1,35 @@
+{
+  "schema": "barista.bench.results/v1",
+  "manifest_id": "P02",
+  "run_id": "2026-05-10T18:30:00Z-abcd1234",
+  "timestamp": "2026-05-10T18:30:00Z",
+  "git_sha": "abcd1234abcd1234abcd1234abcd1234abcd1234",
+  "barista_version": "0.1.0",
+  "hardware_tier": 3,
+  "runner_id": "R-Bench-3",
+  "hardware": {
+    "id": "R-Bench-3",
+    "cpu": "AMD EPYC 7R32",
+    "cores_physical": 16,
+    "cores_logical": 32,
+    "memory_gb": 64,
+    "os": "Ubuntu 24.04"
+  },
+  "iterations": [
+    { "iteration": 0, "wall_ms": 8420, "cpu_user_ms": 31200, "peak_rss_kb": 1269760, "exit_code": 0 },
+    { "iteration": 1, "wall_ms": 8511, "cpu_user_ms": 31380, "peak_rss_kb": 1271808, "exit_code": 0 },
+    { "iteration": 2, "wall_ms": 8395, "cpu_user_ms": 31044, "peak_rss_kb": 1268736, "exit_code": 0 },
+    { "iteration": 3, "wall_ms": 8478, "cpu_user_ms": 31265, "peak_rss_kb": 1270784, "exit_code": 0 },
+    { "iteration": 4, "wall_ms": 8463, "cpu_user_ms": 31200, "peak_rss_kb": 1269248, "exit_code": 0 }
+  ],
+  "summary": {
+    "avg_wall_ms": 8453.4,
+    "median_wall_ms": 8463.0,
+    "p95_wall_ms": 8511.0,
+    "stddev_wall_ms": 44.2
+  },
+  "metadata": {
+    "jdk": "21",
+    "baseline": "barista"
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schema/bench/results/v1.json",
+  "title": "Barista benchmark results document (results.json)",
+  "description": "Per-run benchmark measurements emitted by `barista-bench`. The dashboard backend at `bench.barista.build/data/` consumes documents matching this schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "manifest_id",
+    "run_id",
+    "timestamp",
+    "git_sha",
+    "barista_version",
+    "hardware_tier",
+    "runner_id",
+    "hardware",
+    "iterations",
+    "summary"
+  ],
+  "properties": {
+    "schema": {
+      "const": "barista.bench.results/v1",
+      "description": "Schema discriminator."
+    },
+    "manifest_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID of the manifest that produced this run."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable run identifier. Convention: `<rfc3339>-<git_sha_short>`."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$",
+      "description": "Start time of the run, RFC 3339."
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "Full 40-character git SHA of the source tree producing the binary under test."
+    },
+    "barista_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Semver version string of the barista binary."
+    },
+    "hardware_tier": {
+      "type": "integer",
+      "enum": [1, 2, 3],
+      "description": "Hardware tier the run executed on."
+    },
+    "runner_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier of the runner that produced this document."
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "cpu",
+        "cores_physical",
+        "cores_logical",
+        "memory_gb",
+        "os"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "cpu": { "type": "string", "minLength": 1 },
+        "cores_physical": { "type": "integer", "minimum": 1 },
+        "cores_logical": { "type": "integer", "minimum": 1 },
+        "memory_gb": { "type": "integer", "minimum": 1 },
+        "os": { "type": "string", "minLength": 1 }
+      }
+    },
+    "iterations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["iteration", "wall_ms", "exit_code"],
+        "properties": {
+          "iteration": { "type": "integer", "minimum": 0 },
+          "wall_ms": { "type": "integer", "minimum": 0 },
+          "cpu_user_ms": { "type": "integer", "minimum": 0 },
+          "cpu_sys_ms": { "type": "integer", "minimum": 0 },
+          "peak_rss_kb": { "type": "integer", "minimum": 0 },
+          "network_bytes": { "type": "integer", "minimum": 0 },
+          "disk_read_bytes": { "type": "integer", "minimum": 0 },
+          "disk_write_bytes": { "type": "integer", "minimum": 0 },
+          "exit_code": { "type": "integer" }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "avg_wall_ms",
+        "median_wall_ms",
+        "p95_wall_ms",
+        "stddev_wall_ms"
+      ],
+      "properties": {
+        "avg_wall_ms": { "type": "number", "minimum": 0.0 },
+        "median_wall_ms": { "type": "number", "minimum": 0.0 },
+        "p95_wall_ms": { "type": "number", "minimum": 0.0 },
+        "stddev_wall_ms": { "type": "number", "minimum": 0.0 }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Free-form labels. Forward-compatible extension point."
+    }
+  }
+}
