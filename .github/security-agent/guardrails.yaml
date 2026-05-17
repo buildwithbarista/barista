@@ -407,6 +407,8 @@ cross_references:
   workflow: ".github/workflows/auto-remediate.yml — the GitHub Actions workflow that fires the agent on `issues.labeled` events."
   finding_issue_filer: ".github/workflows/security-finding-to-issue.yml — the upstream workflow that creates the `security-bot`-labeled issues this agent responds to."
   branch_protection_setup: "docs/ci/branch-protection.md — operator-facing setup for the GitHub branch-protection ruleset on `main`."
+  dco_setup: "docs/ci/dco.md — operator-facing setup for the Developer Certificate of Origin gate (C.4 Task 6); precondition for enabling this agent on `main`."
+  codeowners: ".github/CODEOWNERS — declarative reviewer assignment for security-sensitive paths (.github/, .semgrep/, deny.toml, build manifests, docs/ci/)."
   pr_templates:
     default: ".github/PULL_REQUEST_TEMPLATE/default.md"
     agent: ".github/PULL_REQUEST_TEMPLATE/security-auto-remediation.md"

@@ -1,0 +1,96 @@
+# Developer Certificate of Origin (DCO) check.
+#
+# Verifies every commit on a pull request carries a `Signed-off-by:`
+# trailer matching the commit's author. The DCO (https://developercertificate.org/)
+# is a lightweight, OSS-standard contributor attestation that the
+# contributor has the right to submit the work under the project's
+# license. Compared to the alternative — GitHub-enforced GPG/S-MIME
+# signed commits — DCO requires no key management for contributors;
+# `git commit -s` is the entire onboarding surface.
+#
+# Why a script-based check (not the `dcoapp/app` GitHub App)?
+#   - The `dcoapp/app` is the canonical implementation but requires a
+#     separate App installation per repository, which is operator setup
+#     beyond branch protection. A script that runs in GitHub Actions
+#     ships with the repo and works the moment branch protection adds
+#     this check to its required-status-checks list — no out-of-band
+#     install step. The behavior is observable in the workflow YAML
+#     instead of hidden in a GitHub App's configuration.
+#   - The check logic is small: walk every commit in the PR range, look
+#     for a `Signed-off-by:` trailer whose email matches the commit
+#     author's email. Implementing it in shell + `git interpret-trailers`
+#     is shorter than wiring up the App, and it's the same logic the
+#     `dcoapp/app` source uses.
+#
+# Branch-protection wiring: the operator adds `dco` (this job's `name:`)
+# to `required_status_checks.contexts` on `main`. See `docs/ci/dco.md`
+# for the `gh api` payload and the operator checklist.
+#
+# Every action is pinned to a commit SHA (not a floating tag), matching
+# the C.4 Task 1 SHA-pinning policy. The human-readable tag is recorded
+# next to the SHA so future readers can audit drift without external
+# tools. When bumping, update both the SHA and the comment.
+
+name: DCO
+
+on:
+  pull_request:
+    # `synchronize` fires on every PR-branch push, so a contributor who
+    # adds a sign-off via `git commit --amend -s && git push --force`
+    # re-runs this check immediately. `opened` and `reopened` cover the
+    # initial creation. `edited` is intentionally omitted — editing a
+    # PR's title/body doesn't change commits.
+    types: [opened, reopened, synchronize]
+
+# Default-deny at the workflow level; the single job opts in explicitly.
+permissions: {}
+
+# Cancel in-flight runs when a PR is updated; the latest push is the
+# only one whose status matters for merge eligibility.
+concurrency:
+  group: dco-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # dco — assert every commit on the PR carries a `Signed-off-by:` trailer.
+  #
+  # The job's `name:` field is `dco` so the branch-protection ruleset's
+  # required-status-check entry is `dco` verbatim. If this name changes,
+  # update `docs/ci/dco.md` and re-apply the branch-protection payload.
+  # ---------------------------------------------------------------------------
+  dco:
+    name: dco
+    runs-on: ubuntu-latest
+    permissions:
+      # Read-only — the check inspects commit metadata and never writes
+      # anything back. Branch-protection enforces the gate; this job
+      # only produces the pass/fail signal.
+      contents: read
+    steps:
+      - name: Checkout PR (full history)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Need both the PR head and the base ref so we can compute the
+          # commit range. `fetch-depth: 0` is the simplest way to be sure
+          # the merge-base is reachable regardless of how shallow the
+          # default checkout would otherwise be.
+          fetch-depth: 0
+          # The job only reads commit metadata; the credential helper
+          # is unnecessary and is a known token-leak surface, so deny it.
+          persist-credentials: false
+          # On `pull_request` events the default checkout is the
+          # `refs/pull/N/merge` ref. We want the PR head's actual commits
+          # for the DCO check, so check out the head SHA directly.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Run DCO check
+        shell: bash
+        env:
+          # Pass the base and head SHAs through env to avoid shell
+          # interpolation of `${{ ... }}` inside the run block (zizmor
+          # `template-injection` rule).
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/check-dco.sh "${BASE_SHA}" "${HEAD_SHA}"

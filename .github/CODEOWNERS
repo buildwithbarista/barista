@@ -1,0 +1,151 @@
+# CODEOWNERS — automatic reviewer assignment for security-sensitive
+# and load-bearing paths.
+#
+# Format reference: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# How this file is enforced:
+#
+#   - GitHub auto-requests reviews from the listed owners when a PR
+#     touches a matching path.
+#   - The branch-protection ruleset on `main` does NOT currently set
+#     `require_code_owner_reviews: true` (it's `false` per
+#     `docs/ci/branch-protection.md`'s `gh api` payload). Owner review
+#     is therefore advisory — a request that helps route attention,
+#     not a hard gate. Operators may flip the flag later if review
+#     burden allows; doing so makes every CODEOWNERS entry below a
+#     blocking reviewer for its matched paths.
+#
+# Operator setup:
+#
+#   The team slugs below are placeholders. Before this file does any
+#   work, an operator must create the corresponding GitHub teams under
+#   the `buildwithbarista` org and add maintainers to them. The slug
+#   namespace is `@buildwithbarista/<team>`; until the teams exist,
+#   GitHub silently ignores entries whose owner is an unknown team
+#   (the path matches but no review is requested), so populating this
+#   file ahead of team creation is safe.
+#
+#   Suggested teams to create (replicated across all four public repos):
+#     - `@buildwithbarista/security`     — owns CI/security config,
+#                                          gitleaks rules, semgrep rules,
+#                                          deny.toml, security-agent config.
+#     - `@buildwithbarista/build`        — owns build-system manifests:
+#                                          Cargo.toml(s), barback/pom.xml,
+#                                          rust-toolchain.toml, .tool-versions.
+#     - `@buildwithbarista/docs`         — owns architecture/compat/perf
+#                                          documentation under `docs/`.
+#     - `@buildwithbarista/maintainers`  — catch-all fallback (last entry,
+#                                          last-match-wins per GitHub).
+#
+# Last-match-wins semantics:
+#
+#   GitHub evaluates patterns top-to-bottom and the LAST matching line
+#   wins. Order matters: most-general patterns at the top, most-specific
+#   at the bottom. The fallback `*` entry, if present, must be near the
+#   top so per-path overrides take precedence.
+#
+# Pattern syntax:
+#
+#   `path/`     — directory and everything under it
+#   `path/*`    — files directly in `path/`, not subdirs
+#   `path/**`   — `path/` and everything under it (same as `path/`)
+#   `*.ext`     — any file with extension `.ext`, anywhere
+#   Leading `/` anchors to the repository root.
+
+# ---------------------------------------------------------------------------
+# Fallback — every path not matched below routes here.
+# ---------------------------------------------------------------------------
+
+*                                                @buildwithbarista/maintainers
+
+# ---------------------------------------------------------------------------
+# Security-sensitive surfaces.
+#
+# Edits to any of these can change the project's security posture
+# without changing source code (e.g., loosening a Semgrep rule, adding
+# a gitleaks allowlist entry, dropping a required status check from
+# the auto-remediation guardrails). They are owned by the security
+# team so the change is reviewed by someone who has the full context
+# for that surface.
+# ---------------------------------------------------------------------------
+
+# CI workflows, action pinning, and the auto-remediation agent's
+# entire config substrate (prompt, allowed-tools, guardrails YAML).
+/.github/                                        @buildwithbarista/security
+
+# Custom Semgrep rule pack — adding or weakening a rule directly
+# affects what SAST catches on PRs.
+/.semgrep/                                       @buildwithbarista/security
+
+# cargo-deny + cargo-audit config — license bans, advisory ignores,
+# source registry allowlists. Loosening any of these is a supply-chain
+# decision.
+/deny.toml                                       @buildwithbarista/security
+
+# Secret-scan configs — gitleaks rules + per-finding allowlists.
+# Adding an entry to `.gitleaksignore` says "this matching string is
+# OK to commit" and must be reviewed by security.
+/.gitleaks.toml                                  @buildwithbarista/security
+/.gitleaksignore                                 @buildwithbarista/security
+/.semgrepignore                                  @buildwithbarista/security
+
+# Pre-commit + security-relevant docs at the repo root.
+/.pre-commit-config.yaml                         @buildwithbarista/security
+/SECURITY.md                                     @buildwithbarista/security
+
+# Operator-facing CI/security documentation. Edits here change the
+# operator's setup procedure for branch protection / DCO / etc.
+/docs/ci/                                        @buildwithbarista/security
+
+# ---------------------------------------------------------------------------
+# Build-system surfaces.
+#
+# Edits to these manifests can pull in new dependencies, change MSRV,
+# move JDK / Maven baselines, or alter the workspace topology. They
+# are owned by the build team so dependency additions go through the
+# Sonatype-MCP check documented in `CONTRIBUTING.md`.
+# ---------------------------------------------------------------------------
+
+# Rust workspace + crate manifests.
+/Cargo.toml                                      @buildwithbarista/build
+/Cargo.lock                                      @buildwithbarista/build
+/crates/**/Cargo.toml                            @buildwithbarista/build
+/rust-toolchain.toml                             @buildwithbarista/build
+
+# Java daemon build.
+/barback/pom.xml                                 @buildwithbarista/build
+
+# Toolchain pinning consumed by asdf and the docs.
+/.tool-versions                                  @buildwithbarista/build
+
+# Release configuration.
+/.github/workflows/release.yml                   @buildwithbarista/security @buildwithbarista/build
+
+# ---------------------------------------------------------------------------
+# Documentation surfaces.
+#
+# Architecture / compatibility / performance docs are the project's
+# externally-visible promises. Edits should be reviewed by the docs
+# team so language and scope claims stay consistent.
+# ---------------------------------------------------------------------------
+
+/docs/arch/                                      @buildwithbarista/docs
+/docs/compat/                                    @buildwithbarista/docs
+/docs/perf/                                      @buildwithbarista/docs
+/docs/efficiency/                                @buildwithbarista/docs
+/docs/book/                                      @buildwithbarista/docs
+/README.md                                       @buildwithbarista/docs
+/CONTRIBUTING.md                                 @buildwithbarista/docs
+/CHANGELOG.md                                    @buildwithbarista/docs
+/CODE_OF_CONDUCT.md                              @buildwithbarista/docs
+
+# ---------------------------------------------------------------------------
+# Licensing — the dual-license posture is a foundational legal commitment.
+# Changes go through both security and maintainers.
+# ---------------------------------------------------------------------------
+
+/LICENSE-MIT                                     @buildwithbarista/security @buildwithbarista/maintainers
+/LICENSE-APACHE                                  @buildwithbarista/security @buildwithbarista/maintainers
+
+# This file itself — recursive ownership.
+/.github/CODEOWNERS                              @buildwithbarista/security @buildwithbarista/maintainers

@@ -232,3 +232,15 @@ jobs:
       - name: Validate perf-gate comparison logic
         shell: bash
         run: bash scripts/test-perf-gate-logic.sh
+
+      - name: Validate DCO check logic (synthetic history fixtures)
+        shell: bash
+        # Exercises `scripts/check-dco.sh` — the script the `dco`
+        # workflow invokes on every PR — against 7 synthetic
+        # commit-history cases (all-signed PASS, one-unsigned FAIL,
+        # zero-signed FAIL, empty-range PASS, email-mismatch FAIL,
+        # lowercase-trailer PASS, merge-commit-skipped PASS). Folded
+        # into this validation job rather than spun out as a separate
+        # workflow because the audit surface is the same: "the project's
+        # automation config is well-formed and behaves as declared".
+        run: bash scripts/test-dco-workflow.sh
