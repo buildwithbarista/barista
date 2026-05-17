@@ -1,0 +1,29 @@
+id = "spring-petclinic"
+description = "Spring PetClinic — canonical small Spring Boot reference app (single-module, ~50 deps)."
+git_url = "https://github.com/spring-projects/spring-petclinic.git"
+ref = "c7ee170434ec3e369fdc9201290ba2ea4c92b557"
+ref_kind = "commit"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+build_cmd = "mvn -B -DskipTests=false verify"
+
+build_time_minutes = 3
+
+notes = """
+Pinned to a recent `main` commit rather than a tag — spring-petclinic
+does not cut versioned tags for the main reference branch (the only tag
+on the upstream is the historical `1.5.x` line). The pinned commit is
+the HEAD of `main` at corpus-add time. Bump as needed when refreshing
+the corpus baseline; record the new commit + date in the commit
+message.
+
+Project shape: single-module Spring Boot app with a Maven Wrapper. The
+Wrapper is ignored — the corpus exercises the host-installed `mvn` (or
+`mvnd`) configured by the build matrix, not a project-bundled Maven.
+This keeps the baseline numbers comparable across corpus entries.
+
+End-to-end traffic capture under `barista-netcap` is the primary B.1 T3
+consumer; see `bench/captures/README.md`.
+"""

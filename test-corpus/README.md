@@ -39,7 +39,7 @@ test-corpus/
 | `description`        | yes      | One-line summary of the project.                                                         |
 | `git_url`            | yes      | Upstream clone URL.                                                                      |
 | `ref`                | yes      | Tag, branch, or commit SHA to materialize.                                               |
-| `ref_kind`           | yes      | `"tag"`, `"branch"`, or `"commit"`.                                                      |
+| `ref_kind`           | yes      | `"tag"`, `"branch"`, `"commit"`, or `"vendored"` (see below).                            |
 | `jdk`                | yes      | JDK version; must match a cell in the `barback` CI matrix (`"17"` or `"21"`).            |
 | `maven_version`      | yes      | Maven version; must match a cell in the `barback` CI matrix.                             |
 | `build_cmd`          | yes      | Build command run in `checkout/`. Defaults to `mvn -B -DskipTests=false verify`.         |
@@ -49,6 +49,25 @@ test-corpus/
 The materialization script ignores unknown keys, so the schema can be extended
 without breaking existing tooling. Prefer **tags** for `ref` (not branches or
 commits) — they're stable and produce a reproducible corpus.
+
+### Vendored entries
+
+A `ref_kind = "vendored"` entry is a self-contained Maven project whose
+sources live inside the corpus directory itself (under `<id>/vendor/`).
+There is no upstream `git clone`; the materialization script copies the
+`vendor/` subtree into `checkout/` so downstream tools see the same layout
+as upstream-cloned projects. Use vendored entries for synthetic shapes
+that have no natural upstream — e.g. a "minimal Spring Boot starter-web"
+target that exists to exercise a specific dependency footprint.
+
+For vendored entries:
+
+- `git_url` should be empty (`""`).
+- `ref` should be a hand-maintained version slug describing the dominant
+  dependency (e.g. `spring-boot-3.5.7`) so the lockfile reads
+  deterministically.
+- The full source tree lives at `<id>/vendor/` and is checked into the
+  repo. Treat any change to it as a corpus-version bump.
 
 ## Growth target
 

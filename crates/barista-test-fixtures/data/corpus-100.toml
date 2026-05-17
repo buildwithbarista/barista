@@ -40,3 +40,15 @@ id = "slf4j"
 description = "SLF4J logging facade; multi-module under an slf4j-parent aggregator."
 relative_path = "test-corpus/slf4j/checkout"
 pom_relative_path = "test-corpus/slf4j/checkout/pom.xml"
+
+[[entry]]
+id = "spring-petclinic"
+description = "Spring PetClinic — canonical small Spring Boot reference app; single-module, ~50 deps."
+relative_path = "test-corpus/spring-petclinic/checkout"
+pom_relative_path = "test-corpus/spring-petclinic/checkout/pom.xml"
+
+[[entry]]
+id = "spring-boot-starter-web-app"
+description = "Minimal hand-built Spring Boot starter-web app; single-module, ~170 transitive deps. Vendored (no upstream clone)."
+relative_path = "test-corpus/spring-boot-starter-web-app/checkout"
+pom_relative_path = "test-corpus/spring-boot-starter-web-app/checkout/pom.xml"

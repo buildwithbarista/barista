@@ -1,0 +1,38 @@
+id = "spring-boot-starter-web-app"
+description = "Minimal Spring Boot starter-web application — single-module, ~170 transitive deps, used as a 'tiny target' baseline."
+git_url = ""
+ref = "spring-boot-3.3.5"
+ref_kind = "vendored"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+build_cmd = "mvn -B -DskipTests=false package"
+
+build_time_minutes = 2
+
+notes = """
+Hand-built minimal Spring Boot starter-web target (no upstream repo to
+clone). The full source tree is checked in under `vendor/` and is
+materialized into `checkout/` by `scripts/materialize-corpus.sh`. This
+follows the `ref_kind = "vendored"` extension documented in
+`test-corpus/README.md`.
+
+Why hand-built? PRD §17.5 P03 describes the corpus shape as "Spring
+Boot starter-web app, single module, ~170 deps, Tiny target" — that's
+a synthetic profile, not a specific upstream project. Vendoring the
+pom + a one-class main app keeps the corpus deterministic across
+Spring Boot point releases (a fresh `start.spring.io` download
+introduces month-over-month drift).
+
+Why `package` not `verify`? The vendored project has no tests and no
+integration-test plugins; `package` is the minimum-resolution command
+that triggers the same set of dependency-fetch traffic as a real
+build. This is appropriate for the B.1 traffic-capture baseline where
+the dependent variable is fetch behavior, not test execution.
+
+Pinned Spring Boot version: 3.3.5 (stable, released October 2024).
+Bump deliberately by editing this file + bumping `ref` to
+`spring-boot-<x.y.z>` and verifying `mvn -B package` succeeds against
+the new version.
+"""

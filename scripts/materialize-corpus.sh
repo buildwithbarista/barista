@@ -90,8 +90,14 @@ while IFS= read -r -d '' lockfile; do
   ref="$(read_lock_value "$lockfile" ref)"
   kind="$(read_lock_value "$lockfile" ref_kind)"
 
-  if [[ -z "$id" || -z "$url" || -z "$ref" || -z "$kind" ]]; then
-    echo "[skip] $lockfile: missing required key (id/git_url/ref/ref_kind)" >&2
+  # `git_url` is optional for `ref_kind = "vendored"` entries (which
+  # source from the corpus dir itself); required for every other kind.
+  if [[ -z "$id" || -z "$ref" || -z "$kind" ]]; then
+    echo "[skip] $lockfile: missing required key (id/ref/ref_kind)" >&2
+    continue
+  fi
+  if [[ "$kind" != "vendored" && -z "$url" ]]; then
+    echo "[skip] $lockfile: missing required key (git_url) for ref_kind=$kind" >&2
     continue
   fi
 
@@ -100,6 +106,10 @@ while IFS= read -r -d '' lockfile; do
     continue
   fi
 
+  # Substitute a sentinel for an empty `git_url` so the tab-separated
+  # round-trip through `IFS=$'\t' read` doesn't collapse adjacent
+  # delimiters and shift the remaining fields left.
+  [[ -z "$url" ]] && url="-"
   WORKLIST+=("$id"$'\t'"$url"$'\t'"$ref"$'\t'"$kind"$'\t'"$dir")
 done < <(find "$CORPUS_DIR" -mindepth 2 -maxdepth 2 -name corpus.lock.toml -print0)
 
@@ -111,6 +121,8 @@ fi
 materialize_one() {
   local line="$1"
   IFS=$'\t' read -r id url ref kind dir <<< "$line"
+  # Undo the sentinel substitution applied in the worklist builder.
+  [[ "$url" == "-" ]] && url=""
   local checkout="$dir/checkout"
 
   if [[ -d "$checkout/.git" ]]; then
@@ -136,6 +148,22 @@ materialize_one() {
       git clone --filter=blob:none --no-checkout "$url" "$checkout" \
         >/dev/null 2>&1
       git -C "$checkout" checkout -q "$ref"
+      ;;
+    vendored)
+      # Self-contained projects whose sources live inside the corpus
+      # entry directory itself (typically a hand-built minimal `pom.xml`
+      # + tiny source tree under `<id>/vendor/`). No upstream clone;
+      # we copy the vendored tree into `checkout/` so downstream tools
+      # see a uniform layout. `git_url` should be the empty string and
+      # `ref` should be a hand-maintained version tag (e.g. the
+      # dominant dependency's version, for traceability).
+      local vendor_src="$dir/vendor"
+      if [[ ! -d "$vendor_src" ]]; then
+        echo "[$id] error: vendored entry needs $vendor_src/" >&2
+        return 1
+      fi
+      mkdir -p "$checkout"
+      cp -R "$vendor_src/." "$checkout/"
       ;;
     *)
       echo "[$id] error: unknown ref_kind: $kind" >&2

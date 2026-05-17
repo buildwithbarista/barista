@@ -24,3 +24,17 @@
 
 # corpus checkouts are materialized on-demand and not tracked
 test-corpus/*/checkout/
+
+# Network-traffic captures from `barista-netcap` benchmark sessions.
+# HAR files can be large and contain timing information specific to one
+# host; the canonical store is Cloudflare R2 (see
+# `bench/captures/README.md`). The local tree is a scratch space.
+#
+# We exclude everything under `bench/captures/` *except* the README and
+# the `.gitkeep` sentinel, which document the layout for new operators.
+# The `!`-negation pattern only works when the parent directory itself
+# isn't excluded, so we list children rather than gitignoring the dir.
+bench/captures/*/
+bench/captures/*.har
+bench/captures/*.log
+bench/captures/*.toml
