@@ -77,6 +77,14 @@ impl MavenPhase {
 /// The output goes to stderr so a user who pipes barista into
 /// another process still sees the explanation.
 pub fn run(global: &GlobalFlags, phase: MavenPhase, args: &MavenVocabArgs) -> i32 {
+    // R2 mitigation: `--no-daemon` short-circuits to a forked
+    // upstream `mvn` invocation. The daemon-backed path (the
+    // default) still produces the "not yet executable" stub
+    // below until the lifecycle wiring lands in a subsequent
+    // milestone.
+    if global.no_daemon {
+        return crate::cmd::no_daemon::dispatch(global, phase, args);
+    }
     eprint!("{}", render(global, phase, args));
     2
 }

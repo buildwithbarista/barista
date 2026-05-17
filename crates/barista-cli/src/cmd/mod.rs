@@ -7,6 +7,7 @@
 pub mod dial_in;
 pub mod grind;
 pub mod maven_vocab;
+pub mod no_daemon;
 pub mod pour;
 pub mod pull;
 pub mod wrapper;

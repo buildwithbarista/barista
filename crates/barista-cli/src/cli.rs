@@ -100,6 +100,14 @@ pub struct GlobalFlags {
     pub frozen: bool,
 
     /// Force one-shot execution; bypass the barback daemon.
+    ///
+    /// On the Maven-vocabulary lifecycle commands (`clean`,
+    /// `compile`, `test`, `package`, `verify`, `install`, `deploy`,
+    /// `site`), this routes the invocation to a forked upstream
+    /// `mvn` process instead of dispatching to barback. The escape
+    /// hatch exists for two scenarios: (a) the daemon is unhealthy
+    /// or unavailable, and (b) CI pipelines that prefer a fresh JVM
+    /// per build over warm-daemon reuse.
     #[arg(long, global = true)]
     pub no_daemon: bool,
 

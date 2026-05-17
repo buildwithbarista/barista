@@ -1,6 +1,5 @@
 ---
 source: crates/barista-cli/tests/cli_parser.rs
-assertion_line: 329
 expression: "render_help(&[\"barista\", \"grind\", \"--help\"])"
 ---
 Inspect the resolved dependency graph
@@ -46,7 +45,9 @@ Options:
           Treat the on-disk lockfile as authoritative: error if resolution would change it instead of rewriting. Implied by `--ci`; `barista pull` honors it via the `Frozen` validation mode in `barista-lockfile`
 
       --no-daemon
-          Force one-shot execution; bypass the barback daemon
+          Force one-shot execution; bypass the barback daemon.
+          
+          On the Maven-vocabulary lifecycle commands (`clean`, `compile`, `test`, `package`, `verify`, `install`, `deploy`, `site`), this routes the invocation to a forked upstream `mvn` process instead of dispatching to barback. The escape hatch exists for two scenarios: (a) the daemon is unhealthy or unavailable, and (b) CI pipelines that prefer a fresh JVM per build over warm-daemon reuse.
 
       --maven-compat <MODE>
           Maven compatibility mode
