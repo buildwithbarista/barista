@@ -251,6 +251,13 @@ dependencies = [
 [[package]]
 name = "barista-netanalyze"
 version = "0.1.0-alpha.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "barista-netcap"

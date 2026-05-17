@@ -8,5 +8,49 @@ publish = false
 
 [lib]
 
+[[bin]]
+name = "barista-netanalyze"
+path = "src/bin/barista-netanalyze.rs"
+
+[dependencies]
+# `serde` + `serde_json` model the rich HAR (HTTP Archive) types we
+# parse out of capture files. HAR 1.2 is a JSON dialect — we use
+# `#[serde(default)]` and `#[serde(rename_all = "camelCase")]` on a
+# minimal in-house representation rather than pulling in a generated
+# schema crate. See `src/har/mod.rs` for the scope/exclusion notes.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `thiserror` keeps the public error enum (`AnalyzeError`) ergonomic
+# for downstream callers (`barista-cli`, integration tests, the
+# eventual roastery sync surface) without forcing them onto a
+# particular error-handling style.
+thiserror = "2"
+
+# `clap` powers the `barista-netanalyze` CLI binary. The library
+# itself has zero clap dependency — `clap` is binary-target-only — so
+# downstream library callers do not pay for the parser. Feature set
+# matches `barista-cli` (`derive`, `env`).
+clap = { version = "4.6", features = ["derive", "env"] }
+
+[dev-dependencies]
+# `tempfile` gives the integration tests scratch directories for
+# emitted finding markdown files without leaking artifacts.
+tempfile = "3"
+
 [lints]
 workspace = true
+
+# --------------------------------------------------------------------------
+# Supply-chain notes
+# --------------------------------------------------------------------------
+# All five deps (`serde`, `serde_json`, `thiserror`, `clap`,
+# `tempfile`) are already present in `Cargo.lock` at compatible
+# majors via other workspace crates:
+#   - `serde 1.0.228`, `serde_json 1.0.149` — used by every crate
+#   - `thiserror 2.0.18` — used by `barista-netcap`, `barista-bench`
+#   - `clap 4.6.1` — used by `barista-cli` (same feature set)
+#   - `tempfile 3.27.0` — used by 5+ crates as a dev-dependency
+# No net-new third-party surface introduced; Sonatype-verify deferred
+# (vetted at the same major.minor by the crates that already pull
+# them).
