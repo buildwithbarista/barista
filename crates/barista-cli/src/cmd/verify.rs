@@ -54,6 +54,7 @@ use barista_ipc::{Credential, CredentialsEnvelope, credential};
 use crate::action_graph::{ActionGraph, PlannedAction, build_action_request};
 use crate::cli::{GlobalFlags, MavenVocabArgs, OutputFormat, PourArgs};
 use crate::cmd::MavenPhase;
+use crate::cmd::ci_repro::{ReproducibilitySeed, apply_to_request, build_seed};
 use crate::cmd::pour::{PourError, PourReport, run_inner as pour_run};
 use crate::cmd::reactor::{ModuleNode, Reactor, ReactorError};
 use crate::daemon::launcher::{LaunchPlan, LauncherError};
@@ -219,6 +220,20 @@ pub fn dispatch_lifecycle(
     // binding so the existing dispatch loop below is untouched.
     let graph = reactor.modules[0].action_graph.clone();
 
+    // -- 4.5 `--ci` reproducibility seed (M4.3 T6). --------------------
+    // Computed once per command invocation so every action in the
+    // graph sees identical determinism inputs (matters for the T4
+    // reactor's per-level parallelism — every parallel action must
+    // observe the same SOURCE_DATE_EPOCH, otherwise the property
+    // becomes a function of scheduler ordering). `None` when `--ci`
+    // is not active; the per-action loop below short-circuits the
+    // apply step in that case.
+    let ci_seed: Option<ReproducibilitySeed> = if global.ci {
+        Some(build_seed(&root.root, |k| std::env::var(k).ok()))
+    } else {
+        None
+    };
+
     // -- 5. Credentials envelope for deploy ------------------------------
     // Only `deploy` ships credentials. Other phases (including
     // `install`, which only writes to the local repo) MUST NOT — the
@@ -340,6 +355,14 @@ fn dispatch_single_module(
             && let Some(env) = deploy_credentials
         {
             request.credentials = Some(env.clone());
+        }
+        // M4.3 T6: thread the `--ci` reproducibility seed onto every
+        // action so all-phase byte-equality holds. No-op when --ci
+        // wasn't set. Merge is non-clobbering: explicit per-action
+        // overrides (none in v0.1 outside `deploy`'s `extra_mvn_args`
+        // path) survive.
+        if let Some(seed) = &ci_seed {
+            apply_to_request(&mut request, seed);
         }
         let phase_name = action.phase.to_string();
         let module = graph.module_root.clone();
@@ -1023,6 +1046,53 @@ mod tests {
             }
             other => panic!("expected DeployAuthEncrypted, got {other:?}"),
         }
+    }
+
+    /// M4.3 T6 — direct unit test of the `--ci` apply-to-request seam
+    /// the dispatcher uses. We don't drive `dispatch_lifecycle` (it
+    /// needs a daemon); instead we build the same seed + apply combo
+    /// the dispatcher does, and assert the per-action `ActionRequest`
+    /// surface matches the wire-contract documented in `ci_repro`.
+    ///
+    /// Note: avoids mutating the process-wide `BARISTA_SOURCE_DATE_EPOCH`
+    /// env var (other tests in this crate also set it, and `cargo test`
+    /// runs library tests on a shared thread pool). Instead we pass a
+    /// hand-rolled lookup closure into `build_seed`.
+    #[test]
+    fn ci_macro_populates_reproducibility_env_on_action_request() {
+        use crate::action_graph::{build_action_request, lifecycle_graph};
+        use crate::cmd::ci_repro::{apply_to_request, build_seed};
+        let root = PathBuf::from("/tmp/proj");
+        let graph = lifecycle_graph(MavenPhase::Verify, root.clone(), false);
+        // Hermetic env lookup: pin BARISTA_SOURCE_DATE_EPOCH to a
+        // value inside Maven's outputTimestamp validity range.
+        let seed = build_seed(&root, |k| {
+            if k == "BARISTA_SOURCE_DATE_EPOCH" {
+                Some("1700000000".to_string())
+            } else {
+                None
+            }
+        });
+        let mut req = build_action_request(&graph, &graph.actions[0], &root);
+        apply_to_request(&mut req, &seed);
+
+        // SOURCE_DATE_EPOCH + TZ + LC_ALL must land on environment.
+        assert_eq!(
+            req.environment.get("SOURCE_DATE_EPOCH").map(String::as_str),
+            Some("1700000000"),
+        );
+        assert_eq!(req.environment.get("TZ").map(String::as_str), Some("UTC"));
+        assert_eq!(req.environment.get("LC_ALL").map(String::as_str), Some("C"));
+        // project.build.outputTimestamp must land on system_properties.
+        assert_eq!(
+            req.system_properties
+                .get("project.build.outputTimestamp")
+                .map(String::as_str),
+            Some("2023-11-14T22:13:20Z"),
+        );
+        // maven_compat pinned to "4" via build_action_request default;
+        // apply_to_request preserves it.
+        assert_eq!(req.maven_compat, "4");
     }
 
     #[test]

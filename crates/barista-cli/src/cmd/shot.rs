@@ -89,6 +89,7 @@ use sha2::{Digest, Sha256};
 use crate::action_graph::{ActionGraph, ShotGraphError, build_action_request, shot_graph};
 use crate::cli::{GlobalFlags, OutputFormat, PourArgs, ShotArgs};
 use crate::cmd::MavenPhase;
+use crate::cmd::ci_repro::{ReproducibilitySeed, apply_to_request, build_seed};
 use crate::cmd::pour::{PourError, PourReport, run_inner as pour_run};
 use crate::daemon::launcher::{LaunchPlan, LauncherError, PID_LEAF, SOCKET_LEAF, socket_is_live};
 use crate::daemon::respawn::{RespawnError, submit_with_respawn};
@@ -213,6 +214,15 @@ pub fn run_inner(
     // -- 3. Action graph (cheap; pure computation) ------------------------
     let graph = shot_graph(root.root.clone(), expr)?;
 
+    // -- 3.5 `--ci` reproducibility seed (M4.3 T6). --------------------
+    // See `cmd::verify::dispatch_lifecycle` for the policy rationale;
+    // `barista shot --ci` honours the same determinism contract.
+    let ci_seed: Option<ReproducibilitySeed> = if global.ci {
+        Some(build_seed(&root.root, |k| std::env::var(k).ok()))
+    } else {
+        None
+    };
+
     // -- 4. Daemon configuration -----------------------------------------
     let workers = resolve_workers_from_config(&config)?;
     let socket_dir = resolve_socket_dir(&config);
@@ -260,7 +270,10 @@ pub fn run_inner(
         if failed_actions > 0 {
             break;
         }
-        let request = build_action_request(&graph, action, &root.root);
+        let mut request = build_action_request(&graph, action, &root.root);
+        if let Some(seed) = &ci_seed {
+            apply_to_request(&mut request, seed);
+        }
         let phase = action.phase.to_string();
         let module = graph.module_root.clone();
 

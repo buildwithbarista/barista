@@ -520,6 +520,32 @@ public final class EmbeddedMaven implements AutoCloseable {
      * profiles, offline mode, the CBOR effective-POM blob) is grafted
      * onto this method in later tasks without disturbing the cling
      * entrypoint signatures.
+     *
+     * <p><b>Reproducibility env propagation (M4.3 T6).</b> Both
+     * {@link ActionRequest#getSystemPropertiesMap() system_properties}
+     * and {@link ActionRequest#getEnvironmentMap() environment} are
+     * translated to {@code -D} flags here. The two maps serve distinct
+     * purposes:
+     * <ul>
+     *   <li><b>system_properties</b> → {@code -D<key>=<value>}
+     *       verbatim. Carries the reproducible-builds
+     *       {@code project.build.outputTimestamp} property the CLI
+     *       injects under {@code --ci} so {@code maven-archiver} stamps
+     *       deterministic timestamps into JARs.</li>
+     *   <li><b>environment</b> → {@code -Denv.<key>=<value>}. Maven
+     *       references environment variables in POM expressions as
+     *       {@code ${env.X}}; the cling parser already wires
+     *       {@code System.getenv()} into that namespace, but the
+     *       daemon's JVM environment is not the CLI's — we can't
+     *       mutate JVM env post-startup. Translating to
+     *       {@code -Denv.X=...} restores the convention so a plugin
+     *       reading {@code ${env.SOURCE_DATE_EPOCH}} in a pom
+     *       expression sees the value the CLI intended.</li>
+     * </ul>
+     * Iteration order for both maps is sorted by key so the resulting
+     * argv is byte-stable across daemon restarts (some plugins consult
+     * the full system-property table at startup and any incidental
+     * ordering would otherwise propagate into their output).
      */
     private static List<String> buildMavenArgs(ActionRequest action) {
         List<String> args = new ArrayList<>(8);
@@ -532,10 +558,26 @@ public final class EmbeddedMaven implements AutoCloseable {
         }
         // System properties from the action context. Daemon-level
         // policy filtering happens in the dispatcher; this method
-        // forwards what the dispatcher chose to allow.
+        // forwards what the dispatcher chose to allow. Sorted by key
+        // for argv byte-stability — see method-level docs.
         if (!action.getSystemPropertiesMap().isEmpty()) {
-            for (Map.Entry<String, String> entry : action.getSystemPropertiesMap().entrySet()) {
+            java.util.List<Map.Entry<String, String>> sysEntries =
+                    new ArrayList<>(action.getSystemPropertiesMap().entrySet());
+            sysEntries.sort(Map.Entry.comparingByKey());
+            for (Map.Entry<String, String> entry : sysEntries) {
                 args.add("-D" + entry.getKey() + "=" + entry.getValue());
+            }
+        }
+        // Environment-variable propagation (M4.3 T6). Maps each
+        // wire-level env key to `-Denv.<key>=<value>` so Maven's
+        // `${env.X}` POM expressions resolve consistently across the
+        // daemon and `--no-daemon` paths.
+        if (!action.getEnvironmentMap().isEmpty()) {
+            java.util.List<Map.Entry<String, String>> envEntries =
+                    new ArrayList<>(action.getEnvironmentMap().entrySet());
+            envEntries.sort(Map.Entry.comparingByKey());
+            for (Map.Entry<String, String> entry : envEntries) {
+                args.add("-Denv." + entry.getKey() + "=" + entry.getValue());
             }
         }
         // Extra Maven CLI args forwarded by the daemon-side dispatcher.

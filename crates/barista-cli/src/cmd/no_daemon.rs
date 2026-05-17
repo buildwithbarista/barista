@@ -63,6 +63,7 @@ use std::process::Command;
 use crate::cli::GlobalFlags;
 use crate::cli::MavenVocabArgs;
 use crate::cmd::MavenPhase;
+use crate::cmd::ci_repro::{ReproducibilitySeed, build_seed};
 
 /// Exit code returned when `mvn` cannot be located. Aligned with
 /// other CLI surfaces in this crate that use `2` as the
@@ -114,14 +115,30 @@ pub enum SpawnOutcome {
 pub trait Spawner {
     /// Run `mvn` at `mvn_path` with `args` and the given
     /// `working_dir`. Stdio is inherited from the current process.
-    fn spawn(&self, mvn_path: &Path, args: &[OsString], working_dir: &Path) -> SpawnOutcome;
+    /// `extra_env` is a list of `(key, value)` env vars to set on
+    /// the child process in addition to the inherited environment;
+    /// used by `--ci` to thread `SOURCE_DATE_EPOCH` / `TZ` / `LC_ALL`
+    /// through to the forked `mvn` (M4.3 T6).
+    fn spawn(
+        &self,
+        mvn_path: &Path,
+        args: &[OsString],
+        working_dir: &Path,
+        extra_env: &[(String, String)],
+    ) -> SpawnOutcome;
 }
 
 /// Real-process [`Spawner`] implementation.
 struct RealSpawner;
 
 impl Spawner for RealSpawner {
-    fn spawn(&self, mvn_path: &Path, args: &[OsString], working_dir: &Path) -> SpawnOutcome {
+    fn spawn(
+        &self,
+        mvn_path: &Path,
+        args: &[OsString],
+        working_dir: &Path,
+        extra_env: &[(String, String)],
+    ) -> SpawnOutcome {
         // `mvn_path` is not user-controlled interpolation: it is the
         // output of `resolve_mvn`, which only returns either
         // (a) `$MAVEN_HOME/bin/mvn{,.cmd}` after an `is_file()` check
@@ -134,6 +151,9 @@ impl Spawner for RealSpawner {
         let mut cmd = Command::new(mvn_path);
         cmd.args(args);
         cmd.current_dir(working_dir);
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
         // Inherit stdio so the user sees `mvn`'s output verbatim.
         // This is the explicit contract of `--no-daemon`: it is a
         // pass-through, not a wrapping.
@@ -178,7 +198,19 @@ pub fn dispatch_with(
     };
 
     let working_dir = resolve_working_dir(global);
-    let argv = build_mvn_argv(global, phase, args);
+    // M4.3 T6: under `--ci`, build the reproducibility seed and route
+    // its SOURCE_DATE_EPOCH / TZ / LC_ALL into the child's env, plus
+    // splice `-Dproject.build.outputTimestamp=<iso>` into the argv so
+    // maven-archiver stamps deterministic timestamps into the JAR.
+    // No-op when --ci wasn't set.
+    let (argv, extra_env) = if global.ci {
+        let seed = build_seed(&working_dir, |k| std::env::var(k).ok());
+        let argv = build_mvn_argv_with_ci(global, phase, args, &seed);
+        let env: Vec<(String, String)> = seed.env.into_iter().collect();
+        (argv, env)
+    } else {
+        (build_mvn_argv(global, phase, args), Vec::new())
+    };
 
     if global.verbose >= 1 {
         // Best-effort trace for `-v`+ — quoting is naive (we only
@@ -191,12 +223,60 @@ pub fn dispatch_with(
         eprintln!("barista: --no-daemon → {} {}", mvn_path.display(), pretty,);
     }
 
-    match spawner.spawn(&mvn_path, &argv, &working_dir) {
+    match spawner.spawn(&mvn_path, &argv, &working_dir, &extra_env) {
         SpawnOutcome::Exited(code) => code,
         // Mirror Maven's own shell wrapper: a signal exit becomes
         // exit code 1 from the wrapping process.
         SpawnOutcome::Signal => 1,
     }
+}
+
+/// Variant of [`build_mvn_argv`] that splices in the `--ci`
+/// reproducibility system properties (M4.3 T6). The `-D` flags land
+/// AFTER the verbosity / batch-mode flags but BEFORE the phase name
+/// so they take effect before goal resolution. Per the
+/// `apply_to_request` contract, we don't overwrite the user's own
+/// `-D<key>=<value>` if they already passed it as a trailing arg;
+/// detection is a simple prefix scan over `args.args`.
+fn build_mvn_argv_with_ci(
+    global: &GlobalFlags,
+    phase: MavenPhase,
+    args: &MavenVocabArgs,
+    seed: &ReproducibilitySeed,
+) -> Vec<OsString> {
+    let mut argv: Vec<OsString> =
+        Vec::with_capacity(4 + args.args.len() + seed.system_properties.len());
+
+    if global.quiet {
+        argv.push("-q".into());
+    } else if global.verbose >= 2 {
+        argv.push("-X".into());
+    }
+    if global.no_color {
+        argv.push("-B".into());
+    }
+
+    // Insert seed-provided system properties (sorted by key so the
+    // argv is byte-stable across runs even if HashMap iteration order
+    // changes; the determinism contract demands this).
+    let mut keys: Vec<&String> = seed.system_properties.keys().collect();
+    keys.sort();
+    for k in keys {
+        let v = &seed.system_properties[k];
+        let prefix = format!("-D{k}=");
+        // User-supplied `-D<key>=...` in `args.args` wins.
+        if args.args.iter().any(|a| a.starts_with(&prefix)) {
+            continue;
+        }
+        argv.push(OsString::from(format!("-D{k}={v}")));
+    }
+
+    argv.push(phase.as_str().into());
+
+    for a in &args.args {
+        argv.push(a.into());
+    }
+    argv
 }
 
 /// Errors surfaced when locating `mvn` fails.
@@ -354,7 +434,7 @@ mod tests {
     /// run and returns a configurable exit code.
     struct RecordingSpawner {
         exit: i32,
-        last: RefCell<Option<(PathBuf, Vec<OsString>, PathBuf)>>,
+        last: RefCell<Option<LastCall>>,
     }
 
     impl RecordingSpawner {
@@ -367,14 +447,30 @@ mod tests {
     }
 
     impl Spawner for RecordingSpawner {
-        fn spawn(&self, mvn_path: &Path, args: &[OsString], working_dir: &Path) -> SpawnOutcome {
-            *self.last.borrow_mut() = Some((
-                mvn_path.to_path_buf(),
-                args.to_vec(),
-                working_dir.to_path_buf(),
-            ));
+        fn spawn(
+            &self,
+            mvn_path: &Path,
+            args: &[OsString],
+            working_dir: &Path,
+            extra_env: &[(String, String)],
+        ) -> SpawnOutcome {
+            *self.last.borrow_mut() = Some(LastCall {
+                mvn_path: mvn_path.to_path_buf(),
+                args: args.to_vec(),
+                working_dir: working_dir.to_path_buf(),
+                extra_env: extra_env.to_vec(),
+            });
             SpawnOutcome::Exited(self.exit)
         }
+    }
+
+    /// Captured invocation details for assertions.
+    #[derive(Debug, Clone)]
+    struct LastCall {
+        mvn_path: PathBuf,
+        args: Vec<OsString>,
+        working_dir: PathBuf,
+        extra_env: Vec<(String, String)>,
     }
 
     fn default_globals() -> GlobalFlags {
@@ -547,14 +643,19 @@ mod tests {
         assert_eq!(exit, 0);
 
         let last = spawner.last.borrow();
-        let (path, args, wd) = last.as_ref().unwrap();
-        assert_eq!(path, &fake_mvn);
-        let arg_strs: Vec<String> = args
+        let lc = last.as_ref().unwrap();
+        assert_eq!(lc.mvn_path, fake_mvn);
+        let arg_strs: Vec<String> = lc
+            .args
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert_eq!(arg_strs, vec!["compile", "-DskipTests"]);
-        assert_eq!(wd, td.path());
+        assert_eq!(lc.working_dir, td.path());
+        assert!(
+            lc.extra_env.is_empty(),
+            "non-CI invocation should not set extra env vars",
+        );
     }
 
     #[test]
@@ -603,4 +704,109 @@ mod tests {
     // shim). End-to-end coverage of the missing-mvn case lives in
     // `tests/cmd_no_daemon.rs::no_daemon_emits_structured_error_when_mvn_missing`,
     // which forks a subprocess so the env mutation is hermetic.
+
+    // M4.3 T6 — `--ci` reproducibility plumbing on the --no-daemon
+    // fork. Asserts that `--ci` populates child-process env vars and
+    // splices `-Dproject.build.outputTimestamp=<iso>` into the argv.
+    //
+    // The test sets `BARISTA_SOURCE_DATE_EPOCH=0` so the value is
+    // hermetic (independent of whether the worktree happens to be
+    // inside a git checkout); the `ci_repro` resolver honours the
+    // env override first.
+    #[test]
+    #[allow(unsafe_code)]
+    fn ci_macro_populates_reproducibility_env_and_argv() {
+        use crate::cli::Cli;
+        use clap::Parser;
+        let td = tempfile::tempdir().unwrap();
+        let bin_dir = td.path().join("bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let mvn_name = if cfg!(windows) { "mvn.cmd" } else { "mvn" };
+        let fake_mvn = bin_dir.join(mvn_name);
+        std::fs::write(&fake_mvn, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake_mvn).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_mvn, perms).unwrap();
+        }
+
+        let env = FakeEnv::new().with("MAVEN_HOME", td.path().to_str().unwrap());
+        let spawner = RecordingSpawner::new(0);
+
+        // The `dispatch` entry parses CLI from process argv; we drive
+        // `dispatch_with` directly with hand-built globals to skip the
+        // process-wide env mutation `--ci` would otherwise need.
+        let cli = Cli::try_parse_from([
+            "barista",
+            "--ci",
+            "--no-daemon",
+            "--root",
+            td.path().to_str().unwrap(),
+            "verify",
+        ])
+        .unwrap();
+        let mut g = cli.global;
+        g.frozen = true;
+        g.quiet = true;
+        g.output = crate::cli::OutputFormat::Json;
+        g.no_color = true;
+
+        // Pin SOURCE_DATE_EPOCH so the assertion is reproducible.
+        // Use a value inside the Maven outputTimestamp valid range
+        // (`1980-01-02 .. 2099-12-31`) so the assertion shape mirrors
+        // a real `--ci` invocation that ultimately reaches Maven.
+        let prev = std::env::var_os("BARISTA_SOURCE_DATE_EPOCH");
+        // SAFETY: per-test env mutation. Restored after the assertion.
+        unsafe {
+            std::env::set_var("BARISTA_SOURCE_DATE_EPOCH", "1577836800");
+        }
+
+        let exit = dispatch_with(
+            &g,
+            MavenPhase::Verify,
+            &MavenVocabArgs { args: vec![] },
+            &env,
+            &spawner,
+        );
+
+        // SAFETY: restore.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("BARISTA_SOURCE_DATE_EPOCH", v),
+                None => std::env::remove_var("BARISTA_SOURCE_DATE_EPOCH"),
+            }
+        }
+
+        assert_eq!(exit, 0);
+        let last = spawner.last.borrow();
+        let lc = last.as_ref().unwrap();
+
+        // Argv carries -q -B -Dproject.build.outputTimestamp=... verify.
+        let arg_strs: Vec<String> = lc
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(arg_strs.contains(&"-q".to_string()), "--ci → -q on mvn");
+        assert!(arg_strs.contains(&"-B".to_string()), "--ci → -B on mvn");
+        assert!(
+            arg_strs
+                .iter()
+                .any(|a| a == "-Dproject.build.outputTimestamp=2020-01-01T00:00:00Z"),
+            "expected reproducible-build timestamp property on argv, got: {arg_strs:?}",
+        );
+        // Phase appears after the -D flags.
+        assert_eq!(arg_strs.last().map(String::as_str), Some("verify"));
+
+        // Env carries SOURCE_DATE_EPOCH/TZ/LC_ALL.
+        let envs: std::collections::HashMap<_, _> = lc.extra_env.iter().cloned().collect();
+        assert_eq!(
+            envs.get("SOURCE_DATE_EPOCH").map(String::as_str),
+            Some("1577836800"),
+        );
+        assert_eq!(envs.get("TZ").map(String::as_str), Some("UTC"));
+        assert_eq!(envs.get("LC_ALL").map(String::as_str), Some("C"));
+    }
 }
