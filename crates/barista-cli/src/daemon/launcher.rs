@@ -19,16 +19,16 @@
 //!
 //! # Uber-JAR / classpath discovery
 //!
-//! The barback daemon ships as a Maven module (`barback/pom.xml`), not
-//! as a shaded uber-JAR — there is no `maven-shade-plugin` configured
-//! at the time of this writing, so `java -jar barback.jar` is not yet
-//! a runnable path. The launcher discovers the classpath in the
-//! following order; the first hit wins:
+//! `barback/pom.xml` ships a `maven-shade-plugin` execution that
+//! produces a runnable `target/barback-uber.jar`. The launcher
+//! discovers the classpath in the following order; the first hit
+//! wins:
 //!
 //! 1. **`BARISTA_BARBACK_JAR`** — explicit override, points at a
-//!    pre-built uber-JAR. When set, the launcher invokes
-//!    `java -jar <jar>` directly. Reserved for the day the uber-JAR
-//!    build target lands.
+//!    pre-built uber-JAR (typically `barback/target/barback-uber.jar`).
+//!    When set, the launcher invokes `java -jar <jar>` directly.
+//!    Production packaging (Homebrew tap, release tarball) ships the
+//!    uber-JAR and sets this env var.
 //! 2. **`BARISTA_BARBACK_CLASSPATH`** — explicit override, points at a
 //!    `:`-separated (Unix) / `;`-separated (Windows) classpath. Used
 //!    by tests and packaging scripts that prefer to assemble the
@@ -44,6 +44,16 @@
 //! When none of the strategies succeed, the launcher surfaces a
 //! `BAR-DAEMON-JAR-NOT-FOUND` error pointing at the override env vars
 //! the user can set.
+//!
+//! **Embedded Maven distribution:** the daemon's embedded Maven 4 core
+//! (see `EmbeddedMavenFactory` on the Java side) loads its `lib/` +
+//! `boot/` + `conf/logging/` JARs at runtime from a Maven distribution
+//! directory configured via `-Dbarista.maven.home=` or
+//! `BARISTA_MAVEN_HOME=`. The uber-JAR therefore only carries the
+//! classes barback links against statically at construction
+//! (`plexus-classworlds`, `maven-api-cli`, `maven-cli`, `maven-jline`,
+//! `guice`, `sisu`, protobuf-java); it does not need to mirror the
+//! full Maven distribution.
 //!
 //! # PID-file convention
 //!

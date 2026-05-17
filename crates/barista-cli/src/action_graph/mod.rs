@@ -317,18 +317,38 @@ pub enum ShotGraphError {
 /// single module.
 ///
 /// `expr` is a Maven lifecycle phase name (e.g. `"test"`,
-/// `"package"`, `"compile"`). The returned graph contains every
-/// default-lifecycle phase **up to and including** `expr`, mirroring
-/// Maven's semantics where `mvn test` runs the prefix
-/// `process-resources … test`.
+/// `"package"`, `"compile"`). The graph contains a **single**
+/// [`PlannedAction`] whose `phase` field is the requested phase —
+/// Maven's lifecycle binder expands the prefix internally, the same
+/// way `mvn test` itself runs `validate … test` inside one process.
+///
+/// # Why a single action instead of one-per-phase
+///
+/// An earlier iteration of `shot_graph` emitted one action per
+/// lifecycle phase up to and including the target (`shot test` →
+/// 15 actions: `validate`, `initialize`, …, `test`). The intent
+/// was to give the dispatch loop per-phase progress events. The
+/// cost: each per-phase dispatch invoked the embedded Maven core
+/// with `mvn -f pom.xml -q <phase>`, and Maven's `<phase>`
+/// semantics run the **entire prefix up to that phase** every
+/// time. So the dispatch loop re-ran the prefix 15× — quadratic
+/// in the phase index. Measured on a 1-module fixture against the
+/// warm daemon: 15-action shot ≈ 900 ms vs. `mvn test` ≈ 1200 ms
+/// — only 1.3× faster, far below the PRD §2.4 SM-3.2 ≥10× AC.
+///
+/// Collapsing to one action lets Maven do the lifecycle expansion
+/// once, which is what `mvn test` does and what SM-3.2 is
+/// measuring against. Per-phase progress events are recoverable
+/// (the embedded core can stream them through the existing event
+/// channel) as a v0.2 enhancement without re-introducing the
+/// per-action dispatch cost.
 ///
 /// # Retryability
 ///
-/// All phases up through `verify` are marked `retryable = true`
-/// (idempotent for auto-respawn). `install` and `deploy` are
-/// `retryable = false` because they have remote side-effects: a
-/// second dispatch after a crash could double-install or
-/// double-publish.
+/// `install` and `deploy` are `retryable = false` because they
+/// have remote side-effects: a second dispatch after a crash
+/// could double-install or double-publish. Every other lifecycle
+/// phase is `retryable = true` (idempotent for auto-respawn).
 ///
 /// # v0.1 scope
 ///
@@ -338,20 +358,18 @@ pub enum ShotGraphError {
 /// path optimisation T3 ships.
 pub fn shot_graph(module_root: PathBuf, expr: &str) -> Result<ActionGraph, ShotGraphError> {
     let phase = expr.trim();
-    let idx = DEFAULT_LIFECYCLE_PHASES
+    let resolved: &'static str = DEFAULT_LIFECYCLE_PHASES
         .iter()
-        .position(|p| *p == phase)
+        .find(|p| **p == phase)
+        .copied()
         .ok_or_else(|| ShotGraphError::UnknownPhase {
             phase: phase.to_string(),
         })?;
 
-    let mut actions = Vec::with_capacity(idx + 1);
-    for p in &DEFAULT_LIFECYCLE_PHASES[..=idx] {
-        actions.push(PlannedAction {
-            phase: p,
-            retryable: !NON_RETRYABLE_PHASES.contains(p),
-        });
-    }
+    let actions = vec![PlannedAction {
+        phase: resolved,
+        retryable: !NON_RETRYABLE_PHASES.contains(&resolved),
+    }];
     let pom_path = module_root.join("pom.xml");
     Ok(ActionGraph {
         module_root,
@@ -524,21 +542,23 @@ mod tests {
     }
 
     #[test]
-    fn shot_graph_test_phase_runs_lifecycle_prefix_through_test() {
+    fn shot_graph_emits_single_action_for_test() {
+        // The warm-path-optimized shot graph dispatches a single
+        // action — Maven's lifecycle binder expands the prefix
+        // inside the daemon's process, the same way `mvn test`
+        // runs `validate..test` in one JVM. See the `shot_graph`
+        // docstring for the SM-3.2 AC rationale that drives this
+        // collapse.
         let g = shot_graph(PathBuf::from("/tmp/p"), "test").unwrap();
-        let names: Vec<&str> = g.actions.iter().map(|a| a.phase).collect();
-        assert_eq!(*names.last().unwrap(), "test");
-        // Earliest phases the test prefix must include.
-        assert!(names.contains(&"compile"));
-        assert!(names.contains(&"test-compile"));
+        assert_eq!(g.actions.len(), 1, "shot graph must be 1 action");
+        assert_eq!(g.actions[0].phase, "test");
     }
 
     #[test]
-    fn shot_graph_package_phase_runs_through_package() {
+    fn shot_graph_emits_single_action_for_package() {
         let g = shot_graph(PathBuf::from("/tmp/p"), "package").unwrap();
-        let names: Vec<&str> = g.actions.iter().map(|a| a.phase).collect();
-        assert_eq!(*names.last().unwrap(), "package");
-        assert!(names.contains(&"test"));
+        assert_eq!(g.actions.len(), 1);
+        assert_eq!(g.actions[0].phase, "package");
     }
 
     #[test]
@@ -550,17 +570,19 @@ mod tests {
     #[test]
     fn shot_graph_deploy_is_non_retryable() {
         let g = shot_graph(PathBuf::from("/tmp/p"), "deploy").unwrap();
-        let deploy = g.actions.iter().find(|a| a.phase == "deploy").unwrap();
-        assert!(!deploy.retryable, "deploy must be non-retryable");
-        let install = g.actions.iter().find(|a| a.phase == "install").unwrap();
-        assert!(!install.retryable, "install must be non-retryable");
-        let compile = g.actions.iter().find(|a| a.phase == "compile").unwrap();
-        assert!(compile.retryable, "compile must remain retryable");
+        assert_eq!(g.actions.len(), 1);
+        assert!(!g.actions[0].retryable, "deploy must be non-retryable");
+
+        let g = shot_graph(PathBuf::from("/tmp/p"), "install").unwrap();
+        assert!(!g.actions[0].retryable, "install must be non-retryable");
+
+        let g = shot_graph(PathBuf::from("/tmp/p"), "compile").unwrap();
+        assert!(g.actions[0].retryable, "compile must remain retryable");
     }
 
     #[test]
     fn shot_graph_trims_whitespace() {
         let g = shot_graph(PathBuf::from("/tmp/p"), "  compile  ").unwrap();
-        assert_eq!(*g.actions.last().unwrap().phase, *"compile");
+        assert_eq!(g.actions[0].phase, "compile");
     }
 }

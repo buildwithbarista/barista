@@ -278,6 +278,17 @@ pub fn run_inner(
         if exit_code != 0 {
             failed_actions += 1;
         }
+        // Mirror `cmd::verify`'s ActionResult.error → MojoInvocation
+        // .error_code projection so CI / JSON consumers can branch on
+        // `BAR-DEPLOY-AUTH-*` and friends identically across the two
+        // commands. Empty when the daemon didn't surface a structured
+        // code (success path or generic build failure).
+        let error_code = outcome
+            .result
+            .error
+            .as_ref()
+            .map(|e| e.code.clone())
+            .unwrap_or_default();
         invocations.push(MojoInvocation {
             phase,
             mojo: outcome.result.action_id.clone(),
@@ -285,7 +296,7 @@ pub fn run_inner(
             exit_code,
             status,
             failure_message: outcome.result.failure_message.clone(),
-            error_code: String::new(),
+            error_code,
             duration_ms,
         });
     }
