@@ -8,5 +8,37 @@ publish = false
 
 [lib]
 
+[dependencies]
+# `prost` carries the runtime traits (`Message`, `Enumeration`, oneof helpers)
+# the generated bindings rely on. Pinned to the 0.13 minor — the schema is
+# small and stable, and 0.13 is the current long-supported line.
+#
+# Deliberately NOT `tonic`: PRD §12 specifies a hand-rolled, length-prefix
+# framed transport over UDS / named pipes (M4.1 T4). `tonic` is gRPC over
+# HTTP/2 — its framing, multiplexing, and HTTP semantics are wasted overhead
+# for a single-host, owner-only socket, and pulling it in would force a
+# tokio + hyper dep tree we don't need on the CLI hot path.
+prost = "0.13"
+
+# `zeroize` lets us mark credential-bearing types with `ZeroizeOnDrop` so
+# decrypted secrets are wiped from memory when the message is dropped. The
+# hand-rolled `Debug` impls in `src/proto.rs` are the user-visible half of
+# the redacted-secrets story; the `ZeroizeOnDrop` derive is the in-memory
+# half. M4.1 T5 (filesystem-permission auth) extends this end-to-end with
+# transport-buffer zeroization.
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+
+[build-dependencies]
+# `prost-build` invokes `protoc` at compile time and turns the `.proto`
+# files in `proto/` into Rust types under `OUT_DIR`. Version locked to the
+# same minor as the `prost` runtime dep to keep generated-code / runtime
+# trait surfaces in sync.
+#
+# `cleanup-markdown` runs proto comments through `pulldown-cmark` so the
+# generated Rust doc-comments don't break `cargo test` (proto comments use
+# `*` bullets + backticked tokens that rustdoc would otherwise try to
+# parse as indented code blocks, producing spurious lex errors).
+prost-build = { version = "0.13", features = ["cleanup-markdown"] }
+
 [lints]
 workspace = true
