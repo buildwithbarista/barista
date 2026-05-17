@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimal 1-module Java fixture used by the Windows smoke-build CI job
+  (D19). The shape intentionally mirrors the M4.0 T1 / T2 spike fixtures
+  and the `cmd_no_daemon` integration tests:
+
+    * single module, jar packaging, zero external dependencies
+    * `maven-compiler-plugin` pinned so the bytecode produced is
+      deterministic across host JDKs
+    * JDK 17 source/target so the fixture compiles on every JDK the
+      CI matrix supports (Windows runner ships JDK 21 via setup-java)
+
+  The smoke build runs `barista verify` with the no-daemon escape
+  hatch against this project on `windows-latest`. The verify phase
+  exercises Maven's default lifecycle through verify (validate,
+  compile, test-compile, test, package, integration-test, verify);
+  with no tests defined the surefire / failsafe binding becomes a
+  no-op, but the compile + package + verify bindings still fire,
+  which is what the smoke test is gating.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>example.windows-smoke</groupId>
+  <artifactId>hello</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

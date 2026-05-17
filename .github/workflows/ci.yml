@@ -4,9 +4,10 @@
 #   rust-check    Fast feedback on every PR: cargo check + fmt + clippy.
 #   rust-test     cargo test --workspace; split out so the slow tests don't
 #                 gate the fast lint feedback.
-#   rust-windows  cargo check on windows-latest. Reserves a slot for the
-#                 named-pipe conformance suite and the end-to-end smoke
-#                 build, which land in later milestones.
+#   rust-windows  cargo check + named-pipe IPC conformance suite +
+#                 `barista verify --no-daemon` smoke build on
+#                 windows-latest. Implements the D19 Windows CI
+#                 matrix; gated on every PR.
 #   barback       2x2 matrix over JDK (17, 21) and Maven (3.9.x, 4.0.x).
 #                 Verifies the embedder works across every supported
 #                 toolchain combination — a v0.1 release-gate requirement.
@@ -74,7 +75,7 @@ jobs:
         run: cargo test --workspace
 
   rust-windows:
-    name: Rust check + named-pipe conformance (windows)
+    name: Rust check + named-pipe conformance + verify smoke (windows)
     runs-on: windows-latest
     permissions:
       contents: read
@@ -119,9 +120,33 @@ jobs:
       # M4.1 T8.
       - name: cross-language conformance (named pipe)
         run: cargo test -p barista-ipc --test conformance_pipe -- --ignored --test-threads=1
-      # TODO: enable the end-to-end smoke build once the CLI is wired up.
-      # - name: smoke build
-      #   run: cargo run -p barista -- build --dry-run
+      # End-to-end smoke build per D19 / M4.3 T7. Drives `barista
+      # verify` against a trivial 1-module fixture so we prove the
+      # Windows binary boots and can shepherd a build to completion.
+      #
+      # Scope notes:
+      #   - `--no-daemon` is mandatory for v0.1 on Windows: the
+      #     barback daemon code path is `#[cfg(unix)]`-gated in
+      #     `crates/barista-cli/src/cmd/mod.rs`, so the dispatch
+      #     for `verify` falls back to the forked-`mvn` path
+      #     (`cmd/no_daemon.rs`). The full Windows daemon-IPC
+      #     happy-path is tracked as a follow-up.
+      #   - `pwsh` is the default shell for `windows-latest` but
+      #     we set it explicitly so the multi-line script semantics
+      #     (and the `./target/release/barista.exe` path syntax)
+      #     are unambiguous if the runner default ever changes.
+      #   - This step depends on the `Set up JDK 21` step above:
+      #     `actions/setup-java` installs `mvn.cmd` onto `$PATH`
+      #     under `PATHEXT`, and `which::which("mvn.cmd")` inside
+      #     `cmd/no_daemon.rs::resolve_mvn` picks it up there.
+      #   - `--release` matches the artifact profile used in
+      #     downstream packaging milestones; debug builds work
+      #     too but produce a noisier baseline.
+      - name: Smoke build — barista verify --no-daemon
+        shell: pwsh
+        run: |
+          cargo build --release -p barista-cli
+          ./target/release/barista.exe verify --no-daemon --root crates/barista-cli/tests/fixtures/windows-smoke
 
   barback:
     name: barback (JDK ${{ matrix.java-version }}, Maven ${{ matrix.maven-version }})
