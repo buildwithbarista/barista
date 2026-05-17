@@ -1,0 +1,6 @@
+# Build/output artifacts produced by run.sh; these are reproducible by
+# re-running the spike and should not be committed.
+.plugin-cache/
+build/
+results.txt
+sample-project/**/target/

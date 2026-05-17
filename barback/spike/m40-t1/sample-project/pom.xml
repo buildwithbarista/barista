@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.bluminal.barista.spike.m40t1</groupId>
+  <artifactId>sample-project</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>m40-t1 spike sample (multi-module)</name>
+
+  <!--
+    Multi-module sample used by the barback m40-t1 spike (Q10 / R2).
+    Three modules each exercise the same five pinned plugins:
+      - maven-resources-plugin (default-bound to process-resources / process-test-resources)
+      - maven-compiler-plugin  (default-bound to compile / testCompile)
+      - maven-surefire-plugin  (default-bound to test)
+      - maven-jar-plugin       (default-bound to package)
+      - maven-install-plugin   (default-bound to install)
+    Each invocation of `mvn install` therefore loads all five plugin classloaders.
+  -->
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <maven.compiler.release>21</maven.compiler.release>
+
+    <!-- Pinned plugin versions for reproducibility. -->
+    <plugin.compiler.version>3.13.0</plugin.compiler.version>
+    <plugin.surefire.version>3.5.5</plugin.surefire.version>
+    <plugin.jar.version>3.4.2</plugin.jar.version>
+    <plugin.resources.version>3.3.1</plugin.resources.version>
+    <plugin.install.version>3.1.4</plugin.install.version>
+
+    <junit.jupiter.version>5.10.3</junit.jupiter.version>
+  </properties>
+
+  <modules>
+    <module>mod-a</module>
+    <module>mod-b</module>
+    <module>mod-c</module>
+  </modules>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-api</artifactId>
+        <version>${junit.jupiter.version}</version>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-engine</artifactId>
+        <version>${junit.jupiter.version}</version>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-compiler-plugin</artifactId>
+          <version>${plugin.compiler.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>${plugin.surefire.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-jar-plugin</artifactId>
+          <version>${plugin.jar.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-resources-plugin</artifactId>
+          <version>${plugin.resources.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-install-plugin</artifactId>
+          <version>${plugin.install.version}</version>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>
