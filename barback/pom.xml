@@ -97,6 +97,33 @@
           runtime.
         -->
         <plexus-classworlds.version>2.8.0</plexus-classworlds.version>
+        <!--
+          maven-shade-plugin builds the runnable `barback-uber.jar`
+          consumed by the Rust-side daemon launcher (the `BARISTA_BARBACK_JAR`
+          discovery path in `crates/barista-cli/src/daemon/launcher.rs`).
+          The uber-JAR bundles barback's classes + every compile-scope
+          dependency declared below so the daemon can boot from a
+          single artifact instead of resolving a dev-loop classpath
+          via `mvn dependency:build-classpath` on every spawn.
+
+          NOTE: the embedded Maven 4 core itself is loaded at runtime
+          from a separate Maven distribution directory configured via
+          `-Dbarista.maven.home=` / `BARISTA_MAVEN_HOME` (see
+          `EmbeddedMavenFactory`), so the uber-JAR does not have to
+          mirror the full `apache-maven-4.0.0-rc-3` `boot/`+`lib/`
+          layout. It only needs the classes that EmbeddedMavenFactory
+          and EmbeddedMaven link against statically at construction
+          time (maven-api-cli, maven-cli, maven-jline,
+          plexus-classworlds, guice/sisu/jakarta-inject) so the
+          daemon process can build the ClassWorld and instantiate
+          ResidentMavenInvoker before the Maven distribution takes
+          over inside the realm.
+
+          3.6.0 is the current Apache GA line; tracked separately
+          from the embedded Maven core version because the shade
+          plugin's release cadence is independent.
+        -->
+        <maven-shade-plugin.version>3.6.0</maven-shade-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -330,6 +357,121 @@
                     -->
                     <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
+            </plugin>
+            <plugin>
+                <!--
+                  maven-shade-plugin: produces `target/barback-uber.jar`,
+                  a runnable fat JAR with every compile-scope
+                  dependency relocated into a single artifact + a
+                  `Main-Class` manifest entry that points at
+                  `com.bluminal.barista.barback.Server`.
+
+                  Why a separate `-uber` classifier rather than
+                  replacing the primary jar:
+
+                  * Keeps `mvn install` / `mvn deploy` consumers'
+                    classpaths slim — downstream JVM code that wants
+                    `barback` as a library (e.g. integration tests
+                    embedding the daemon in-process) pulls in just
+                    barback's own classes via the classified-less
+                    primary jar plus a normal Maven resolve of
+                    declared deps.
+                  * The Rust launcher's `BARISTA_BARBACK_JAR` path
+                    points at the `-uber` classifier explicitly via
+                    the test harness; ambiguity between "the library
+                    jar" and "the runnable bundle" is therefore
+                    avoided.
+
+                  Transformer rationale:
+
+                  * `ManifestResourceTransformer` — sets the
+                    `Main-Class` entry so `java -jar barback-uber.jar`
+                    boots `Server.main(String[])`. Without this the
+                    launcher's `-jar` path would fail with
+                    `no main manifest attribute`.
+                  * `ServicesResourceTransformer` — merges
+                    `META-INF/services/*` files from the bundled
+                    dependencies (SLF4J bindings, JLine providers,
+                    etc.). Without it, shade overwrites duplicates
+                    and one provider's services file silently wins.
+                    Critical for the Maven 4 cling stack which
+                    relies on ServiceLoader-discovered components at
+                    bootstrap. Sisu's `META-INF/sisu/javax.inject.Named`
+                    index isn't a `META-INF/services/*` file so it's
+                    preserved by default file-resource semantics (no
+                    transformer needed) — the shade plugin only
+                    overwrites duplicate-named resources, and the
+                    Named index uses unique filenames per producing
+                    jar.
+                  * `addHeader=false` on the ApacheLicenseResourceTransformer
+                    is intentionally NOT used; we keep the default
+                    behaviour of appending license headers from
+                    bundled dependencies so the uber-JAR carries
+                    full attribution.
+
+                  Filter rationale (signature files):
+
+                  * Bundling `META-INF/*.SF` / `*.DSA` / `*.RSA` from
+                    signed dependency jars (notably the protobuf
+                    runtime, but several Maven 4 cling jars are also
+                    signed) corrupts the merged JAR's manifest —
+                    the JVM rejects the resulting `barback-uber.jar`
+                    with `SecurityException: SHA-256 digest error`.
+                    Excluding the per-jar signature files is the
+                    canonical fix.
+
+                  Bound to the `package` phase by default (the goal's
+                  built-in lifecycle binding). `mvnSkipShade` lets
+                  the unit-test pass on developer machines that
+                  don't need the uber-JAR locally — the launcher's
+                  dev-loop classpath path still works without it.
+                -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven-shade-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>shade-uber-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>uber</shadedClassifierName>
+                            <!--
+                              The Rust launcher's BARISTA_BARBACK_JAR
+                              discovery (and the shot-speedup
+                              integration test) looks for the literal
+                              file name `barback-uber.jar` under
+                              `target/` so the path is predictable
+                              across the build matrix. `finalName`
+                              keeps the shaded artifact at that exact
+                              leaf regardless of the version on the
+                              primary jar.
+                            -->
+                            <finalName>barback-uber</finalName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.bluminal.barista.barback.Server</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <plugin>
                 <!--
