@@ -12,7 +12,26 @@
     xmlns="https://github.com/spotbugs/filter/3.0.0"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="https://github.com/spotbugs/filter/3.0.0 https://raw.githubusercontent.com/spotbugs/spotbugs/master/spotbugs/etc/findbugsfilter.xsd">
+    <!--
+      Include first-party barback classes OUTSIDE the
+      `com.bluminal.barista.barback.proto.*` subpackage. That
+      subpackage is populated almost entirely by protobuf-generated
+      code (`protobuf-maven-plugin` writes into it during
+      `generate-sources`); scanning generated protobuf classes
+      produces noise we do not act on (hashCode / equals / readObject
+      patterns that protoc emits intentionally).
+    -->
     <Match>
-        <Class name="~com\.bluminal\.barista\.barback\..*"/>
+        <Class name="~com\.bluminal\.barista\.barback\.(?!proto\.).*"/>
+    </Match>
+    <!--
+      Re-include the hand-written `RedactedCredential` adapter that
+      lives inside the proto subpackage alongside the generated
+      bindings. It is security-sensitive (toString-redaction
+      contract for `Credential`) and small enough that we want
+      SpotBugs + FindSecBugs to scan it explicitly.
+    -->
+    <Match>
+        <Class name="~com\.bluminal\.barista\.barback\.proto\.RedactedCredential(\$.*)?"/>
     </Match>
 </FindBugsFilter>

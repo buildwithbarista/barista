@@ -24,6 +24,29 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.2</junit.version>
         <!--
+          Protocol Buffers runtime + codegen pin.
+
+          `protobuf-java.version` is the version of both the Maven
+          `com.google.protobuf:protobuf-java` runtime jar and the
+          `com.google.protobuf:protoc` binary artifact downloaded by the
+          codegen plugin. Keeping them locked together avoids ABI skew
+          between generated code and the runtime that loads it.
+
+          The 4.x line corresponds to libprotoc 4.x — Google bumped the
+          version scheme in 2024 so the runtime now tracks protoc directly.
+          When updating, bump both this property and the regenerated
+          `target/generated-sources/protobuf/**` (transient — see below).
+        -->
+        <protobuf-java.version>4.34.1</protobuf-java.version>
+        <!--
+          ascopes/protobuf-maven-plugin: a scratch-built modern protoc
+          plugin for Maven. Downloads protoc from Maven Central as a
+          binary artifact so CI does not need a separate setup-protoc
+          step, and supports Maven 3.9 + 4.x (matches the CI matrix).
+          See https://github.com/ascopes/protobuf-maven-plugin.
+        -->
+        <protobuf-maven-plugin.version>5.1.4</protobuf-maven-plugin.version>
+        <!--
           OWASP Dependency-Check is wired up under the `dependency-check`
           profile below. Quick local builds (`mvn verify`) skip it by
           default so contributors don't pay the NVD-download cost on every
@@ -60,6 +83,19 @@
 
     <dependencies>
         <dependency>
+            <!--
+              Generated Java classes under
+              `com.bluminal.barista.barback.proto` import from
+              `com.google.protobuf.*`. The runtime version is pinned
+              to the same value as the protoc binary that generates
+              the code (see `protobuf-java.version` above) to keep
+              the wire-format ABI consistent.
+            -->
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>${protobuf-java.version}</version>
+        </dependency>
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
@@ -68,6 +104,59 @@
 
     <build>
         <plugins>
+            <plugin>
+                <!--
+                  Generates Java bindings from `proto/barista/v1/worker.proto`
+                  into `target/generated-sources/protobuf/`.
+
+                  The .proto file lives one directory above this module —
+                  it is the single source of truth for both the Rust and
+                  Java sides of the worker IPC contract, so it is kept at
+                  the repo root rather than buried inside one binding's
+                  source tree. The plugin reads sources from any directory
+                  on disk; we point `sourceDirectories` at `../proto/` and
+                  let the plugin's default `target/generated-sources/protobuf`
+                  output directory keep generated code transient (it is
+                  ignored by `**/target/` in `.gitignore`).
+
+                  `protoc` is pulled from Maven Central via the
+                  `binary-maven` distribution — no system-wide `protoc`
+                  install is required on developer machines or CI runners.
+
+                  `registerAsCompilationRoot=true` (the plugin's default)
+                  adds the output dir to the compile-source roots, so
+                  `maven-compiler-plugin` picks up the generated `.java`
+                  files automatically — no `build-helper-maven-plugin`
+                  glue needed.
+                -->
+                <groupId>io.github.ascopes</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>${protobuf-maven-plugin.version}</version>
+                <configuration>
+                    <protoc kind="binary-maven">
+                        <version>${protobuf-java.version}</version>
+                    </protoc>
+                    <sourceDirectories>
+                        <sourceDirectory>${project.basedir}/../proto</sourceDirectory>
+                    </sourceDirectories>
+                    <!--
+                      Only compile worker.proto. Future .proto files added
+                      to `../proto/` that are not yet part of barback's
+                      contract will be ignored until they are explicitly
+                      added to this include list.
+                    -->
+                    <includes>
+                        <include>barista/v1/worker.proto</include>
+                    </includes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
