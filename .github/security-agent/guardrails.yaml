@@ -1,0 +1,412 @@
+# Auto-remediation guardrails — policy declaration.
+#
+# This file is the SOURCE OF INTENT for what the auto-remediation agent
+# (`anthropics/claude-code-action`, invoked from
+# `.github/workflows/auto-remediate.yml`) is allowed to do, how its PRs
+# are gated, and the conditions under which it must stop. It is the
+# declarative companion to `.github/security-agent/allowed-tools.yaml`
+# (which encodes the per-tool allow/deny matrix consumed by the Claude
+# CLI) and `.github/security-agent/prompt.md` (which encodes the
+# agent's mission and workflow).
+#
+# What this file is NOT:
+#
+#   - It is NOT the GitHub branch-protection wiring. The
+#     `pull_request.required_status_checks` and
+#     `pull_request.required_approving_review_count` fields below
+#     declare the *intent* — the actual branch-protection ruleset on
+#     `main` is configured via the GitHub API / web UI. See
+#     `docs/ci/branch-protection.md` for the operator setup.
+#
+#   - It is NOT enforced by a runtime parser today. The auto-remediate
+#     workflow does not currently read this file; the fields are
+#     human-readable declarations of policy that operators wire into
+#     GitHub directly. A future hardening pass (recorded as a forward
+#     pointer in this milestone's completion notes) may add a workflow
+#     step that asserts the live branch-protection state matches this
+#     declaration.
+#
+# Why declarative-only, not enforcement code? Branch protection lives
+# outside the repo (in GitHub's settings store) and rate limits live
+# inside the workflow file. Encoding the intent here gives the operator
+# a single document to point at when applying or auditing the policy,
+# and gives reviewers a single document to reach for when asking
+# "should the agent be allowed to do <X>?".
+#
+# Format: YAML 1.2. Round-tripping is verified by
+# `scripts/test-guardrails-yaml.sh` (CI gate).
+
+schema_version: 1
+
+# ---------------------------------------------------------------------------
+# (a) Agent identity — non-admin GitHub App / bot.
+# ---------------------------------------------------------------------------
+#
+# The agent must run under a non-admin bot identity. Today the
+# `auto-remediate.yml` workflow runs under `secrets.GITHUB_TOKEN`,
+# which is scoped to the workflow's `permissions:` block and is
+# already non-admin (it has only the permissions the workflow
+# explicitly requests: `contents: write`, `pull-requests: write`,
+# `issues: write`, `actions: read`). The hardening path is to swap
+# `GITHUB_TOKEN` for a dedicated GitHub App so that:
+#
+#   - the bot has a stable, recognizable identity (`barista-security-bot`
+#     rather than `github-actions[bot]`), making PR-author filters
+#     trivial across the weekly summary + rate-limit count queries;
+#     and
+#
+#   - a GitHub App cannot bypass branch-protection rules even when
+#     granted `contents: write`, so the "agent PRs are not exempt"
+#     property holds structurally rather than by convention.
+#
+# Until the App is created, this section documents the intended
+# identity surface; the workflow continues to use `GITHUB_TOKEN`
+# during the transition.
+
+identity:
+  # Slug of the GitHub App that the auto-remediation workflow runs as.
+  # PLACEHOLDER until the App is created in the GitHub org. The slug
+  # determines the bot login (`<slug>[bot]`) that PR-author filters
+  # match against in the weekly summary workflow and the rate-limit
+  # count query below.
+  github_app_slug: "barista-security-bot"
+
+  # Permissions the App needs. Grant ONLY these on the App's
+  # configuration page; any additional permission is a misconfiguration.
+  required_permissions:
+    - "contents:write"        # commit fixes to security/auto-fix-* branches
+    - "pull_requests:write"   # open + comment on remediation PRs
+    - "issues:write"          # comment back on the originating issue
+    - "issues:read"           # read security-bot-labeled issue bodies
+    - "actions:read"          # read upstream workflow_run metadata for context
+
+  # Permissions the App must NEVER hold. Listed explicitly so an
+  # operator auditing the App's settings has a checklist of what to
+  # confirm is OFF (not just absent from the required list).
+  forbidden_permissions:
+    - "administration:write"  # repository admin operations
+    - "members:write"         # org / team membership
+    - "secrets:write"         # repository / org secrets
+    - "workflows:write"       # editing .github/workflows/ — agent prompt
+                              #   already forbids this; deny at the App
+                              #   level as defense in depth
+    - "actions:write"         # cancelling / re-running workflows
+    - "deployments:write"     # deployment environments
+
+  # Bot login as it appears in `gh pr list --author <login>` queries.
+  # Derived from `github_app_slug` per GitHub's convention
+  # (`<slug>[bot]`). Kept explicit here so the field is searchable.
+  bot_login: "barista-security-bot[bot]"
+
+# ---------------------------------------------------------------------------
+# (b) + (c) Pull-request gating — branch protection + required checks.
+# ---------------------------------------------------------------------------
+#
+# Every PR — agent-authored or human-authored — merges into `main`
+# only after:
+#   - at least one human review approval (the agent is NOT exempt), AND
+#   - every required status check below is green.
+#
+# These fields are the SOURCE OF INTENT for the branch-protection
+# ruleset on `main`. The operator applies them via `gh api` or the
+# repository's Settings → Branches page; see
+# `docs/ci/branch-protection.md` for the step-by-step.
+#
+# When this list and the live branch-protection ruleset drift, the
+# branch-protection ruleset is authoritative for what GitHub enforces,
+# but this list is authoritative for what the policy *says* — drift
+# is a misconfiguration to be reconciled, not a feature.
+
+pull_request:
+  # Base branch the agent targets. All remediation PRs are opened
+  # against `main`.
+  base_branch: "main"
+
+  # Branch-naming convention. The agent's prompt enforces this;
+  # restating it here keeps the convention auditable from the policy
+  # document alone.
+  agent_branch_pattern: "security/auto-fix-<issue-number>"
+
+  # The default PR template is the directory form; the agent's
+  # PR-create URL appends `?template=security-auto-remediation.md`
+  # to surface its own template. Human contributors land on
+  # `default.md` via the "Compare & pull request" button.
+  templates:
+    default: ".github/PULL_REQUEST_TEMPLATE/default.md"
+    agent: ".github/PULL_REQUEST_TEMPLATE/security-auto-remediation.md"
+    agent_url_query: "?template=security-auto-remediation.md"
+
+  # Required approving review count on `main`. Applies to agent PRs
+  # and human PRs equally; the agent is NOT exempt.
+  required_approving_review_count: 1
+
+  # The agent is NOT exempt from any branch-protection rule. Listed
+  # as an explicit field so any future "let the bot bypass review on
+  # security patches" proposal has to flip this from `false` to `true`
+  # in a reviewed PR rather than being added silently elsewhere.
+  agent_is_exempt_from_review: false
+
+  # Required status checks. Every check name below must be a job
+  # `name:` value from a workflow that runs on `pull_request` against
+  # `main`. The values match the `name:` fields in the corresponding
+  # workflow files exactly — bumping a job's `name:` field requires
+  # bumping this list, and vice versa.
+  #
+  # Sourced from:
+  #   - .github/workflows/secret-scan.yml  (C.1 deliverable)
+  #   - .github/workflows/sca.yml          (C.2 deliverable)
+  #   - .github/workflows/sast.yml         (C.3 deliverable)
+  #   - .github/workflows/codeql.yml       (C.3 deliverable)
+  #   - .github/workflows/workflow-lint.yml (C.4 deliverable)
+  required_status_checks:
+    # Secret-scan suite (C.1).
+    - "gitleaks"
+    - "trufflehog"
+    # SCA suite (C.2). The SAST workflow's `cargo-deny` and
+    # `cargo-audit` jobs are PR-blocking; `sca-nightly.yml` is
+    # schedule-only and does NOT gate PRs.
+    - "cargo-deny"
+    - "cargo-audit"
+    - "OSV-Scanner"
+    - "OWASP Dependency-Check (barback)"
+    - "Trivy fs"
+    # SAST suite (C.3).
+    - "clippy (workspace, all-targets)"
+    - "unsafe-line ratchet"
+    - "Semgrep"
+    - "Semgrep custom-rule round-trip"
+    - "SpotBugs + FindSecBugs (barback)"
+    # CodeQL (C.3). The job name is parameterized over language;
+    # both invocations must pass.
+    - "Analyze (rust)"
+    - "Analyze (java-kotlin)"
+    # Workflow lint (C.4). The lint gate must pass on every PR
+    # because a workflow regression silently breaks every other
+    # required check. `security-agent config validation` is the
+    # job added in C.5 T4 that validates this YAML round-trips +
+    # the PR template directory-form migration is intact; it lives
+    # in `workflow-lint.yml` because the audit surface is the same.
+    - "zizmor"
+    - "zizmor synthetic-failure round-trip"
+    - "actionlint"
+    - "security-agent config validation"
+
+  # Whether stale review approvals are dismissed on new commits.
+  # `true` — any push to a PR branch invalidates prior approvals
+  # and the PR must be re-reviewed. Applies to agent PRs and human
+  # PRs equally.
+  dismiss_stale_reviews_on_push: true
+
+  # Whether force-pushes to the PR branch are allowed. `false` — the
+  # agent's allowed-tools list denies `git push --force` variants
+  # already; restating at the branch-protection level closes the
+  # loop in case the agent's deny list ever has a gap.
+  allow_force_push_to_pr_branch: false
+
+# ---------------------------------------------------------------------------
+# (d) PR template — directory form.
+# ---------------------------------------------------------------------------
+#
+# Migration from the single-file `.github/PULL_REQUEST_TEMPLATE.md`
+# (created in M0.1 Task 9) to the directory form happened as part of
+# this milestone (C.5 Task 4). The `pull_request.templates` block
+# above declares the resulting file layout; this section is the
+# rationale + the agent's responsibility for surfacing the right
+# template.
+#
+# Behaviour after migration:
+#
+#   - GitHub's "Compare & pull request" button (the surface every
+#     human contributor hits) auto-loads `default.md`. The pre-existing
+#     M0.1 Task 9 content is preserved byte-equal — opening a PR by
+#     hand looks identical to before.
+#
+#   - The auto-remediation agent constructs its PR-create URL with
+#     `?template=security-auto-remediation.md` appended. GitHub
+#     resolves the query parameter against the directory and surfaces
+#     the auto-remediation template instead. The agent populates every
+#     slot (summary, what-it-did, why-it's-right, Sonatype
+#     verification, verification, status checks, reviewer notes,
+#     provenance) before opening the PR.
+
+pr_template_migration:
+  status: "complete"
+  default_template_origin: "M0.1 Task 9 — content preserved byte-equal via git mv"
+  agent_template_basis: "M C.5 T3 placeholder at .github/security-agent/pr-template.md (deleted in this migration); section structure preserved + expanded with Status checks + Reviewer notes per C.5 T4 spec"
+  # Sections the agent template enforces. Listed here so a future
+  # template edit that drops a required section trips the template
+  # migration test in `scripts/test-pr-template-migration.sh`.
+  agent_template_required_sections:
+    - "## Summary"
+    - "## What the agent did"
+    - "## Why this is the right fix"
+    - "## Sonatype verification"
+    - "## Verification"
+    - "## Status checks"
+    - "## Reviewer notes"
+    - "## Provenance"
+
+# ---------------------------------------------------------------------------
+# (e) Rate limits — per-day cap on auto-remediation PRs.
+# ---------------------------------------------------------------------------
+#
+# The agent is bounded by:
+#   - a per-day cap on new PRs (review-burden bound), and
+#   - a per-issue cap on attempts (two-strikes-and-stop; see failure_policy).
+#
+# Today the per-day cap is documented here but not enforced by the
+# `auto-remediate.yml` workflow — enforcement lands when the GitHub
+# App identity does (see `identity` above), because the rate-limit
+# count query depends on a stable `bot_login` to filter PR authors:
+#
+#   gh pr list --author <bot_login> --search 'created:>=YYYY-MM-DD'
+#
+# Until then the cap is the agent's prompt-level honor system + this
+# declared cap that operators can apply manually if a spike occurs.
+
+rate_limits:
+  # Maximum number of auto-remediation PRs the agent may open per
+  # UTC calendar day. If the cap is hit, additional eligible issues
+  # are deferred to the next day (the workflow's filter job exits
+  # with a `proceed=false` decision and posts a "deferred — daily cap
+  # hit" comment on the issue).
+  max_prs_per_day: 5
+
+  # Maximum number of attempts the agent makes per issue. Two
+  # attempts means: one initial fix attempt plus one retry if the
+  # first attempt's CI run failed. See failure_policy below.
+  max_attempts_per_issue: 2
+
+  # Time window over which `max_prs_per_day` is measured. UTC so
+  # the boundary is unambiguous across reviewer time zones.
+  window: "calendar-day-utc"
+
+# ---------------------------------------------------------------------------
+# (f) Failure policy — two strikes and stop.
+# ---------------------------------------------------------------------------
+#
+# If the agent's PR fails CI twice in a row on the same issue, the
+# agent posts a triage comment, deletes the local branch, and exits.
+# No further attempts on that issue without a human re-trigger
+# (`workflow_dispatch` with the issue number, or removing and
+# re-adding the `security-bot` label).
+#
+# "CI failure" here means: the agent opened a PR, at least one
+# required status check failed, the agent observed the failure, and
+# its single retry attempt also produced a failing CI run. Action-
+# level failures (the runner crashed, the API key expired) do not
+# count toward the strike count — those route through the
+# `audit-on-failure` job in `auto-remediate.yml`, which is a separate
+# breadcrumb surface.
+
+failure_policy:
+  # Number of consecutive CI-failing attempts before the agent gives
+  # up on an issue. `2` means "one initial attempt + one retry, then
+  # stop"; matches `rate_limits.max_attempts_per_issue`.
+  consecutive_ci_failures_before_giveup: 2
+
+  # What the agent does when it gives up.
+  on_giveup:
+    # Action the agent takes on the issue thread.
+    action: "post_triage_comment"
+
+    # Template for the triage comment. The agent fills the
+    # `{{ ci_run_url }}` placeholder with the URL of the last failing
+    # CI run before posting. Bail-out behavior is also documented in
+    # `.github/security-agent/prompt.md` (Bail-out section) — the two
+    # surfaces must stay in sync; the prompt's wording is the live
+    # surface the agent reads, this is the policy declaration.
+    comment_template: |
+      The auto-remediation agent is bailing out on this finding.
+
+      Reason: two consecutive CI failures on the auto-remediation branch.
+      The agent's prompt forbids a third attempt without a human re-trigger.
+
+      Last CI run: {{ ci_run_url }}
+
+      What a human should consider:
+      - Inspect the failing checks for whether the failure is the agent's
+        change, an unrelated flake, or a finding that doesn't fit the
+        agent's allowed-scope categories (dep bump / allowlist /
+        mechanical SAST fix / SBOM regen).
+      - Re-trigger via `workflow_dispatch` on
+        `.github/workflows/auto-remediate.yml` after addressing the
+        underlying issue, or remove and re-add the `security-bot`
+        label.
+
+      No further auto-remediation attempts will fire on this issue
+      without a human re-trigger.
+
+    # Whether the agent halts further attempts on the same issue
+    # without an explicit human re-trigger. `true` — the next attempt
+    # requires a human to either `workflow_dispatch` the workflow or
+    # to toggle the `security-bot` label off-then-on. This is the
+    # "no third attempt" property.
+    halt_further_attempts_without_human_retrigger: true
+
+  # What counts as a "CI failure" for strike-counting purposes. The
+  # explicit enumeration is here so a future change to CI semantics
+  # (e.g., flaky-test retry policy) has a single place to land.
+  ci_failure_definition:
+    counts_toward_strikes:
+      - "any required status check failed on the agent's PR"
+      - "the agent's self-test step (`cargo xtask security`) exited non-zero"
+    does_not_count_toward_strikes:
+      - "the runner crashed (audit-on-failure job handles this)"
+      - "the ANTHROPIC_API_KEY secret was unset or expired"
+      - "the agent bailed out cleanly (forbidden action, diff-size cap, no Sonatype-clean target)"
+
+# ---------------------------------------------------------------------------
+# Branch-protection precondition.
+# ---------------------------------------------------------------------------
+#
+# The agent will REFUSE to operate on a target branch that does not
+# have the branch-protection ruleset above applied. This is an
+# operational gate, not a runtime check inside this YAML — the
+# operator confirms branch protection is live before flipping the
+# auto-remediation workflow on, and re-confirms after any GitHub
+# settings change.
+#
+# Until C.4 Task 6 lands (DCO/signed-commits + branch protection),
+# this precondition is documented but unenforced: the workflow runs
+# under `GITHUB_TOKEN` and its PRs are subject to whatever rules
+# `main` happens to have at the time. Enabling auto-remediation on
+# `main` is `[H]`-gated on the operator confirming this precondition.
+
+branch_protection_precondition:
+  required: true
+
+  # Operator-facing setup documentation. Includes the `gh api` payload
+  # for applying the branch-protection ruleset to match this YAML, plus
+  # the web-UI equivalent for operators who prefer point-and-click.
+  documented_setup: "docs/ci/branch-protection.md"
+
+  # Conditions the operator must confirm before enabling
+  # auto-remediation on `main`. Each line maps to a checkbox in the
+  # `[H]`-gated review surface (the user signs off on enabling auto-
+  # remediation only after every condition below is true).
+  operator_checklist:
+    - "Branch protection enabled on `main`."
+    - "All required_status_checks (see pull_request.required_status_checks) listed in the branch-protection ruleset."
+    - "`required_approving_review_count: 1` (or higher) on `main`."
+    - "Force-push to `main` disabled."
+    - "GitHub App created with permissions matching `identity.required_permissions` and NONE of `identity.forbidden_permissions`."
+    - "DCO / signed-commits substrate in place (C.4 Task 6)."
+
+# ---------------------------------------------------------------------------
+# Cross-references to neighboring policy surfaces.
+# ---------------------------------------------------------------------------
+#
+# The auto-remediation policy is enforced across three documents.
+# This block lists them with one-line descriptions so a reviewer
+# auditing the policy has a single starting point.
+
+cross_references:
+  prompt: ".github/security-agent/prompt.md — the agent's mission, workflow, allowed scope, forbidden actions, and bail-out behavior."
+  allowed_tools: ".github/security-agent/allowed-tools.yaml — the per-tool allow/deny matrix consumed by the Claude CLI at runtime."
+  workflow: ".github/workflows/auto-remediate.yml — the GitHub Actions workflow that fires the agent on `issues.labeled` events."
+  finding_issue_filer: ".github/workflows/security-finding-to-issue.yml — the upstream workflow that creates the `security-bot`-labeled issues this agent responds to."
+  branch_protection_setup: "docs/ci/branch-protection.md — operator-facing setup for the GitHub branch-protection ruleset on `main`."
+  pr_templates:
+    default: ".github/PULL_REQUEST_TEMPLATE/default.md"
+    agent: ".github/PULL_REQUEST_TEMPLATE/security-auto-remediation.md"

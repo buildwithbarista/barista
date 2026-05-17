@@ -184,3 +184,47 @@ jobs:
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
         with:
           files: '.github/workflows/*.yml'
+
+  # ---------------------------------------------------------------------------
+  # security-agent-config — validates the auto-remediation policy
+  # declarations are well-formed.
+  #
+  # Two checks:
+  #
+  #   1. `.github/security-agent/guardrails.yaml` parses cleanly and
+  #      encodes every one of the six clauses (a)-(f) from C.5 T4.
+  #   2. The PR template directory-form migration is complete:
+  #      the legacy single-file `.github/PULL_REQUEST_TEMPLATE.md` is
+  #      absent, `default.md` is present with the M0.1 T9 content, and
+  #      `security-auto-remediation.md` is present with all required
+  #      section headers.
+  #
+  # Both checks are pure config validation — no network, no toolchain
+  # install beyond the runner's pre-installed `python3` (with PyYAML
+  # via the system Python; PyYAML ships on ubuntu-latest by default).
+  #
+  # This job is intentionally part of `Workflow lint` (not a separate
+  # workflow) because the audit surface is the same: "the project's
+  # config files are well-formed and consistent". Adding a new
+  # workflow per validation test would fragment the gate; folding
+  # into `workflow-lint.yml` keeps a single CI surface for "is the
+  # repository's automation config sane?".
+  # ---------------------------------------------------------------------------
+  security-agent-config:
+    name: security-agent config validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Validate guardrails.yaml schema and clauses
+        shell: bash
+        run: bash scripts/test-guardrails-yaml.sh
+
+      - name: Validate PR template directory-form migration
+        shell: bash
+        run: bash scripts/test-pr-template-migration.sh

@@ -53,13 +53,13 @@ specific finding. Nothing else.
      OWASP DC), also run `mvn -f barback/pom.xml test`.
    - If either self-test fails, **iterate once.** If it fails again, bail out.
 
-7. **Open the PR** with the body populated from `.github/security-agent/pr-template.md`.
-   The PR title is `security: fix <tool>/<rule_id> (auto-remediation)`. The PR body
-   must include `Fixes #<issue-number>` so the issue auto-closes on merge. Use the
-   `?template=security-auto-remediation.md` query string when constructing the PR
-   create URL via `gh pr create` so the PR template directory form picks up the
-   right template (once that migration lands; until then the agent supplies the
-   body via `--body-file`).
+7. **Open the PR** with the body populated from
+   `.github/PULL_REQUEST_TEMPLATE/security-auto-remediation.md`. The PR title is
+   `security: fix <tool>/<rule_id> (auto-remediation)`. The PR body must include
+   `Fixes #<issue-number>` so the issue auto-closes on merge. Append
+   `?template=security-auto-remediation.md` to the PR-create URL so GitHub's
+   directory-form template resolution surfaces the auto-remediation template
+   instead of `default.md`.
 
 8. **Comment back on the issue.** One comment summarising what you did:
    target file(s), one-line description of the fix, Sonatype query result if
@@ -144,7 +144,10 @@ about.
   `.github/workflows/security-finding-to-issue.yml`. Dep bumps to action SHAs
   are NOT excepted; route those through Dependabot.
 - Editing your own configuration: `.github/security-agent/prompt.md` (this file),
-  `.github/security-agent/allowed-tools.yaml`, `.github/security-agent/pr-template.md`.
+  `.github/security-agent/allowed-tools.yaml`,
+  `.github/security-agent/guardrails.yaml`, or the PR-template directory at
+  `.github/PULL_REQUEST_TEMPLATE/` (both `default.md` and
+  `security-auto-remediation.md`).
 - Editing scanner configuration to weaken or disable a check
   (`.gitleaks.toml`, `.semgrep/<rule>.yaml` rule bodies, `deny.toml`
   outside of advisory exceptions, `.semgrepignore`).
@@ -252,17 +255,22 @@ already pointed at by the scanner.
 
 ## PR template
 
-The PR body must follow `.github/security-agent/pr-template.md`. The template
-has explicit slots for:
+The PR body must follow
+`.github/PULL_REQUEST_TEMPLATE/security-auto-remediation.md`. The template has
+explicit slots for:
 
 - **Summary** — one-paragraph plain-English statement of the fix.
 - **What the agent did** — bulleted list of file edits.
 - **Why this is the right fix** — your reasoning, including why this specific
   change (not a larger refactor) resolves the finding.
 - **Sonatype verification** — the verbatim Sonatype response for any dep bump.
-- **Self-test results** — the output / exit codes of `cargo xtask security`
+- **Verification** — the output / exit codes of `cargo xtask security`
   and `bash scripts/test-secret-scan.sh` on the branch.
-- **Fixes** — `Fixes #<issue-number>` line for issue auto-closure.
+- **Status checks** — the required-status-checks contract (sourced from
+  `.github/security-agent/guardrails.yaml`).
+- **Reviewer notes** — caveats / context surfaced for the human reviewer.
+- **Provenance** — `Fixes #<issue-number>` line plus the originating
+  scanner-run URL for issue auto-closure and audit trail.
 
 If a slot doesn't apply (e.g., no Sonatype verification on a SAST-only fix),
 write "N/A — <reason>" rather than deleting the slot. Reviewers should see at

@@ -139,6 +139,13 @@ permissions:
     - "Edit(.github/security-agent/**)"
     - "Write(.github/security-agent/**)"
 
+    # Editing the PR templates. Both `default.md` and
+    # `security-auto-remediation.md` are policy surfaces — the agent
+    # populates the auto-remediation template at PR-create time via
+    # `--body-file`, it does not edit the template file itself.
+    - "Edit(.github/PULL_REQUEST_TEMPLATE/**)"
+    - "Write(.github/PULL_REQUEST_TEMPLATE/**)"
+
     # Editing any workflow file. Workflow edits are routed through
     # the human review path (PR + Dependabot for SHA bumps).
     - "Edit(.github/workflows/**)"

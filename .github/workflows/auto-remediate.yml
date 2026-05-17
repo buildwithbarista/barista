@@ -20,13 +20,17 @@
 #      after two failed attempts — posts a "human triage required"
 #      comment and exits.
 #
-# Scope: this workflow wires the agent up. It does NOT enforce
-# rate-limiting, branch protection, or the bot-identity constraint —
-# those are the workflow-level guardrails that land in a follow-up
-# (`.github/security-agent/guardrails.yaml`) and need the DCO /
-# signed-commits substrate to be in place first. Until then this
-# workflow runs under `${{ secrets.GITHUB_TOKEN }}` like every other
-# workflow; the agent's commits are NOT exempt from branch protection.
+# Scope: this workflow wires the agent up. The declarative policy
+# that gates it — non-admin bot identity, branch-protection precondition,
+# required-status-checks list, per-day rate limit, two-strikes-and-stop —
+# lives in `.github/security-agent/guardrails.yaml` and is materialized
+# in GitHub's branch-protection settings per `docs/ci/branch-protection.md`.
+# That wiring is an operator step (it touches GitHub settings, not files in
+# this repo) and is `[H]`-gated on the DCO / signed-commits substrate being
+# in place first. Until the operator step completes, this workflow runs
+# under `${{ secrets.GITHUB_TOKEN }}` like every other workflow; the agent's
+# commits are NOT exempt from whatever branch-protection rules `main`
+# currently has.
 #
 # Every action is pinned to a commit SHA. The human-readable tag is in
 # a trailing comment; bump both together.
