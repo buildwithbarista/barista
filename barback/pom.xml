@@ -67,6 +67,36 @@
         <spotbugs-maven-plugin.version>4.9.8.3</spotbugs-maven-plugin.version>
         <findsecbugs-plugin.version>1.14.0</findsecbugs-plugin.version>
         <spotbugs.skip>true</spotbugs.skip>
+        <!--
+          JUnit Jupiter tag exclusion fed to Surefire's
+          `excludedGroups`. Default skips @Tag("integration") so a
+          plain `mvn test` does not block on the embedded-Maven leak
+          test (&asymp;30 s for 100 compiles). The `integration-tests`
+          profile flips this to the empty string to run every test.
+        -->
+        <surefire.excludedGroups>integration</surefire.excludedGroups>
+        <!--
+          Embedded Maven 4 core version. Pinned to a specific patch
+          release deliberately: every member of `maven-api-cli` is
+          annotated `@Experimental` and the concrete `cling.*` classes
+          the daemon depends on carry no stability annotation at all,
+          so a range like `[4.0.0,4.1.0)` would silently absorb
+          breaking changes during a normal dependabot bump. Bumps to
+          this property are gated on re-running the integration suite
+          (and any future corpus baseline) under the new version.
+
+          Floor: 4.0.0-rc-3 (the version the M4.0 embedding spike
+          validated end-to-end). Anything earlier is unsupported.
+        -->
+        <embedded.maven.version>4.0.0-rc-3</embedded.maven.version>
+        <!--
+          plexus-classworlds is the classloader container Maven 4
+          ships in its boot/ directory; we mirror the exact version
+          the embedded Maven distribution uses so the in-process
+          ClassWorld layout matches what bin/mvn would build at
+          runtime.
+        -->
+        <plexus-classworlds.version>2.8.0</plexus-classworlds.version>
     </properties>
 
     <dependencyManagement>
@@ -94,6 +124,99 @@
             <groupId>com.google.protobuf</groupId>
             <artifactId>protobuf-java</artifactId>
             <version>${protobuf-java.version}</version>
+        </dependency>
+        <dependency>
+            <!--
+              Embedded Maven 4 core — primary entrypoint.
+
+              maven-cli ships the org.apache.maven.cling package
+              (MavenCling, ClingSupport, ResidentMavenInvoker, ...).
+              The daemon drives ResidentMavenInvoker directly for the
+              warm path; see EmbeddedMaven for the embed-with-care
+              contract that follows from the cling package being
+              internal-by-convention (no @Experimental, no @Provider).
+            -->
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-cli</artifactId>
+            <version>${embedded.maven.version}</version>
+        </dependency>
+        <dependency>
+            <!--
+              maven-embedder transitively pulls maven-core, the
+              resolver provider, model builder, and the rest of the
+              core wiring that ResidentMavenInvoker needs to bring up
+              a session. Declared explicitly so the version pin is
+              visible at the dependency level (not just transitively).
+            -->
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-embedder</artifactId>
+            <version>${embedded.maven.version}</version>
+        </dependency>
+        <dependency>
+            <!--
+              maven-api-cli ships the public Invoker / Parser /
+              InvokerRequest / ParserRequest surface the daemon
+              builds against directly (every member @Experimental;
+              see the cling embed-with-care javadoc on EmbeddedMaven).
+            -->
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-api-cli</artifactId>
+            <version>${embedded.maven.version}</version>
+        </dependency>
+        <dependency>
+            <!--
+              plexus-classworlds is the classloader container the
+              embedded Maven core boots against. The daemon constructs
+              a single ClassWorld at startup and hands it to the
+              ResidentMavenInvoker so warm-path invocations skip the
+              ~600ms classworlds/Plexus bring-up cost.
+            -->
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-classworlds</artifactId>
+            <version>${plexus-classworlds.version}</version>
+        </dependency>
+        <dependency>
+            <!--
+              Guice (classes classifier) and Sisu are the IoC layer
+              the embedded Maven core spins up inside Plexus. Neither
+              is a declared dependency of any maven-* artifact (the
+              Maven distribution ships them in lib/ directly), so we
+              declare them explicitly here. The versions match the
+              jars bundled in Maven 4.0.0-rc-3's lib/:
+                guice-6.0.0-classes.jar
+                org.eclipse.sisu.inject-0.9.0.M3-no_asm.jar (sub-jar
+                  of the parent sisu-inject 0.9.0.M3 artifact; the
+                  full sisu-inject artifact is the embedded form we
+                  need on the classpath).
+              Bumping ${embedded.maven.version} may require updating
+              these; the spike harness ships a fresh distribution we
+              can sample for any version drift.
+            -->
+            <groupId>com.google.inject</groupId>
+            <artifactId>guice</artifactId>
+            <version>6.0.0</version>
+            <classifier>classes</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.sisu</groupId>
+            <artifactId>org.eclipse.sisu.inject</artifactId>
+            <version>0.9.0.M3</version>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.inject</groupId>
+            <artifactId>jakarta.inject-api</artifactId>
+            <version>2.0.1</version>
+        </dependency>
+        <dependency>
+            <!--
+              Plexus component-annotations (still referenced by some
+              maven-* component definitions for legacy @Component
+              annotations) ships in the Maven 4 distribution lib/ but
+              is not pulled transitively by maven-cli / maven-core.
+            -->
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-component-annotations</artifactId>
+            <version>2.1.0</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -179,12 +302,33 @@
                       criterion ("ThreadPoolExecutor fallback path
                       exercised under JDK 17 in CI") fires on every
                       matrix cell without extra workflow plumbing.
+                      The same wiring covers the embedded-Maven leak
+                      and warm-path tests (also `*IT` JUnit Jupiter
+                      classes — no failsafe pre-integration-test
+                      phase needed), which the `integration-tests`
+                      profile opts in by clearing the tag exclusion
+                      below.
                     -->
                     <includes>
                         <include>**/*Test.java</include>
                         <include>**/*Tests.java</include>
+                        <include>**/Test*.java</include>
                         <include>**/*IT.java</include>
                     </includes>
+                    <!--
+                      Tag-based test selection. The `surefire.excludedGroups`
+                      property defaults to "integration" so a plain
+                      `mvn test` skips the long-running embedded-Maven
+                      leak test. The `integration-tests` profile below
+                      sets the property to the empty string so CI's
+                      integration job runs the full suite. Routing the
+                      override through a property avoids the
+                      profile-plugin-execution merge edge case in
+                      Maven 3.9 where execution-level configuration
+                      from the base plugin shadows the profile's
+                      plugin-level configuration.
+                    -->
+                    <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>
@@ -307,6 +451,27 @@
             <id>sast</id>
             <properties>
                 <spotbugs.skip>false</spotbugs.skip>
+            </properties>
+        </profile>
+        <profile>
+            <!--
+              `integration-tests` profile: clears the
+              `@Tag("integration")` exclusion configured on Surefire
+              above so the long-running embedded-Maven tests
+              (leak-burn-down, warm-path timing) run. Used by CI:
+
+                mvn -f barback/pom.xml -P integration-tests test
+            -->
+            <id>integration-tests</id>
+            <properties>
+                <!--
+                  Clear the Surefire tag exclusion so every test runs,
+                  including @Tag("integration") tests. Pair with a
+                  staged Maven 4 distribution at
+                  barback/spike/m40-t2/apache-maven-4.0.0-rc-3/ or set
+                  -Dbarista.test.maven.home=<path>.
+                -->
+                <surefire.excludedGroups></surefire.excludedGroups>
             </properties>
         </profile>
     </profiles>
