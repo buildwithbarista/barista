@@ -8,13 +8,19 @@
 //!
 //! # Security
 //!
-//! T4 deliberately does **not** set the socket's filesystem mode. The
-//! 0600 owner-only mode required by PRD §12.1 is M4.1 T5's job — T5
-//! lands a `SocketPermissions` helper that the daemon calls *after*
-//! binding the listener and *before* accepting connections, plus a
-//! pre-connect check on the client side that rejects worldly-readable
-//! sockets. T4 only owns the wire; it accepts already-permissioned
-//! `UnixStream`s and dials whatever path it's handed.
+//! The plain `connect` / `from_stream` constructors accept whatever
+//! `UnixStream` they're handed; they do not enforce socket perms.
+//! Use the secure variants for production:
+//!
+//! * [`UdsTransport::bind_secure`] — server side; binds at a vetted
+//!   [`crate::auth::SocketPath`] under a `0700` parent dir, chmods
+//!   the socket inode to `0600`, returns a `UnixListener`.
+//! * [`UdsTransport::connect_secure`] — client side; pre-connect
+//!   `stat(2)` to verify `0600` + owner UID, then `connect(2)`, then
+//!   `getsockopt(SO_PEERCRED)` to confirm peer UID.
+//!
+//! Together they implement the M4.1 T5 acceptance criterion "socket
+//! permission check rejects non-owner connection on Linux/macOS".
 //!
 //! # Concurrency
 //!
@@ -30,13 +36,14 @@
 use std::path::Path;
 
 use futures_util::{SinkExt, StreamExt};
-use tokio::net::UnixStream;
+use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::{
     Result, Transport, TransportError, decode_envelope, encode_envelope, framed_codec,
     map_codec_io_err,
 };
+use crate::auth::{BufferZeroizer, SocketPath, verify_peer_uid};
 use crate::Envelope;
 
 /// Transport that carries framed `Envelope`s over a Unix domain socket.
@@ -87,6 +94,59 @@ impl UdsTransport {
         }
     }
 
+    /// Dial the UDS at a vetted [`SocketPath`] with the full T5
+    /// security check.
+    ///
+    /// Three-step ceremony:
+    ///
+    /// 1. Pre-connect: call [`SocketPath::verify`] to confirm the
+    ///    socket inode exists, is a `S_IFSOCK`, is owned by us,
+    ///    and has mode bits exactly `0600`. Any mismatch surfaces
+    ///    as a typed [`crate::auth::AuthError`] mapped to
+    ///    [`TransportError::Io`] (the `AuthError` is wrapped in
+    ///    `io::Error::other` to preserve the Display string).
+    /// 2. Connect: `UnixStream::connect`.
+    /// 3. Post-connect: [`verify_peer_uid`] — verify the kernel's
+    ///    `SO_PEERCRED` UID matches our `geteuid()`. If a TOCTOU
+    ///    swapped the inode under us between the `stat(2)` and
+    ///    the `connect(2)`, this check catches it.
+    ///
+    /// All three steps run before the function returns
+    /// `Ok(UdsTransport)`. The caller may then `send` / `recv`
+    /// knowing the policy holds.
+    pub async fn connect_secure(socket_path: &SocketPath) -> Result<Self> {
+        socket_path.verify().map_err(auth_to_transport_err)?;
+        let stream = UnixStream::connect(socket_path.as_path()).await?;
+        verify_peer_uid(&stream).map_err(auth_to_transport_err)?;
+        Ok(Self::from_stream(stream))
+    }
+
+    /// Server-side: bind a `UnixListener` at the vetted
+    /// [`SocketPath`] with the full T5 security ceremony.
+    ///
+    /// Four-step ceremony:
+    ///
+    /// 1. Best-effort `unlink_if_exists` to clear any stale socket
+    ///    inode from a previous crash.
+    /// 2. `UnixListener::bind` at the socket path. The parent
+    ///    directory was created `0700` at `SocketPath::new` time,
+    ///    so the inode is already inaccessible to non-owners
+    ///    *during* the bind window — closing the TOCTOU
+    ///    between bind and the follow-up chmod.
+    /// 3. `chmod(2)` to `0600`. Defense-in-depth in case the
+    ///    parent dir's perms are ever loosened later.
+    /// 4. Return the listener for the daemon to `accept()` on.
+    ///
+    /// The caller is responsible for the `accept(2)` loop and for
+    /// running [`verify_peer_uid`] on each accepted `UnixStream`
+    /// before wrapping it via [`Self::from_stream`].
+    pub fn bind_secure(socket_path: &SocketPath) -> Result<UnixListener> {
+        socket_path.unlink_if_exists().map_err(TransportError::Io)?;
+        let listener = UnixListener::bind(socket_path.as_path())?;
+        socket_path.chmod_to_policy().map_err(auth_to_transport_err)?;
+        Ok(listener)
+    }
+
     /// Borrow the underlying `tokio::net::UnixStream` immutably.
     ///
     /// Useful for diagnostics — `peer_cred()`, `local_addr()`, etc. —
@@ -97,6 +157,15 @@ impl UdsTransport {
     pub fn inner(&self) -> &UnixStream {
         self.framed.get_ref()
     }
+}
+
+/// Coerce an `AuthError` into the transport's typed error model.
+/// We wrap as `Io(io::Error::other(auth_err))` so the Display string
+/// propagates verbatim while preserving the `TransportError::Io`
+/// variant callers already branch on. `is_terminal()` returns true
+/// for `Io`, so the connection is correctly considered poisoned.
+fn auth_to_transport_err(auth_err: crate::auth::AuthError) -> TransportError {
+    TransportError::Io(std::io::Error::other(auth_err))
 }
 
 impl Transport for UdsTransport {
@@ -115,7 +184,30 @@ impl Transport for UdsTransport {
 
     async fn recv(&mut self) -> Result<Envelope> {
         match self.framed.next().await {
-            Some(Ok(buf)) => decode_envelope(&buf),
+            Some(Ok(mut buf)) => {
+                // Decode first — prost reads through the buffer; it
+                // does NOT take ownership of the underlying allocation.
+                // Once decode returns, the `Envelope` holds its own
+                // heap copies of every variable-length field, so we
+                // can safely scrub the wire buffer.
+                let result = decode_envelope(&buf);
+                // Scrub the wire bytes BEFORE the `BytesMut` is
+                // dropped. The codec's allocator pool may re-issue
+                // this allocation to a subsequent frame; zeroing
+                // here prevents a credential-bearing buffer from
+                // being silently re-served as fresh "uninitialized"
+                // memory.
+                //
+                // This runs on EVERY recv, not just credential-
+                // carrying ones, because the recv path doesn't peek
+                // at the frame contents before passing them to
+                // prost — branching on "is this an ActionRequest
+                // with credentials?" would add latency to every
+                // non-credential frame and risk a bypass when the
+                // peek logic gets the discrimination wrong.
+                buf.zeroize_buffer();
+                result
+            }
             Some(Err(e)) => Err(map_codec_io_err(e)),
             None => Err(TransportError::Closed),
         }

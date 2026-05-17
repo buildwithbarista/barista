@@ -49,15 +49,29 @@
 //! runs `Envelope::decode`, and returns. Errors from either half map to
 //! the variants of [`TransportError`].
 //!
+//! # Security policy
+//!
+//! Filesystem-permission auth (`0600` UDS mode + per-user-SID DACL'd
+//! named pipe) and credential-buffer zeroization live in
+//! [`crate::auth`]. The secure constructors on each concrete
+//! transport — `UdsTransport::connect_secure` /
+//! `UdsTransport::bind_secure` on Unix, and
+//! `NamedPipeTransport::connect_secure` / `bind_secure` on Windows —
+//! run the full permission ceremony before returning. The plain
+//! `connect` / `from_stream` constructors stay available for tests
+//! and for callers that own the listener-side perms ceremony
+//! themselves.
+//!
+//! `Transport::recv` calls
+//! [`crate::auth::BufferZeroizer::zeroize_buffer`] on the wire
+//! `BytesMut` after decoding each frame, so credential-carrying
+//! bytes don't linger in the codec's allocator pool.
+//!
 //! # What this module does NOT do
 //!
-//! * **No security policy.** Setting the UDS to 0600 and DACL-ing the
-//!   named pipe is M4.1 T5's job. Transports expose constructors that
-//!   accept already-permissioned streams; the listener-side permission
-//!   hook is left to T5.
 //! * **No streaming / multiplexing.** Stream IDs, per-stream channels,
 //!   cancellation, and head-of-line-blocking avoidance are M4.1 T6's
-//!   job. T4 ships only `send` / `recv` primitives; T6 wraps them.
+//!   job. T4/T5 ship only `send` / `recv` primitives; T6 wraps them.
 //! * **No reconnection.** A `Transport` is a single connection. On
 //!   `recv` returning [`TransportError::Closed`], the caller decides
 //!   whether to dial a fresh transport.

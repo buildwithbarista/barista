@@ -25,6 +25,14 @@
 /// Generated wire types and their redacted-`Debug` overrides.
 pub mod proto;
 
+// Filesystem-permission auth + buffer-zeroization (M4.1 T5). The
+// module's own `//!` doc-comment in `src/auth/mod.rs` is authoritative
+// — it covers the 0600 UDS perms model on Unix, the DACL'd named-pipe
+// model on Windows, and the cross-platform `BufferZeroizer` trait that
+// the transport's `recv` path uses to scrub credential-carrying wire
+// buffers before they re-enter the codec's allocator pool.
+pub mod auth;
+
 // The module's own `//!` doc-comment in `src/transport/mod.rs` is
 // authoritative — see there for the wire format, the `Transport`
 // trait, the typed error model, and the cross-platform submodule
@@ -41,6 +49,19 @@ pub mod transport;
 // stay namespaced under `transport::` to keep the crate root focused on
 // the trait + error model + the wire types from `proto`.
 pub use transport::{MAX_FRAME_BYTES, Transport, TransportError};
+
+// Re-export the auth surface so downstream callers can write
+// `barista_ipc::AuthError`, `barista_ipc::BufferZeroizer`,
+// `barista_ipc::zeroize_envelope`. Platform-specific newtypes
+// (`SocketPath` on Unix, `PipeName` on Windows) are re-exported
+// from inside the `auth` module under matching cfg gates.
+pub use auth::{AuthError, BufferZeroizer, zeroize_envelope};
+
+#[cfg(unix)]
+pub use auth::SocketPath;
+
+#[cfg(windows)]
+pub use auth::PipeName;
 
 // Re-export every top-level message at the crate root.
 //
