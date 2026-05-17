@@ -401,7 +401,12 @@ fn drain_stream<R: std::io::Read>(mut r: R, label: &str) {
 /// caller: this function only checks "is the socket accepting", not
 /// "is the daemon healthy" — distinguishing the two needs the IPC
 /// machinery which is overkill for a pre-spawn discover.
-fn socket_is_live(path: &Path, timeout: Duration) -> bool {
+///
+/// Exposed `pub` so the `shot` warm-path (M4.3 T3) can probe daemon
+/// liveness without committing to a full discover/spawn cycle: a
+/// negative answer falls through to the cold-path dispatcher which
+/// owns the spawn machinery.
+pub fn socket_is_live(path: &Path, timeout: Duration) -> bool {
     if !path.exists() {
         return false;
     }

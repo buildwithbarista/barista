@@ -94,6 +94,46 @@ pub struct PlannedAction {
     pub retryable: bool,
 }
 
+/// The ordered list of every Maven default-lifecycle phase up
+/// through `deploy`. Used by `shot_graph` to materialize the phase
+/// prefix for an arbitrary single-phase request — `barista shot
+/// package` runs `process-resources … package`, `barista shot test`
+/// runs `process-resources … test`, etc.
+///
+/// `install` and `deploy` are included here for completeness but
+/// `shot_graph` flips `retryable=false` on those two phases (they
+/// have remote side-effects; the auto-respawn retry is unsafe). The
+/// retryability inversion matches the design note in
+/// [`PlannedAction::retryable`].
+pub const DEFAULT_LIFECYCLE_PHASES: &[&str] = &[
+    "validate",
+    "initialize",
+    "generate-sources",
+    "process-sources",
+    "generate-resources",
+    "process-resources",
+    "compile",
+    "process-classes",
+    "generate-test-sources",
+    "process-test-sources",
+    "generate-test-resources",
+    "process-test-resources",
+    "test-compile",
+    "process-test-classes",
+    "test",
+    "prepare-package",
+    "package",
+    "pre-integration-test",
+    "integration-test",
+    "post-integration-test",
+    "verify",
+    "install",
+    "deploy",
+];
+
+/// Phases with remote side-effects: not retryable in `shot_graph`.
+const NON_RETRYABLE_PHASES: &[&str] = &["install", "deploy"];
+
 /// Build the action graph for `barista verify` against a single
 /// module. The `clean` prefix is included only when `include_clean`
 /// is true; the user opts in via positional args (M4.3 Task 2 wires
@@ -123,6 +163,68 @@ pub fn verify_graph(module_root: PathBuf, include_clean: bool) -> ActionGraph {
         pom_path,
         actions,
     }
+}
+
+/// Error returned by [`shot_graph`] when the expression doesn't
+/// resolve to a known Maven lifecycle phase.
+#[derive(Debug, thiserror::Error)]
+pub enum ShotGraphError {
+    /// `expr` wasn't a known Maven default-lifecycle phase.
+    #[error(
+        "barista shot: unknown phase `{phase}`. \
+         Valid phases: validate, initialize, compile, test, package, verify, install, deploy, …"
+    )]
+    UnknownPhase {
+        /// The phase the user asked for.
+        phase: String,
+    },
+}
+
+/// Build the action graph for `barista shot <phase>` against a
+/// single module.
+///
+/// `expr` is a Maven lifecycle phase name (e.g. `"test"`,
+/// `"package"`, `"compile"`). The returned graph contains every
+/// default-lifecycle phase **up to and including** `expr`, mirroring
+/// Maven's semantics where `mvn test` runs the prefix
+/// `process-resources … test`.
+///
+/// # Retryability
+///
+/// All phases up through `verify` are marked `retryable = true`
+/// (idempotent for auto-respawn). `install` and `deploy` are
+/// `retryable = false` because they have remote side-effects: a
+/// second dispatch after a crash could double-install or
+/// double-publish.
+///
+/// # v0.1 scope
+///
+/// Only single-phase expressions. Multi-phase composition (e.g.
+/// `barista shot "clean package"`) is a v0.2 follow-up — Maven's own
+/// lifecycle composer is non-trivial and out of scope for the warm-
+/// path optimisation T3 ships.
+pub fn shot_graph(module_root: PathBuf, expr: &str) -> Result<ActionGraph, ShotGraphError> {
+    let phase = expr.trim();
+    let idx = DEFAULT_LIFECYCLE_PHASES
+        .iter()
+        .position(|p| *p == phase)
+        .ok_or_else(|| ShotGraphError::UnknownPhase {
+            phase: phase.to_string(),
+        })?;
+
+    let mut actions = Vec::with_capacity(idx + 1);
+    for p in &DEFAULT_LIFECYCLE_PHASES[..=idx] {
+        actions.push(PlannedAction {
+            phase: p,
+            retryable: !NON_RETRYABLE_PHASES.contains(p),
+        });
+    }
+    let pom_path = module_root.join("pom.xml");
+    Ok(ActionGraph {
+        module_root,
+        pom_path,
+        actions,
+    })
 }
 
 /// Build the `ActionRequest` envelope for one [`PlannedAction`] in an
@@ -216,5 +318,46 @@ mod tests {
     fn pom_path_is_module_root_join_pom_xml() {
         let g = verify_graph(PathBuf::from("/projects/foo"), false);
         assert_eq!(g.pom_path, PathBuf::from("/projects/foo/pom.xml"));
+    }
+
+    #[test]
+    fn shot_graph_test_phase_runs_lifecycle_prefix_through_test() {
+        let g = shot_graph(PathBuf::from("/tmp/p"), "test").unwrap();
+        let names: Vec<&str> = g.actions.iter().map(|a| a.phase).collect();
+        assert_eq!(*names.last().unwrap(), "test");
+        // Earliest phases the test prefix must include.
+        assert!(names.contains(&"compile"));
+        assert!(names.contains(&"test-compile"));
+    }
+
+    #[test]
+    fn shot_graph_package_phase_runs_through_package() {
+        let g = shot_graph(PathBuf::from("/tmp/p"), "package").unwrap();
+        let names: Vec<&str> = g.actions.iter().map(|a| a.phase).collect();
+        assert_eq!(*names.last().unwrap(), "package");
+        assert!(names.contains(&"test"));
+    }
+
+    #[test]
+    fn shot_graph_unknown_phase_errors() {
+        let err = shot_graph(PathBuf::from("/tmp/p"), "definitely-not-a-phase").unwrap_err();
+        assert!(matches!(err, ShotGraphError::UnknownPhase { .. }));
+    }
+
+    #[test]
+    fn shot_graph_deploy_is_non_retryable() {
+        let g = shot_graph(PathBuf::from("/tmp/p"), "deploy").unwrap();
+        let deploy = g.actions.iter().find(|a| a.phase == "deploy").unwrap();
+        assert!(!deploy.retryable, "deploy must be non-retryable");
+        let install = g.actions.iter().find(|a| a.phase == "install").unwrap();
+        assert!(!install.retryable, "install must be non-retryable");
+        let compile = g.actions.iter().find(|a| a.phase == "compile").unwrap();
+        assert!(compile.retryable, "compile must remain retryable");
+    }
+
+    #[test]
+    fn shot_graph_trims_whitespace() {
+        let g = shot_graph(PathBuf::from("/tmp/p"), "  compile  ").unwrap();
+        assert_eq!(*g.actions.last().unwrap().phase, *"compile");
     }
 }

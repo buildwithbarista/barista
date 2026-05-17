@@ -413,7 +413,22 @@ pub fn dispatch(cli: Cli) -> i32 {
         Command::Grind { subcommand } => crate::cmd::grind::run(&global, &subcommand),
         Command::Pour(args) => crate::cmd::pour::run(&global, &args),
         Command::DialIn(args) => crate::cmd::dial_in::run(&global, &args),
-        Command::Shot(_) => stub("shot"),
+        Command::Shot(args) => {
+            // M4.3 T3: `barista shot <phase> [args...]` is the
+            // warm-path-optimised lifecycle command. The Unix daemon
+            // path lives in `cmd::shot`; Windows builds (no
+            // production daemon yet) fall back to the not-yet-
+            // implemented stub.
+            #[cfg(unix)]
+            {
+                crate::cmd::shot::run(&global, &args)
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = args;
+                stub("shot")
+            }
+        }
         Command::Wrapper(args) => crate::cmd::wrapper::run(&global, &args),
         Command::Clean(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Clean, &a)
@@ -449,6 +464,7 @@ pub fn dispatch(cli: Cli) -> i32 {
     }
 }
 
+#[cfg(not(unix))]
 fn stub(cmd: &str) -> i32 {
     eprintln!(
         "barista: `{cmd}` not yet implemented in this build. \

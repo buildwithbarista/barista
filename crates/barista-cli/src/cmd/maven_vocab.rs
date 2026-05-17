@@ -59,6 +59,24 @@ impl MavenPhase {
             Self::Site => "site",
         }
     }
+
+    /// Parse a phase name. Recognises every variant emitted by
+    /// [`MavenPhase::as_str`]. Used by `barista shot <expr>` (M4.3 T3)
+    /// to route an arbitrary phase expression through the same
+    /// lifecycle-dispatch machinery the named subcommands use.
+    pub fn from_phase_name(s: &str) -> Option<Self> {
+        match s {
+            "clean" => Some(Self::Clean),
+            "compile" => Some(Self::Compile),
+            "test" => Some(Self::Test),
+            "package" => Some(Self::Package),
+            "verify" => Some(Self::Verify),
+            "install" => Some(Self::Install),
+            "deploy" => Some(Self::Deploy),
+            "site" => Some(Self::Site),
+            _ => None,
+        }
+    }
 }
 
 /// Dispatch entry-point for every Maven-vocabulary command.

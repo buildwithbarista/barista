@@ -11,6 +11,8 @@ pub mod no_daemon;
 pub mod pour;
 pub mod pull;
 #[cfg(unix)]
+pub mod shot;
+#[cfg(unix)]
 pub mod verify;
 pub mod wrapper;
 
