@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
@@ -111,6 +112,61 @@ import org.codehaus.plexus.classworlds.ClassWorld;
  * single-mutator-at-a-time policy is acceptable for v0.1; the
  * worker-pool concurrency contract (the M4.2 T2 task surface) can
  * relax the lock if profiling later shows the wait time matters.
+ *
+ * <h2>Periodic invoker eviction (Maven&nbsp;4 rc-3 mitigation)</h2>
+ *
+ * <p>{@link ResidentMavenInvoker} in Maven&nbsp;4.0.0-rc-3 keys its
+ * internal session cache on the literal string {@code "resident"} and
+ * its {@code copyIfDifferent} path allocates a fresh
+ * {@code MavenContext} per call. The two together produce
+ * &asymp;0.57&nbsp;MiB of unreclaimable old-gen growth per
+ * {@code invoke()} that the resident-cache contract does not bound.
+ * Measured baseline against this codebase's 1-module sample-project:
+ * 100 sequential compiles grew the old-gen by &asymp;57&nbsp;MiB.
+ *
+ * <p>This is an upstream bug. An issue against {@code apache/maven}
+ * is drafted but the public tracking link is still
+ * {@code TBD-MAVEN-RESIDENT-INVOKER-LEAK} pending submission and
+ * triage. Until a fix lands and
+ * {@code embedded.maven.version} is bumped past it, the daemon caps
+ * the lifetime of a single {@link ResidentMavenInvoker} at
+ * {@link #MAX_ACTIONS_PER_INVOKER} calls and rebuilds the invoker on
+ * the boundary. Math:
+ *
+ * <ul>
+ *   <li>baseline growth rate: &asymp;0.57&nbsp;MiB / action (measured
+ *       against the M4.0 spike's 1-module sample-project on Maven
+ *       4.0.0-rc-3; full-suite runs see a slightly higher rate because
+ *       prior tests warm up additional caches);</li>
+ *   <li>{@code N = 12} actions per invoker &rArr; worst-case peak
+ *       inside a cycle is {@code 11 * 0.57 = ~6.3 MiB} above the
+ *       just-evicted baseline (sampled at the end of the cycle, before
+ *       the eviction releases the references);</li>
+ *   <li>6.3&nbsp;MiB sits comfortably under the M4.2 acceptance
+ *       criterion's "&plusmn;10&nbsp;MiB" envelope, with margin left
+ *       over for heap-sampling jitter and any small growth rate
+ *       increases as the daemon evolves (the leak IT samples every
+ *       10 actions, so the recorded peak inside a cycle may be lower
+ *       than the analytical worst case, never higher).</li>
+ * </ul>
+ *
+ * <p>The {@link ClassWorld} is retained across evictions &mdash; only
+ * the held invoker is closed and rebuilt. The held invoker's
+ * {@code close()} releases the cached {@code MavenContext}s and lets
+ * the next major GC reclaim the accumulated descriptor state. Cold
+ * cost of one eviction-boundary call is on the order of the original
+ * cold-start (&asymp;1&nbsp;s) because a fresh
+ * {@code ResidentMavenInvoker} has an empty session cache; non-boundary
+ * calls still hit the warm path (&asymp;120&nbsp;ms), preserving the
+ * 9.4&times; cold/warm ratio that
+ * {@code ResidentInvokerWarmPathTest} guards.
+ *
+ * <p><b>Removal condition.</b> Delete this policy &mdash; revert to a
+ * single, never-evicted invoker &mdash; once the upstream session-cache
+ * shape is corrected and a Maven&nbsp;4 release containing that fix is
+ * pinned via {@code embedded.maven.version}. Re-run the leak IT under
+ * the new pin; the assertion should pass without an eviction policy
+ * if the upstream fix is sufficient.
  */
 public final class EmbeddedMaven implements AutoCloseable {
 
@@ -124,11 +180,46 @@ public final class EmbeddedMaven implements AutoCloseable {
      */
     public static final String CORE_ERROR_CODE = "BAR-DAEMON-CORE-FAILURE";
 
+    /**
+     * Default number of actions one {@link ResidentMavenInvoker}
+     * services before it is closed and rebuilt. See the
+     * "Periodic invoker eviction" javadoc on this class for the math
+     * behind the choice. Package-private and mutable so the eviction
+     * unit test can drive the boundary at a low value without
+     * standing up 16+ Maven invocations per assertion.
+     */
+    static volatile int MAX_ACTIONS_PER_INVOKER = 12;
+
     private final ClassWorld classWorld;
     private final Path mavenHome;
-    private final ResidentMavenInvoker invoker;
+    private final ProtoLookup protoLookup;
     private final Parser parser;
     private final MessageBuilderFactory messageBuilderFactory;
+
+    /**
+     * Held resident invoker. Mutable (replaced on eviction) so the
+     * daemon can recycle the cached session state every
+     * {@link #MAX_ACTIONS_PER_INVOKER} actions without tearing down
+     * the surrounding {@link ClassWorld}. Guarded by
+     * {@link #executionLock}; never observed outside the lock.
+     */
+    private ResidentMavenInvoker invoker;
+
+    /**
+     * Number of actions the currently-held {@link #invoker} has
+     * serviced. Reset to {@code 0} each time the invoker is rebuilt.
+     * Guarded by {@link #executionLock}; the {@link AtomicInteger}
+     * type is for cheap volatile reads from
+     * {@link #invocationCountInCurrentCycle()} (a test instrument).
+     */
+    private final AtomicInteger actionsInCurrentCycle = new AtomicInteger(0);
+
+    /**
+     * Total number of times the held invoker has been rebuilt. Bumps
+     * on each eviction (not on the initial construction). Surfaced to
+     * tests via {@link #invokerRebuildCount()}.
+     */
+    private final AtomicInteger invokerRebuildCount = new AtomicInteger(0);
 
     /**
      * Serialises {@link #execute(ActionRequest)} calls. See the
@@ -156,11 +247,13 @@ public final class EmbeddedMaven implements AutoCloseable {
         // example) into the eventual session lookup. Reproducing the
         // pattern is required: ResidentMavenInvoker's createContext
         // pulls ClassWorld out of the lookup to construct the realm
-        // for the request.
-        ProtoLookup lookup = ProtoLookup.builder()
+        // for the request. We retain the lookup as a field so the
+        // eviction path can rebuild the invoker without rebuilding
+        // the ClassWorld.
+        this.protoLookup = ProtoLookup.builder()
                 .addMapping(ClassWorld.class, classWorld)
                 .build();
-        this.invoker = new ResidentMavenInvoker(lookup);
+        this.invoker = new ResidentMavenInvoker(this.protoLookup);
         this.parser = new MavenParser();
     }
 
@@ -192,13 +285,76 @@ public final class EmbeddedMaven implements AutoCloseable {
 
         executionLock.lock();
         try {
-            return doExecute(action, seq, cold, startNanos);
+            // Pre-execute eviction: if the held invoker has already
+            // serviced MAX_ACTIONS_PER_INVOKER actions, drop it and
+            // build a fresh one before driving this action through.
+            // We pre-evict (rather than post-evict at the boundary
+            // call) so the boundary call itself runs against a clean
+            // invoker — every executed action sees a well-defined
+            // resident cache, and the cold-cost of the rebuild is
+            // bundled into this action's recorded duration rather
+            // than appearing as a phantom latency on the *previous*
+            // call's exit path. The first call after construction
+            // skips eviction because actionsInCurrentCycle starts at
+            // zero; the first eviction fires on call N+1.
+            maybeEvictInvoker();
+            ResidentMavenInvoker current = this.invoker;
+            ActionResult result = doExecute(action, current, seq, cold, startNanos);
+            actionsInCurrentCycle.incrementAndGet();
+            return result;
         } finally {
             executionLock.unlock();
         }
     }
 
-    private ActionResult doExecute(ActionRequest action, long seq, boolean cold, long startNanos) {
+    /**
+     * If the held invoker has already serviced
+     * {@link #MAX_ACTIONS_PER_INVOKER} actions, close it and replace
+     * it with a freshly built {@link ResidentMavenInvoker} backed by
+     * the same {@link ProtoLookup}. Called from inside
+     * {@link #executionLock} so no concurrent {@link #execute(ActionRequest)}
+     * can observe a half-rebuilt invoker.
+     *
+     * <p>The held {@link ClassWorld} is retained &mdash; it is the
+     * expensive piece of the bootstrap (&asymp;600&nbsp;ms of disk +
+     * classloader work) and its content does not grow under load. Only
+     * the invoker, whose session cache is the source of the rc-3
+     * growth, gets rebuilt. The rebuild itself takes &asymp;1&nbsp;ms;
+     * the cold-start cost an eviction-boundary call pays comes from
+     * the new invoker having an empty {@code MavenContext} cache,
+     * which is the standard cold-path penalty we already accept on
+     * the first call.
+     */
+    private void maybeEvictInvoker() {
+        if (actionsInCurrentCycle.get() < MAX_ACTIONS_PER_INVOKER) {
+            return;
+        }
+        ResidentMavenInvoker stale = this.invoker;
+        try {
+            stale.close();
+        } catch (InvokerException e) {
+            // Closing the resident invoker is a best-effort tear-down:
+            // it releases the cached MavenContext entries so the next
+            // GC can reclaim them, but a failure to close cleanly
+            // does not block the daemon from continuing. The new
+            // invoker we install below will not share state with the
+            // old one regardless of whether close() completed.
+            LOG.log(Level.WARNING,
+                    "ignored failure closing resident Maven invoker during periodic eviction", e);
+        }
+        this.invoker = new ResidentMavenInvoker(protoLookup);
+        actionsInCurrentCycle.set(0);
+        int rebuilds = invokerRebuildCount.incrementAndGet();
+        LOG.log(Level.FINE,
+                () -> "evicted resident Maven invoker after "
+                        + MAX_ACTIONS_PER_INVOKER + " actions (rebuild #" + rebuilds + ")");
+    }
+
+    private ActionResult doExecute(ActionRequest action,
+                                   ResidentMavenInvoker invoker,
+                                   long seq,
+                                   boolean cold,
+                                   long startNanos) {
         String actionId = action.getActionId();
         List<String> args = buildMavenArgs(action);
         Path cwd = resolveCwd(action);
@@ -381,15 +537,46 @@ public final class EmbeddedMaven implements AutoCloseable {
     }
 
     /**
-     * The held {@link ResidentMavenInvoker}. Exposed package-private so
-     * a plugin classloader cache implementation (the M4.2 follow-up)
-     * can subclass / decorate the invoker without {@link EmbeddedMaven}
-     * sprouting a second responsibility. Do not call from production
-     * code outside the {@code com.bluminal.barista.barback.core} or
+     * The currently held {@link ResidentMavenInvoker}. Exposed
+     * package-private so a plugin classloader cache implementation
+     * (the M4.2 follow-up) can subclass / decorate the invoker without
+     * {@link EmbeddedMaven} sprouting a second responsibility, and so
+     * the eviction unit test can observe invoker identity across
+     * boundary calls. Do not call from production code outside the
+     * {@code com.bluminal.barista.barback.core} or
      * {@code com.bluminal.barista.barback.classloader} packages.
+     *
+     * <p>Because the eviction policy replaces this reference every
+     * {@link #MAX_ACTIONS_PER_INVOKER} actions, callers must not hang
+     * onto the returned value across a call to
+     * {@link #execute(ActionRequest)}.
      */
     ResidentMavenInvoker invoker() {
-        return invoker;
+        executionLock.lock();
+        try {
+            return invoker;
+        } finally {
+            executionLock.unlock();
+        }
+    }
+
+    /**
+     * Number of times the held {@link ResidentMavenInvoker} has been
+     * closed and rebuilt by the eviction policy. Zero immediately
+     * after construction; bumps on the call that crosses the
+     * {@link #MAX_ACTIONS_PER_INVOKER} threshold. Test instrument.
+     */
+    int invokerRebuildCount() {
+        return invokerRebuildCount.get();
+    }
+
+    /**
+     * Number of actions the current invoker has serviced since the
+     * most recent rebuild (or since construction, for the first
+     * cycle). Test instrument.
+     */
+    int invocationCountInCurrentCycle() {
+        return actionsInCurrentCycle.get();
     }
 
     /**
@@ -417,15 +604,20 @@ public final class EmbeddedMaven implements AutoCloseable {
      */
     @Override
     public void close() throws IOException {
+        executionLock.lock();
         try {
-            invoker.close();
-        } catch (InvokerException e) {
-            LOG.log(Level.WARNING, "ignored failure closing resident Maven invoker", e);
-        }
-        try {
-            classWorld.close();
-        } catch (RuntimeException e) {
-            LOG.log(Level.FINE, () -> "ignored failure closing class-world: " + e);
+            try {
+                invoker.close();
+            } catch (InvokerException e) {
+                LOG.log(Level.WARNING, "ignored failure closing resident Maven invoker", e);
+            }
+            try {
+                classWorld.close();
+            } catch (RuntimeException e) {
+                LOG.log(Level.FINE, () -> "ignored failure closing class-world: " + e);
+            }
+        } finally {
+            executionLock.unlock();
         }
     }
 

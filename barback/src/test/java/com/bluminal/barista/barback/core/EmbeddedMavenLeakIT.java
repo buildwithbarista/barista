@@ -29,21 +29,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Long-running leak-burn-down test: drives 100 sequential actions
- * through a single {@link EmbeddedMaven} instance and asserts old-gen
- * heap growth stays below a per-action ceiling.
+ * through a single {@link EmbeddedMaven} instance and asserts the
+ * old-gen heap drift stays within the M4.2 acceptance band of
+ * &plusmn;10&nbsp;MiB.
  *
- * <p>This covers the M4.2 acceptance criterion "daemon survives 100
- * sequential actions without leak (JVM heap stable to &plusmn;10 MB)"
- * for the embedded-core slice. The strict "&plusmn;10&nbsp;MiB" reading
- * of that criterion does not pass today against Maven 4.0.0-rc-3
- * &mdash; the embedded core accumulates &asymp;0.5&nbsp;MiB/action of
- * plugin-descriptor / model-cache state on top of the resident
- * invoker's single shared {@code MavenContext}. Until the plugin
- * classloader cache lands (M4.2 T4, which replaces the upstream
- * descriptor cache with an LRU-evicted layer) the test asserts a
- * per-action ceiling instead, which catches a true leak (e.g.
- * per-action {@code MavenContext} accumulation) without failing on
- * the upstream-rooted background growth.
+ * <p>This covers the M4.2 acceptance criterion verbatim: "daemon
+ * survives 100 sequential actions without leak (JVM heap stable to
+ * &plusmn;10 MB)". The envelope is honored not by zero per-action
+ * growth (Maven&nbsp;4.0.0-rc-3 leaks &asymp;0.57&nbsp;MiB per call
+ * out of {@code ResidentMavenInvoker}'s session cache &mdash; see the
+ * "Periodic invoker eviction" javadoc on {@link EmbeddedMaven}) but
+ * by the eviction policy in {@link EmbeddedMaven}: every
+ * {@link EmbeddedMaven#MAX_ACTIONS_PER_INVOKER} calls the daemon
+ * closes the held {@code ResidentMavenInvoker} and rebuilds it, which
+ * releases the accumulated {@code MavenContext} cache for the next
+ * major GC to reclaim. The peak inside one cycle stays well under
+ * 10&nbsp;MiB; the trough between cycles is &asymp; baseline. Over
+ * 100 actions the drift between the post-warmup baseline and the
+ * final sample falls inside the &plusmn;10&nbsp;MiB band.
+ *
+ * <p><b>"No leak per invoker" vs "no growth across invocations."</b>
+ * This test guards the latter at the daemon level. A true per-invoker
+ * leak (e.g. the resident cache growing without bound between
+ * eviction-boundary calls) would still fail the assertion because
+ * the cycle peak would exceed 10&nbsp;MiB above baseline. Conversely,
+ * the eviction policy specifically <em>does not</em> claim that an
+ * individual {@code ResidentMavenInvoker} has zero growth &mdash; it
+ * claims that bounding the invoker's lifetime caps the visible
+ * growth at the daemon level. If a future upstream Maven release
+ * fixes the session-cache shape, the policy can be removed; this
+ * test should still pass against that fixed version with
+ * {@code MAX_ACTIONS_PER_INVOKER} raised to {@code Integer.MAX_VALUE}
+ * or the policy deleted outright.
  *
  * <p>The full criterion is shared with the worker-pool plumbing
  * (M4.2 T2) and the failure-model wiring (M4.2 T6), both of which
@@ -60,29 +77,22 @@ final class EmbeddedMavenLeakIT {
     private static final int LOOP_COUNT = 100;
 
     /**
-     * Per-action old-gen growth ceiling. The M4.2 acceptance criterion
-     * is "JVM heap stable to &plusmn;10 MiB"; the strict interpretation
-     * of that as a flat band fails today because Maven&nbsp;4.0.0-rc-3
-     * accumulates &asymp;0.5&nbsp;MiB/action of unreclaimable model /
-     * plugin-descriptor state on top of the
-     * {@code ResidentMavenInvoker}'s single shared {@code MavenContext}.
-     * The growth is not unbounded &mdash; it tracks the cardinality of
-     * the (plugin, version) tuples Maven has seen &mdash; but it does not
-     * saturate within 100 actions on a 1-plugin fixture.
+     * Acceptance-criterion heap-drift envelope: &plusmn;10&nbsp;MiB
+     * across 100 sequential actions. Expressed in bytes so the
+     * comparison stays integer-clean.
      *
-     * <p>T3 lays the embedded-core groundwork; the plugin classloader
-     * cache (T4) replaces the upstream plugin-descriptor cache with
-     * an LRU-evicted layer, which is the surgical fix for the
-     * accumulation pattern. Until that lands, this test asserts
-     * "&le;1&nbsp;MiB per action of old-gen growth" &mdash; a 2&times;
-     * the observed rate &mdash; so a true leak (e.g. per-action
-     * {@code MavenContext} accumulation) trips the assertion.
-     *
-     * <p>Re-tighten this to {@link #LOOP_COUNT} &times; 0 once T4 ships
-     * and bumps {@code embedded.maven.version} past whatever fixes the
-     * upstream issue.
+     * <p>The envelope is honored by {@link EmbeddedMaven}'s periodic
+     * eviction policy: every
+     * {@link EmbeddedMaven#MAX_ACTIONS_PER_INVOKER} actions the held
+     * {@code ResidentMavenInvoker} is closed and rebuilt, capping the
+     * upstream rc-3 session-cache growth (&asymp;0.57&nbsp;MiB / action)
+     * inside a bounded window. With {@code N = 15} the worst-case
+     * peak above the eviction-trough baseline is &asymp;14 &times;
+     * 0.57 = 8.0&nbsp;MiB &mdash; comfortably inside the 10&nbsp;MiB
+     * band even with the heap-sampling jitter that
+     * {@link #sampleHeap(MemoryMXBean)} encounters.
      */
-    private static final long PER_ACTION_OLDGEN_CEILING_BYTES = 1024L * 1024L;
+    private static final long HEAP_DRIFT_CEILING_BYTES = 10L * 1024L * 1024L;
 
     /**
      * Warm-up iteration count before measuring the steady-state band.
@@ -135,30 +145,56 @@ final class EmbeddedMavenLeakIT {
         maxHeapBytes = Math.max(maxHeapBytes, finalHeapBytes);
         minHeapBytes = Math.min(minHeapBytes, finalHeapBytes);
 
-        long growthBytes = finalHeapBytes - baselineHeapBytes;
+        long driftBytes = finalHeapBytes - baselineHeapBytes;
         long bandBytes = maxHeapBytes - minHeapBytes;
-        long ceilingBytes = PER_ACTION_OLDGEN_CEILING_BYTES * LOOP_COUNT;
+        long peakAboveBaseline = maxHeapBytes - baselineHeapBytes;
+        long troughBelowBaseline = baselineHeapBytes - minHeapBytes;
 
         // Total invocations = warm-up + measured loop (no off-by-one).
         assertEquals(WARMUP_ITERS + LOOP_COUNT, embedded.invocationCount(),
                 "invocation counter should equal warmup+loop");
 
-        System.out.printf("EmbeddedMavenLeakIT baseline_mib=%d final_mib=%d max_mib=%d min_mib=%d band_mib=%d growth_mib=%d ceiling_mib=%d%n",
+        System.out.printf(
+                "EmbeddedMavenLeakIT baseline_mib=%d final_mib=%d max_mib=%d min_mib=%d "
+                        + "band_mib=%d drift_mib=%d peak_above_mib=%d trough_below_mib=%d "
+                        + "rebuilds=%d ceiling_mib=%d%n",
                 bytesToMib(baselineHeapBytes), bytesToMib(finalHeapBytes),
                 bytesToMib(maxHeapBytes), bytesToMib(minHeapBytes),
-                bytesToMib(bandBytes), bytesToMib(growthBytes), bytesToMib(ceilingBytes));
+                bytesToMib(bandBytes), bytesToMib(driftBytes),
+                bytesToMib(peakAboveBaseline), bytesToMib(troughBelowBaseline),
+                embedded.invokerRebuildCount(),
+                bytesToMib(HEAP_DRIFT_CEILING_BYTES));
 
-        assertTrue(growthBytes <= ceilingBytes,
-                "old-gen growth exceeded " + bytesToMib(PER_ACTION_OLDGEN_CEILING_BYTES)
-                        + " MiB/action ceiling: "
+        // The acceptance criterion is "JVM heap stable to ±10 MiB".
+        // Honor the literal envelope: no sample inside the measured
+        // loop may be more than 10 MiB above the post-warmup baseline,
+        // and no sample may be more than 10 MiB below it. Both bounds
+        // are necessary — a leak shows up as peak-above; a runaway
+        // free (e.g. accidentally tearing down the resident cache
+        // every call) shows up as trough-below.
+        assertTrue(peakAboveBaseline <= HEAP_DRIFT_CEILING_BYTES,
+                "peak old-gen usage exceeded baseline + "
+                        + bytesToMib(HEAP_DRIFT_CEILING_BYTES) + " MiB envelope: "
+                        + "baseline_mib=" + bytesToMib(baselineHeapBytes)
+                        + " max_mib=" + bytesToMib(maxHeapBytes)
+                        + " peak_above_mib=" + bytesToMib(peakAboveBaseline)
+                        + " rebuilds=" + embedded.invokerRebuildCount()
+                        + " — the resident invoker eviction policy may be "
+                        + "mis-tuned (raise MAX_ACTIONS_PER_INVOKER cadence) "
+                        + "or upstream growth rate has increased; check the "
+                        + "embedded.maven.version pin in barback/pom.xml.");
+        assertTrue(troughBelowBaseline <= HEAP_DRIFT_CEILING_BYTES,
+                "minimum old-gen usage fell more than "
+                        + bytesToMib(HEAP_DRIFT_CEILING_BYTES) + " MiB below baseline: "
+                        + "baseline_mib=" + bytesToMib(baselineHeapBytes)
+                        + " min_mib=" + bytesToMib(minHeapBytes)
+                        + " trough_below_mib=" + bytesToMib(troughBelowBaseline));
+        assertTrue(Math.abs(driftBytes) <= HEAP_DRIFT_CEILING_BYTES,
+                "final-minus-baseline heap drift exceeded ±"
+                        + bytesToMib(HEAP_DRIFT_CEILING_BYTES) + " MiB: "
                         + "baseline_mib=" + bytesToMib(baselineHeapBytes)
                         + " final_mib=" + bytesToMib(finalHeapBytes)
-                        + " growth_mib=" + bytesToMib(growthBytes)
-                        + " ceiling_mib=" + bytesToMib(ceilingBytes)
-                        + " — the resident invoker is probably accumulating "
-                        + "per-action MavenContext entries; check the plugin "
-                        + "classloader cache and the embedded.maven.version "
-                        + "pin in barback/pom.xml for an upstream fix.");
+                        + " drift_mib=" + bytesToMib(driftBytes));
     }
 
     private void executeOnce(Path project) throws IOException {
