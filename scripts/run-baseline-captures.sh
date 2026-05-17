@@ -28,13 +28,30 @@
 # Usage:
 #   scripts/run-baseline-captures.sh \
 #       --projects spring-petclinic,spring-boot-starter-web-app \
-#       --tools mvn,mvnd \
+#       --tools mvn,mvnd,barista \
 #       [--mvn-bin /path/to/mvn] \
 #       [--mvnd-bin /path/to/mvnd] \
+#       [--barista-bin /path/to/barista] \
 #       [--output-root bench/captures] \
 #       [--timeout-seconds 600] \
 #       [--mitmdump-bin /path/to/mitmdump] \
 #       [--help]
+#
+# Supported --tools values:
+#   * `mvn`     — invokes upstream `mvn -B clean install -DskipTests`.
+#   * `mvnd`    — invokes upstream `mvnd -B clean install -DskipTests`.
+#   * `barista` — invokes the barista CLI under test. At v0.1 this
+#                 routes through `barista verify --no-daemon`, which
+#                 forks an upstream `mvn verify` under the hood (the
+#                 R2-mitigation path from PRD §17.5). Traffic shape is
+#                 identical to the `mvn` cell on the same corpus
+#                 entry — the cell exists so the capture matrix can
+#                 record "what barista actually emitted, end-to-end,
+#                 at the CLI surface" alongside the upstream baselines.
+#                 As the M2.3 / M3.x cache-pipeline tasks land,
+#                 `barista pull` / `barista verify` start routing
+#                 through the barista-side resolver + cache, and this
+#                 cell starts diverging from `mvn`.
 #
 # Prerequisites:
 #   * `mitmdump` on $PATH (or via --mitmdump-bin) with its CA imported
@@ -42,6 +59,10 @@
 #     `crates/barista-netcap/README.md` for the one-shot keytool recipe.
 #   * `mvn` on $PATH (or --mvn-bin) and, if `mvnd` is in --tools,
 #     `mvnd` on $PATH or via --mvnd-bin.
+#   * If `barista` is in --tools, the binary must exist on $PATH or be
+#     supplied via --barista-bin. The harness does NOT build it; run
+#     `cargo build --release -p barista-cli` first and point
+#     --barista-bin at `target/release/barista`.
 #   * The corpus project's `corpus.lock.toml` must exist under
 #     `test-corpus/<id>/`.
 
@@ -53,6 +74,7 @@ PROJECTS=""
 TOOLS=""
 MVN_BIN="${MVN_BIN:-mvn}"
 MVND_BIN="${MVND_BIN:-mvnd}"
+BARISTA_BIN="${BARISTA_BIN:-barista}"
 MITMDUMP_BIN="${MITMDUMP_BIN:-mitmdump}"
 OUTPUT_ROOT="$REPO_ROOT/bench/captures"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
@@ -76,6 +98,8 @@ while [[ $# -gt 0 ]]; do
     --mvn-bin=*)        MVN_BIN="${1#*=}"; shift ;;
     --mvnd-bin)         MVND_BIN="$2"; shift 2 ;;
     --mvnd-bin=*)       MVND_BIN="${1#*=}"; shift ;;
+    --barista-bin)      BARISTA_BIN="$2"; shift 2 ;;
+    --barista-bin=*)    BARISTA_BIN="${1#*=}"; shift ;;
     --mitmdump-bin)     MITMDUMP_BIN="$2"; shift 2 ;;
     --mitmdump-bin=*)   MITMDUMP_BIN="${1#*=}"; shift ;;
     --output-root)      OUTPUT_ROOT="$2"; shift 2 ;;
@@ -103,6 +127,24 @@ if ! command -v "$MITMDUMP_BIN" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Per-tool prerequisite checks. We only validate the binaries the
+# caller actually requested via --tools so the script stays runnable
+# in matrices that exclude tools the host doesn't have installed.
+case ",$TOOLS," in
+  *,barista,*)
+    # Resolve `barista` against $PATH if the operator passed a bare
+    # name. `cargo build --release -p barista-cli` produces the
+    # binary at target/release/barista; the operator can either put
+    # it on $PATH or pass --barista-bin pointing at it directly.
+    if ! command -v "$BARISTA_BIN" >/dev/null 2>&1; then
+      echo "error: barista not found: $BARISTA_BIN" >&2
+      echo "build via: cargo build --release -p barista-cli" >&2
+      echo "then pass: --barista-bin target/release/barista" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 # ---------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------
@@ -119,6 +161,10 @@ tool_version() {
     mvnd)
       "$MVND_BIN" --version 2>/dev/null \
         | awk '/^Apache Maven Daemon/ { print $5; exit }'
+      ;;
+    barista)
+      "$BARISTA_BIN" --version 2>/dev/null \
+        | awk 'NR==1 { print $2; exit }'
       ;;
     *)
       echo "unknown"
@@ -262,6 +308,13 @@ EOF
     "-DskipTests"
   )
 
+  # Track the actual command line that was run (for the metadata
+  # sidecar). Default is the upstream `mvn`/`mvnd` shape; the
+  # barista arm overrides this with the `barista verify --no-daemon`
+  # shape so the metadata.toml accurately reflects what produced
+  # the HAR.
+  local build_command_str="${MVN_BIN##*/} -B clean install -DskipTests"
+
   set +e
   case "$tool" in
     mvn)
@@ -277,6 +330,48 @@ EOF
       ( cd "$checkout" && \
         timeout "$TIMEOUT_SECONDS" \
         "$MVND_BIN" "${mvn_args[@]}" \
+      ) >"$build_log" 2>&1
+      exit_code=$?
+      ;;
+    barista)
+      # `barista verify --no-daemon` forks an upstream `mvn` and
+      # passes the trailing args verbatim. We invoke `verify`
+      # (Maven's `verify` lifecycle phase) to keep parity with the
+      # baseline cells, which run `clean install`. Using `verify`
+      # here — rather than `install` — exercises the same resolver
+      # + plugin-resolution traffic without writing to the cold
+      # repo's install layout, which keeps the HAR comparable to
+      # the upstream cells in shape.
+      #
+      # v0.1 caveat: `barista verify --no-daemon` is a thin
+      # pass-through to upstream `mvn` (per `crates/barista-cli/src
+      # /cmd/no_daemon.rs`). At this milestone the HAR is therefore
+      # structurally identical to the `mvn` cell; the value of
+      # capturing it is recording the CLI surface end-to-end on
+      # disk. The cell starts to diverge from `mvn` once
+      # `barista pull` / `barista verify` route through the
+      # barista-side resolver + cache (M2.3 / M3.x), at which
+      # point the dedup counters in `OreqStats` start firing
+      # against this corpus and the upstream-vs-barista delta
+      # becomes visible in the HAR.
+      #
+      # `barista verify` injects the `verify` phase itself when it
+      # builds the forked `mvn` argv (see
+      # `crates/barista-cli/src/cmd/no_daemon.rs::build_mvn_argv`),
+      # so we pass `clean` + `--settings ...` etc as the trailing
+      # pass-through args. The end result on the wire is
+      # `mvn verify clean --settings ... -DskipTests`, which on
+      # Maven 3.9.x is equivalent to `clean verify` (the lifecycle
+      # phase ordering is computed from goal dependencies, not from
+      # the command-line order).
+      build_command_str="${BARISTA_BIN##*/} verify --no-daemon -B clean -DskipTests --settings $settings_xml -Dmaven.repo.local=$cold_repo"
+      ( cd "$checkout" && \
+        timeout "$TIMEOUT_SECONDS" \
+        "$BARISTA_BIN" verify --no-daemon -- \
+            -B clean \
+            --settings "$settings_xml" \
+            "-Dmaven.repo.local=$cold_repo" \
+            -DskipTests \
       ) >"$build_log" 2>&1
       exit_code=$?
       ;;
@@ -326,10 +421,49 @@ start_utc     = "$(date -u -r "$start_epoch" +"%Y-%m-%dT%H:%M:%SZ")"
 end_utc       = "$(date -u -r "$end_epoch"   +"%Y-%m-%dT%H:%M:%SZ")"
 wall_seconds  = $((end_epoch - start_epoch))
 
-build_command = "${MVN_BIN##*/} -B clean install -DskipTests"
+build_command = "$build_command_str"
 exit_code     = $exit_code
 har_bytes     = $har_size
 EOF
+
+  # For the `barista` cell, the post-capture analysis pass appends a
+  # second sidecar with the resolver-side O-REQ counters (the schema
+  # ratified by B.2 T1's `OreqStats::to_bench_metadata()`). At v0.1
+  # `barista verify --no-daemon` does not exercise the barista
+  # resolver — it forks upstream `mvn` — so the counters are all
+  # zero by construction at this milestone. The sidecar is written
+  # anyway so downstream consumers (the dashboard, the regression
+  # gate, `barista-bench`'s `metadata` extension point) have a
+  # stable shape to read from regardless of which barista CLI path
+  # produced the HAR.
+  #
+  # Once `barista pull` and `barista verify` are wired through the
+  # barista-side resolver (post-M3.x), the counters in this sidecar
+  # start advancing on every barista cell against this corpus and
+  # the EFF-2026-001/004/005/006/007 impact tables get their
+  # real-build numbers from this exact file.
+  if [[ "$tool" == "barista" ]]; then
+    local oreq_out="$out_dir/oreq_stats.toml"
+    cat >"$oreq_out" <<EOF
+# Auto-generated by scripts/run-baseline-captures.sh alongside
+# metadata.toml. Mirrors the [(String, String); 5] shape returned by
+# OreqStats::to_bench_metadata() in crates/barista-resolver/src/oreq.rs.
+#
+# At v0.1 these counters are zero by construction because
+# \`barista verify --no-daemon\` forks upstream \`mvn\` and does not
+# go through the barista-side resolver. Once the M3.x cache pipeline
+# wires \`barista pull\`'s full-fetch path, the counters start
+# firing against real corpus entries and this file becomes the
+# source-of-truth for the EFF-2026-001/004/005/006/007 finding
+# impact tables.
+
+oreq_01_avoided = 0
+oreq_02_avoided = 0
+oreq_03_avoided = 0
+oreq_04_avoided = 0
+oreq_05_avoided = 0
+EOF
+  fi
 
   echo "[$project/$tool_dir] done in $((end_epoch - start_epoch))s — exit=$exit_code, har=${har_size}B"
   trap - RETURN
