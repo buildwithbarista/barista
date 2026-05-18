@@ -1,5 +1,5 @@
 {
-  "git_sha": "001026d7e0245f903691f11ea8f41dfb13169213",
+  "git_sha": "5c3a2bd4fa9308d61a0409535f263e1f90e0e86c",
   "hardware": {
     "cores_logical": 16,
     "cores_physical": 16,
@@ -20,8 +20,8 @@
     "P03-pull-warm/mvn.json"
   ],
   "results_root": ".",
-  "run_id": "2026-05-18T17:42:53Z-001026d7",
+  "run_id": "2026-05-18T18:39:24Z-5c3a2bd4",
   "runner_id": "ajb-mbp.local",
   "schema": "barista.bench.index/v1",
-  "timestamp": "2026-05-18T17:42:53Z"
+  "timestamp": "2026-05-18T18:39:24Z"
 }

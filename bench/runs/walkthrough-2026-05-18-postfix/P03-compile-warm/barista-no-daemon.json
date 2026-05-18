@@ -3,9 +3,9 @@
   "manifest_id": "P03-compile-warm",
   "baseline_id": "barista-no-daemon",
   "resolved_command": "barista --no-daemon compile",
-  "run_id": "2026-05-18T15:55:03Z-24661a63",
-  "timestamp": "2026-05-18T15:55:03Z",
-  "git_sha": "24661a63a4b02bd526a2f7ee7c0b9a99dae9cccc",
+  "run_id": "2026-05-18T18:37:11Z-5c3a2bd4",
+  "timestamp": "2026-05-18T18:37:11Z",
+  "git_sha": "5c3a2bd4fa9308d61a0409535f263e1f90e0e86c",
   "barista_version": "0.1.0-alpha.0",
   "hardware_tier": 2,
   "runner_id": "ajb-mbp.local",
@@ -20,60 +20,60 @@
   "iterations": [
     {
       "iteration": 0,
-      "wall_ms": 1419,
+      "wall_ms": 1329,
       "exit_code": 0
     },
     {
       "iteration": 1,
-      "wall_ms": 1419,
+      "wall_ms": 1356,
       "exit_code": 0
     },
     {
       "iteration": 2,
-      "wall_ms": 1411,
+      "wall_ms": 1347,
       "exit_code": 0
     },
     {
       "iteration": 3,
-      "wall_ms": 1385,
+      "wall_ms": 1346,
       "exit_code": 0
     },
     {
       "iteration": 4,
-      "wall_ms": 1397,
+      "wall_ms": 1340,
       "exit_code": 0
     },
     {
       "iteration": 5,
-      "wall_ms": 1388,
+      "wall_ms": 1369,
       "exit_code": 0
     },
     {
       "iteration": 6,
-      "wall_ms": 1411,
+      "wall_ms": 1329,
       "exit_code": 0
     },
     {
       "iteration": 7,
-      "wall_ms": 1375,
+      "wall_ms": 1320,
       "exit_code": 0
     },
     {
       "iteration": 8,
-      "wall_ms": 1392,
+      "wall_ms": 1350,
       "exit_code": 0
     },
     {
       "iteration": 9,
-      "wall_ms": 1382,
+      "wall_ms": 1331,
       "exit_code": 0
     }
   ],
   "summary": {
-    "avg_wall_ms": 1397.9,
-    "median_wall_ms": 1394.5,
-    "p95_wall_ms": 1419.0,
-    "stddev_wall_ms": 16.02394042258853
+    "avg_wall_ms": 1341.7,
+    "median_wall_ms": 1343.0,
+    "p95_wall_ms": 1369.0,
+    "stddev_wall_ms": 14.817782110243984
   },
   "metadata": {
     "baseline_display_name": "barista --no-daemon compile (forked mvn)",

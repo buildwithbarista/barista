@@ -14,10 +14,10 @@ lockfile fast-path stayed local.
 
 | Tool | Wall time | Upstream calls | Bytes |
 |---|---:|---:|---:|
-| `barista pull --update` | **18.6 s** | **438** | **21.2 MB** |
-| `mvn -B -q dependency:resolve` | **28.0 s** | — (not captured) | — |
+| `barista pull --update` | **17.9 s** | **438** | **21.2 MB** |
+| `mvn -B -q dependency:resolve` | **30.1 s** | — (not captured) | — |
 
-barista is **1.5× faster on a cold-cache resolve** of this
+barista is **1.68× faster on a cold-cache resolve** of this
 ~170-transitive-dep Spring Boot project, with a network-call shape
 the harness now captures: 438 distinct HTTP requests to Maven
 Central, ~21 MB of artifacts.

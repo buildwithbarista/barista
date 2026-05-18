@@ -14,9 +14,9 @@ Wall-clock under `--capture` is mitmproxy-instrumented:
 
 | baseline | timing-pass (postfix) median | capture-pass median | delta |
 |---|---:|---:|---:|
-| `barista pull --update` | 729 ms | 753 ms | +3% |
-| `barista compile` (warm daemon) | 247 ms | 254 ms | +3% |
-| `barista package -DskipTests` | 1090 ms | 1086 ms | ≈0% |
+| `barista pull --update` | 740 ms | 745 ms | +0.7% |
+| `barista compile` (warm daemon) | 224.5 ms | 250 ms | +11% |
+| `barista package -DskipTests` | 1044.5 ms | 1123 ms | +7.5% |
 
 The proxy overhead is small in this dataset because most iterations
 make **zero requests** (everything's cached locally). On a cold-cache

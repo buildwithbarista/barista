@@ -30,9 +30,9 @@ fast-path iterations, and stable variance.
 
 | Step | mvn 3.9.9 | barista (warm daemon) | barista (`--no-daemon`) | barista warm vs mvn |
 |---|---:|---:|---:|---:|
-| **Pull / resolve** | 1391.5 ms | **729.0 ms** | — | **1.91× faster** |
-| **Compile** (clean → compile) | 1383.0 ms | **246.5 ms** | 1394.5 ms | **5.61× faster** |
-| **Package** (clean → package, `-DskipTests`) | 1719.5 ms | **1090.5 ms** | 1717.5 ms | **1.58× faster** |
+| **Pull / resolve** | 1330.5 ms | **740.0 ms** | — | **1.80× faster** |
+| **Compile** (clean → compile) | 1327.0 ms | **224.5 ms** | 1343.0 ms | **5.91× faster** |
+| **Package** (clean → package, `-DskipTests`) | 1668.0 ms | **1044.5 ms** | 1673.5 ms | **1.60× faster** |
 
 Numbers are within noise of the original dataset's headline:
 

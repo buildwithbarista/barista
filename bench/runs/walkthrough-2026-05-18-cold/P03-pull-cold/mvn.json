@@ -3,9 +3,9 @@
   "manifest_id": "P03-pull-cold",
   "baseline_id": "mvn",
   "resolved_command": "mvn -B -q dependency:resolve",
-  "run_id": "2026-05-18T18:24:36Z-00bd5a82",
-  "timestamp": "2026-05-18T18:24:36Z",
-  "git_sha": "00bd5a8216b47b1822bc9b0333c5e601384cd176",
+  "run_id": "2026-05-18T18:42:01Z-5c3a2bd4",
+  "timestamp": "2026-05-18T18:42:01Z",
+  "git_sha": "5c3a2bd4fa9308d61a0409535f263e1f90e0e86c",
   "barista_version": "0.1.0-alpha.0",
   "hardware_tier": 2,
   "runner_id": "ajb-mbp.local",
@@ -20,14 +20,14 @@
   "iterations": [
     {
       "iteration": 0,
-      "wall_ms": 28000,
+      "wall_ms": 30079,
       "exit_code": 0
     }
   ],
   "summary": {
-    "avg_wall_ms": 28000.0,
-    "median_wall_ms": 28000.0,
-    "p95_wall_ms": 28000.0,
+    "avg_wall_ms": 30079.0,
+    "median_wall_ms": 30079.0,
+    "p95_wall_ms": 30079.0,
     "stddev_wall_ms": 0.0
   },
   "metadata": {

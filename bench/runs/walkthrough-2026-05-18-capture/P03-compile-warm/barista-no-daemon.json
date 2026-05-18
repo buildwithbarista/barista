@@ -3,9 +3,9 @@
   "manifest_id": "P03-compile-warm",
   "baseline_id": "barista-no-daemon",
   "resolved_command": "barista --no-daemon compile",
-  "run_id": "2026-05-18T17:42:53Z-001026d7",
-  "timestamp": "2026-05-18T17:42:53Z",
-  "git_sha": "001026d7e0245f903691f11ea8f41dfb13169213",
+  "run_id": "2026-05-18T18:39:24Z-5c3a2bd4",
+  "timestamp": "2026-05-18T18:39:24Z",
+  "git_sha": "5c3a2bd4fa9308d61a0409535f263e1f90e0e86c",
   "barista_version": "0.1.0-alpha.0",
   "hardware_tier": 2,
   "runner_id": "ajb-mbp.local",
@@ -20,22 +20,22 @@
   "iterations": [
     {
       "iteration": 0,
-      "wall_ms": 1353,
+      "wall_ms": 1314,
       "exit_code": 0
     },
     {
       "iteration": 1,
-      "wall_ms": 1325,
+      "wall_ms": 1326,
       "exit_code": 0
     },
     {
       "iteration": 2,
-      "wall_ms": 1329,
+      "wall_ms": 1334,
       "exit_code": 0
     },
     {
       "iteration": 3,
-      "wall_ms": 1325,
+      "wall_ms": 1331,
       "exit_code": 0
     },
     {
@@ -45,10 +45,10 @@
     }
   ],
   "summary": {
-    "avg_wall_ms": 1336.2,
-    "median_wall_ms": 1329.0,
-    "p95_wall_ms": 1353.0,
-    "stddev_wall_ms": 13.682105101189656
+    "avg_wall_ms": 1330.8,
+    "median_wall_ms": 1331.0,
+    "p95_wall_ms": 1349.0,
+    "stddev_wall_ms": 12.716131487209465
   },
   "metadata": {
     "baseline_display_name": "barista --no-daemon compile (forked mvn)",

@@ -3,9 +3,9 @@
   "manifest_id": "P03-pull-warm",
   "baseline_id": "mvn",
   "resolved_command": "mvn -B -q -U dependency:resolve",
-  "run_id": "2026-05-18T15:55:03Z-24661a63",
-  "timestamp": "2026-05-18T15:55:03Z",
-  "git_sha": "24661a63a4b02bd526a2f7ee7c0b9a99dae9cccc",
+  "run_id": "2026-05-18T18:37:11Z-5c3a2bd4",
+  "timestamp": "2026-05-18T18:37:11Z",
+  "git_sha": "5c3a2bd4fa9308d61a0409535f263e1f90e0e86c",
   "barista_version": "0.1.0-alpha.0",
   "hardware_tier": 2,
   "runner_id": "ajb-mbp.local",
@@ -20,60 +20,60 @@
   "iterations": [
     {
       "iteration": 0,
-      "wall_ms": 1375,
+      "wall_ms": 1328,
       "exit_code": 0
     },
     {
       "iteration": 1,
-      "wall_ms": 1393,
+      "wall_ms": 1324,
       "exit_code": 0
     },
     {
       "iteration": 2,
-      "wall_ms": 1387,
+      "wall_ms": 1347,
       "exit_code": 0
     },
     {
       "iteration": 3,
-      "wall_ms": 1369,
+      "wall_ms": 1336,
       "exit_code": 0
     },
     {
       "iteration": 4,
-      "wall_ms": 1390,
+      "wall_ms": 1329,
       "exit_code": 0
     },
     {
       "iteration": 5,
-      "wall_ms": 1405,
+      "wall_ms": 1341,
       "exit_code": 0
     },
     {
       "iteration": 6,
-      "wall_ms": 1399,
+      "wall_ms": 1329,
       "exit_code": 0
     },
     {
       "iteration": 7,
-      "wall_ms": 1374,
+      "wall_ms": 1332,
       "exit_code": 0
     },
     {
       "iteration": 8,
-      "wall_ms": 1415,
+      "wall_ms": 1324,
       "exit_code": 0
     },
     {
       "iteration": 9,
-      "wall_ms": 1406,
+      "wall_ms": 1343,
       "exit_code": 0
     }
   ],
   "summary": {
-    "avg_wall_ms": 1391.3,
-    "median_wall_ms": 1391.5,
-    "p95_wall_ms": 1415.0,
-    "stddev_wall_ms": 15.311941599795746
+    "avg_wall_ms": 1333.3,
+    "median_wall_ms": 1330.5,
+    "p95_wall_ms": 1347.0,
+    "stddev_wall_ms": 8.083591061183418
   },
   "metadata": {
     "baseline_display_name": "Apache Maven 3.9.9 — dependency:resolve",
