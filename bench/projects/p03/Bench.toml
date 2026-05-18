@@ -1,0 +1,54 @@
+# Bench.toml — P03 Spring Boot starter-web app (tiny target)
+#
+# Vendored minimal Spring Boot starter-web project: single module,
+# ~170 transitive deps from `spring-boot-starter-web` alone, no tests,
+# no extra plugins. PRD §17.5 P03 ("Tiny target"). The source is
+# hand-vendored (`ref_kind = "vendored"`) because PRD §17.5 P03 names
+# the shape ("Spring Boot starter-web app, ~170 deps") rather than any
+# specific upstream — a fresh `start.spring.io` download would drift
+# month-over-month and pollute the trend line.
+#
+# Spring Boot pinned to 3.3.5; bumping is a deliberate corpus baseline
+# reset. The vendored source matches the SHA-controlled tree at
+# `test-corpus/spring-boot-starter-web-app/vendor/` (kept in sync at
+# corpus-add time; both will be refreshed together if the version bumps).
+#
+# `command = "barista verify"` — `verify` is harmless on a zero-test
+# project and matches the other corpus entries so the dashboard
+# compares apples to apples. The harness still records per-dimension
+# fetch traffic via barista-netcap for the network capture comparison
+# (M B.1 T3) when invoked separately.
+
+schema = "barista.bench.manifest/v1"
+id = "P03"
+display_name = "Spring Boot starter-web app (tiny target)"
+category = "corpus"
+corpus_id = "spring-boot-starter-web-app-3.3.5"
+command = "barista verify"
+metrics = ["wall_ms", "cpu_user_ms", "peak_rss_kb", "network_bytes"]
+hardware_tier = 2
+iterations = 5
+warmup_iterations = 1
+
+# PRD §17.10 thresholds: D1 cold-resolve +10% (hard), D2 warm-resolve
+# +15%, D4 cold build +15% (JVM-startup variance). `network_bytes`
+# variance is wider — small fluctuations in the Maven Central response
+# (HTTP framing, gzip variance) move the byte count by a few percent
+# without any resolver behavior change; the +20% ceiling matches the
+# §17.10 D6 "compilation work dominates" precedent for the same
+# reasoning applied to byte counters.
+[allowed_variance]
+wall_ms_p95 = 0.15
+peak_rss_kb_p95 = 0.20
+network_bytes_p95 = 0.20
+
+[labels]
+shape = "tiny-target"
+modules = "1"
+direct_deps = "1"
+transitive_deps = "170"
+jdk = "21"
+maven_version = "3.9.9"
+spring_boot_version = "3.3.5"
+build_cmd_baseline = "mvn -B -DskipTests=false package"
+checkout_kind = "vendored"

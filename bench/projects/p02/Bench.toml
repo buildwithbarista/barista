@@ -1,0 +1,46 @@
+# Bench.toml — P02 Spring PetClinic
+#
+# Canonical single-module Spring Boot reference app (~50 direct +
+# transitive deps). PRD §17.5 P02. The upstream checkout is materialized
+# as a pinned git submodule at `checkout/`; the pinned commit
+# (`c7ee170…`) matches the SHA recorded in
+# `test-corpus/spring-petclinic/corpus.lock.toml` so the perf-bench
+# corpus and the resolver-fixture corpus stay in lock-step.
+#
+# Spring PetClinic exercises a realistic small-Spring shape: ~50 deps,
+# typical reactor depth = 1, Surefire + Spring Boot Maven Plugin
+# active. Build time on R-Bench-1 is ~30-60s for `mvn package`; 5
+# iterations + 1 warmup remains comfortably inside the per-PR perf-gate
+# budget (PRD §17.10 keeps the Tier-2 corpus to <10 minutes total).
+
+schema = "barista.bench.manifest/v1"
+id = "P02"
+display_name = "Spring PetClinic"
+category = "corpus"
+corpus_id = "spring-petclinic-3.3.0"
+command = "barista verify"
+metrics = ["wall_ms", "cpu_user_ms", "peak_rss_kb"]
+hardware_tier = 2
+iterations = 5
+warmup_iterations = 1
+
+# PRD §17.10 thresholds: D1 cold-resolve +10% (hard), D2 warm-resolve
+# +15%, D4 cold build +15% (JVM-startup variance). At v0.1 the harness
+# emits a single combined `wall_ms_p95` and the gate checks that against
+# the most permissive ceiling for the dimensions this command exercises
+# (resolve + compile + build = D1/D2/D4 envelope ≈ +15%). Per-dimension
+# variance keys land in M A.3 once the harness reports per-stage timings.
+[allowed_variance]
+wall_ms_p95 = 0.15
+peak_rss_kb_p95 = 0.20
+
+[labels]
+shape = "small-spring"
+modules = "1"
+direct_deps = "50"
+jdk = "21"
+maven_version = "3.9.9"
+build_cmd_baseline = "mvn -B -DskipTests=false verify"
+checkout_kind = "submodule"
+upstream_url = "https://github.com/spring-projects/spring-petclinic.git"
+upstream_ref = "c7ee170434ec3e369fdc9201290ba2ea4c92b557"

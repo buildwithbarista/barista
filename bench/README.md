@@ -58,13 +58,22 @@ The corpus should span the shapes of real Maven projects:
 
 ## Tier 1, 2, 3 layout
 
-(Forward reference — concrete benchmarks land alongside their
-respective milestones.)
-
 - **Tier 1 (microbenchmarks):** Rust crate-local benches, near the
   code being measured. Recorded in `docs/perf/baselines.md`.
 - **Tier 2 (regression gate):** per-PR benches that compare Barista
-  against itself on a fixed corpus, gating PRs on time/efficiency
-  regressions.
+  against itself on a fixed corpus of real projects, gating PRs on
+  time/efficiency regressions. Manifests live under
+  [`bench/projects/`](projects/README.md); the gate workflow is
+  `.github/workflows/perf-gate.yml`.
 - **Tier 3 (macro / E2E):** full-corpus runs against `mvn` and `mvnd`.
-  Numbers published on `bench.barista.build`.
+  Same per-project manifests as Tier 2, run on operator-hosted
+  reference hardware. Numbers published on `bench.barista.build`.
+
+`bench/projects/` and `test-corpus/` are deliberately separate
+surfaces with separate schemas — `bench/projects/<id>/Bench.toml`
+(perf benchmarking) vs. `test-corpus/<id>/corpus.lock.toml` (resolver
+golden tests + traffic captures). The two corpora may pin the same
+upstream project (e.g. Spring PetClinic appears in both) but they
+serve different consumers. See
+[`bench/projects/README.md`](projects/README.md) for the perf-side
+schema and the per-entry list.

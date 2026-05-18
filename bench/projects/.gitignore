@@ -1,0 +1,24 @@
+# Build artifacts inside corpus project checkouts.
+#
+# The checkouts under `bench/projects/<id>/checkout/` are either pinned
+# git submodules (P02) or vendored source trees (P01, P03). In all
+# cases we keep the *source* committed (or pointer-committed) and let
+# Maven generate `target/` etc. at bench-run time. None of that should
+# pollute the parent repo's working tree or sneak into a commit.
+
+# Maven build output, anywhere in any checkout.
+**/checkout/target/
+**/checkout/**/target/
+
+# IDE scaffolding.
+**/checkout/.idea/
+**/checkout/.vscode/
+**/checkout/*.iml
+**/checkout/**/*.iml
+
+# Local OS detritus.
+**/checkout/.DS_Store
+**/checkout/**/.DS_Store
+
+# Per-project benchmark scratch (e.g. captured profiles, run logs).
+**/.bench-run/

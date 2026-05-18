@@ -1,0 +1,3 @@
+[submodule "bench/projects/p02/checkout"]
+	path = bench/projects/p02/checkout
+	url = https://github.com/spring-projects/spring-petclinic.git

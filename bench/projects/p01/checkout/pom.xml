@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        Synthetic "hello-world" floor-case corpus entry (P01).
+
+        Per the project corpus contract this entry exists to anchor the
+        bench harness's floor case: one module, three direct dependencies,
+        no plugins beyond Surefire defaults. The numbers from this entry
+        bound the lower edge of every dimension (D1/D2/D4) and let the
+        regression gate distinguish "noise on a tiny project" from
+        "noise on a real project" when reading the dashboard.
+
+        The dependencies are picked for stability:
+        - slf4j-api: tiny logging facade, no transitives.
+        - jackson-core: small JSON streaming core, no transitives.
+        - commons-lang3: classic utility library, no transitives.
+
+        All three are released artifacts on Maven Central with pinned
+        versions; bumping any version is a deliberate corpus baseline
+        reset and must be called out in the commit message.
+    -->
+
+    <groupId>build.barista.corpus</groupId>
+    <artifactId>p01-hello-world</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>jar</packaging>
+    <name>p01-hello-world</name>
+    <description>Synthetic floor-case corpus entry: 1 module, 3 deps.</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>2.0.16</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.18.2</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.17.0</version>
+        </dependency>
+    </dependencies>
+</project>

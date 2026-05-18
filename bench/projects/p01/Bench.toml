@@ -1,0 +1,40 @@
+# Bench.toml — P01 hello-world floor case
+#
+# Synthetic, single-module, three direct dependencies. The harness uses
+# this entry to anchor the lower edge of every dimension: regressions
+# here mean the per-invocation overhead has slipped, not that resolver
+# scaling broke. See PRD §17.5 P01 ("Floor case") and §17.10 for the
+# threshold table this manifest's `allowed_variance` aligns with.
+#
+# `command` is `barista verify` so the gate exercises the full
+# resolve + build + (no-op) test pipeline; for a 3-dep project this
+# completes in well under a minute and the harness can afford 5
+# iterations + 1 warmup.
+
+schema = "barista.bench.manifest/v1"
+id = "P01"
+display_name = "P01 hello-world (synthetic floor case)"
+category = "corpus"
+corpus_id = "p01-hello-world"
+command = "barista verify"
+metrics = ["wall_ms", "cpu_user_ms", "peak_rss_kb"]
+hardware_tier = 2
+iterations = 5
+warmup_iterations = 1
+
+# PRD §17.10 thresholds: D1 cold-resolve +10%, D2 warm-resolve +15%,
+# D4 cold build +15%. The harness keys variance on the result-document
+# metric name (`wall_ms_p95` is the dimension-agnostic gate field at
+# v0.1); per-dimension keys may be added once the harness emits them.
+[allowed_variance]
+wall_ms_p95 = 0.15
+peak_rss_kb_p95 = 0.20
+
+[labels]
+shape = "floor-case"
+modules = "1"
+direct_deps = "3"
+jdk = "21"
+maven_version = "3.9.9"
+build_cmd_baseline = "mvn -B -DskipTests=false verify"
+checkout_kind = "vendored"
