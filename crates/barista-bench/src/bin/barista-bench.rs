@@ -1026,36 +1026,49 @@ mod capture {
     const READY_POLL_TIMEOUT: Duration = Duration::from_secs(5);
     const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-    /// True iff the baseline's command line is a barista invocation
-    /// that the capture path can route through mitmproxy.
+    /// How the harness can route a given baseline through mitmproxy
+    /// for HAR capture.
     ///
-    /// Captures rely on barista's `BARISTA_TEST_UPSTREAM_URL` env
-    /// var to redirect the native resolver to our localhost
-    /// mitmdump. That hook is only wired into the **native** barista
-    /// paths (`barista pull`, the daemon-path lifecycle phases).
+    /// `Barista` uses **reverse-proxy** mode: mitmdump listens on
+    /// plain HTTP at `localhost:PORT` and forwards every request to
+    /// the configured upstream over HTTPS. barista is told about the
+    /// proxy via `BARISTA_TEST_UPSTREAM_URL`, which rebases every
+    /// fetch URL onto `http://localhost:PORT/<path>`. No CA cert
+    /// install needed because the subprocess only talks plain HTTP
+    /// to localhost.
     ///
-    /// Specifically excluded:
+    /// `Maven` uses **forward-proxy** mode: mitmdump listens on
+    /// `localhost:PORT` and intercepts HTTPS traffic via TLS-MITM.
+    /// Maven Resolver (Aether) deliberately **ignores** the JVM
+    /// `-Dhttps.proxyHost` system property — the only reliable way
+    /// to route mvn through a proxy is a `<proxies>` block in a
+    /// `settings.xml` consumed via `--settings <path>`. The harness
+    /// synthesises that file per iteration. mitmproxy's CA must be
+    /// in the JDK truststore for the TLS-MITM to succeed; that's a
+    /// one-time operator step documented in
+    /// `crates/barista-netcap/README.md`.
     ///
-    /// - `barista --no-daemon ...`: forks an upstream `mvn` process
-    ///   that talks to Maven Central directly. The env var has no
-    ///   effect; mitmdump receives no traffic; the captured HAR is
-    ///   missing entirely (mitmdump 12.x doesn't write an empty
-    ///   HAR shell when no requests arrive).
-    /// - `mvn` / `mvnd`: need a settings.xml `<proxies>` wiring, not
-    ///   yet supported in-harness; their captures live in
-    ///   `scripts/run-baseline-captures.sh` and the M B.1 baseline
-    ///   archives.
-    ///
-    /// Excluded baselines fall through to the normal (timing-only)
-    /// measurement path with `network_*` left as `None`.
-    fn baseline_is_capturable(baseline: &Baseline) -> bool {
+    /// `None` means the baseline can't be captured by this harness
+    /// (e.g. `barista --no-daemon ...`, which forks an upstream mvn
+    /// that bypasses the env hook AND doesn't have a settings.xml
+    /// surface the harness can inject into). These baselines fall
+    /// through to the timing-only path with `network_*` left as
+    /// `None` so the dashboard renders `—`.
+    enum BaselineCapture {
+        Barista,
+        Maven,
+        None,
+    }
+
+    fn baseline_capture_kind(baseline: &Baseline) -> BaselineCapture {
         let argv = shell_split(&baseline.command);
-        if argv.first().map(String::as_str) != Some("barista") {
-            return false;
+        match argv.first().map(String::as_str) {
+            Some("barista") if !argv.iter().any(|a| a == "--no-daemon") => {
+                BaselineCapture::Barista
+            }
+            Some("mvn") | Some("mvnd") => BaselineCapture::Maven,
+            _ => BaselineCapture::None,
         }
-        // Any subsequent `--no-daemon` flag means barista forks mvn
-        // for the lifecycle phase and bypasses our env hook.
-        !argv.iter().any(|a| a == "--no-daemon")
     }
 
     pub fn measure_baseline_with_capture(
@@ -1067,9 +1080,10 @@ mod capture {
         har_dir: &Path,
         cache_root_base: Option<&Path>,
     ) -> Result<Vec<IterationMeasurement>, String> {
-        if !baseline_is_capturable(baseline) {
+        let kind = baseline_capture_kind(baseline);
+        if matches!(kind, BaselineCapture::None) {
             eprintln!(
-                "  ⓘ {} is not a barista baseline; capture is skipped (network_* will be None).",
+                "  ⓘ {} is not capturable by this harness; running timing-only (network_* will be None).",
                 baseline.id
             );
             return super::measure_baseline(cwd, baseline, warmup, iterations, cache_root_base);
@@ -1097,9 +1111,13 @@ mod capture {
                 .block_on(run_one_capture_iteration(
                     cwd,
                     baseline,
+                    &kind,
                     upstream_url,
                     &har_dir.join(format!("warmup-{w}.har")),
                     &env,
+                    har_dir,
+                    "warmup",
+                    w,
                 ))
                 .map_err(|e| format!("warmup {w} capture iteration failed: {e}"))?;
         }
@@ -1118,9 +1136,13 @@ mod capture {
                 .block_on(run_one_capture_iteration(
                     cwd,
                     baseline,
+                    &kind,
                     upstream_url,
                     &har_path,
                     &env,
+                    har_dir,
+                    "iter",
+                    i,
                 ))
                 .map_err(|e| format!("iter {i} capture failed: {e}"))?;
             let (calls, bytes) = parse_har_counts(&har_path).unwrap_or((None, None));
@@ -1148,55 +1170,94 @@ mod capture {
     async fn run_one_capture_iteration(
         cwd: &Path,
         baseline: &Baseline,
+        kind: &BaselineCapture,
         upstream_url: &str,
         har_path: &Path,
         extra_env: &[(&str, String)],
+        side_artifacts_dir: &Path,
+        phase: &str,
+        idx: u32,
     ) -> Result<IterationOutcome, String> {
-        // mitmproxy's `reverse:` mode wants `scheme://host[:port]`
-        // only — no path. Split the configured upstream URL into the
-        // host part (handed to mitmdump) and the path part (kept on
-        // the BARISTA_TEST_UPSTREAM_URL we hand to the subprocess).
-        // The split mirrors the URL semantics reqwest already honors
-        // when joining a base URL against a request path.
-        let (mitm_target, upstream_path) = split_upstream(upstream_url)?;
+        // Build the mitmproxy config + the argv/env shape for the
+        // subprocess based on which tool the baseline drives.
+        // - Barista: reverse-proxy mode + `BARISTA_TEST_UPSTREAM_URL`.
+        // - Maven:   forward-proxy mode (HTTPS-MITM via JDK truststore)
+        //            + `--settings <generated-xml>` injected into argv.
+        let (cfg, argv, extra_env_for_mvn) = match kind {
+            BaselineCapture::Barista => {
+                // mitmproxy's `reverse:` mode wants `scheme://host[:port]`
+                // only — no path. Split the upstream URL so mitmdump
+                // gets the host part and barista gets the path part.
+                let (mitm_target, _) = split_upstream(upstream_url)?;
+                let mut cfg = CaptureConfig::for_har(har_path.to_path_buf());
+                cfg.extra_args = vec![
+                    "--mode".to_string(),
+                    format!("reverse:{mitm_target}"),
+                    "--ssl-insecure".to_string(),
+                ];
+                (cfg, shell_split(&baseline.command), Vec::<(&'static str, String)>::new())
+            }
+            BaselineCapture::Maven => {
+                // Forward-proxy mode is mitmdump's default — no
+                // `--mode` argument. mitmdump listens on PORT, TLS-MITMs
+                // outbound HTTPS using its CA (operator-installed into
+                // the JDK truststore once; see netcap README).
+                let cfg = CaptureConfig::for_har(har_path.to_path_buf());
+                // Maven Resolver IGNORES `-Dhttps.proxyHost` — the only
+                // reliable wiring is a settings.xml `<proxies>` block
+                // consumed via `--settings <path>`. We synthesise a
+                // one-shot file per iteration and inject the flag.
+                let argv = shell_split(&baseline.command);
+                if argv.is_empty() {
+                    return Err(format!("empty command: {:?}", baseline.command));
+                }
+                // mitmdump's port isn't known until after spawn, so the
+                // settings.xml is written inside the spawn ceremony
+                // below (see `mvn_settings_xml`). We pass a Vec::new()
+                // placeholder here and the actual --settings flag is
+                // pushed onto argv after the proxy spawns.
+                (cfg, argv, Vec::<(&'static str, String)>::new())
+            }
+            BaselineCapture::None => unreachable!("filtered in caller"),
+        };
 
-        // Spawn mitmdump in reverse-proxy mode targeting the host.
-        // The subprocess connects to localhost:<chosen_port> over
-        // plain HTTP; mitmdump forwards each request to the upstream
-        // over HTTPS and writes both directions into the HAR. No CA
-        // cert install required because the subprocess talks plain
-        // HTTP to localhost.
-        let mut cfg = CaptureConfig::for_har(har_path.to_path_buf());
-        cfg.extra_args = vec![
-            "--mode".to_string(),
-            format!("reverse:{mitm_target}"),
-            // Don't fail if upstream's TLS cert chain isn't 100% clean
-            // from this host; the capture is the test subject.
-            "--ssl-insecure".to_string(),
-        ];
         let session = CaptureSession::start(cfg)
             .await
             .map_err(|e| format!("CaptureSession::start: {e}"))?;
-
         let listen_port = session.listen_port();
         wait_for_listener(listen_port).await?;
 
-        let proxy_url = format!("http://127.0.0.1:{listen_port}{upstream_path}");
+        // Per-tool finalization that needs the proxy's bound port.
+        let (argv, kind_env): (Vec<String>, Vec<(&'static str, String)>) = match kind {
+            BaselineCapture::Barista => {
+                let (_, upstream_path) = split_upstream(upstream_url)?;
+                let proxy_url = format!("http://127.0.0.1:{listen_port}{upstream_path}");
+                (
+                    argv,
+                    vec![("BARISTA_TEST_UPSTREAM_URL", proxy_url)],
+                )
+            }
+            BaselineCapture::Maven => {
+                let settings_xml =
+                    mvn_settings_xml(side_artifacts_dir, phase, idx, listen_port)?;
+                // Inject `--settings <path>` right after argv[0] so it
+                // applies before any other flag mvn parses.
+                let mut new_argv = Vec::with_capacity(argv.len() + 2);
+                new_argv.push(argv[0].clone());
+                new_argv.push("--settings".to_string());
+                new_argv.push(settings_xml.display().to_string());
+                new_argv.extend(argv.into_iter().skip(1));
+                (new_argv, Vec::new())
+            }
+            BaselineCapture::None => unreachable!(),
+        };
+        let _ = extra_env_for_mvn; // reserved for future per-tool env
 
-        // Subprocess setup mirrors super::run_argv but with the
-        // upstream env var pointing at our proxy. We measure wall_ms
-        // around just the subprocess — not the proxy spawn/teardown
-        // overhead, which would otherwise dominate small workloads.
-        let argv = shell_split(&baseline.command);
-        if argv.is_empty() {
-            return Err(format!("empty command: {:?}", baseline.command));
-        }
+        // Subprocess setup. Wall_ms measures just the subprocess — not
+        // the proxy spawn/teardown overhead.
         let mut cmd = Command::new(&argv[0]);
         cmd.args(&argv[1..]);
         cmd.current_dir(cwd);
-        // The same env-controlled stderr passthrough super::run_argv
-        // uses, applied here so a failing capture iteration is
-        // self-debuggable.
         let passthrough = std::env::var("BARISTA_BENCH_PASSTHROUGH").is_ok();
         if passthrough {
             cmd.stdout(Stdio::inherit());
@@ -1205,7 +1266,9 @@ mod capture {
             cmd.stdout(Stdio::null());
             cmd.stderr(Stdio::inherit());
         }
-        cmd.env("BARISTA_TEST_UPSTREAM_URL", &proxy_url);
+        for (k, v) in &kind_env {
+            cmd.env(k, v);
+        }
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
@@ -1225,6 +1288,51 @@ mod capture {
             .map_err(|e| format!("CaptureSession::stop: {e}"))?;
 
         Ok(IterationOutcome { wall_ms, exit_code })
+    }
+
+    /// Write a one-shot `settings.xml` for the given iteration that
+    /// routes every Maven Resolver request through the localhost
+    /// mitmproxy on `port`. Returns the absolute path so the caller
+    /// can pass it via `--settings <path>` to mvn.
+    fn mvn_settings_xml(
+        side_artifacts_dir: &Path,
+        phase: &str,
+        idx: u32,
+        port: u16,
+    ) -> Result<std::path::PathBuf, String> {
+        let filename = format!("{phase}-{idx}.settings.xml");
+        let path = side_artifacts_dir.join(filename);
+        let body = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <proxies>
+    <proxy>
+      <id>barista-bench-https</id>
+      <active>true</active>
+      <protocol>https</protocol>
+      <host>127.0.0.1</host>
+      <port>{port}</port>
+    </proxy>
+    <proxy>
+      <id>barista-bench-http</id>
+      <active>true</active>
+      <protocol>http</protocol>
+      <host>127.0.0.1</host>
+      <port>{port}</port>
+    </proxy>
+  </proxies>
+</settings>
+"#,
+        );
+        std::fs::write(&path, body).map_err(|e| {
+            format!(
+                "writing per-iteration settings.xml at {}: {e}",
+                path.display()
+            )
+        })?;
+        // Absolute path so mvn doesn't resolve it against its CWD.
+        std::fs::canonicalize(&path)
+            .map_err(|e| format!("canonicalize settings.xml at {}: {e}", path.display()))
     }
 
     async fn wait_for_listener(port: u16) -> Result<(), String> {
