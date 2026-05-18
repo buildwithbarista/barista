@@ -113,6 +113,40 @@ pub enum InterpolationLocation {
     Other(String),
 }
 
+impl InterpolationLocation {
+    /// Whether an unresolved `${...}` placeholder in this location
+    /// should be a hard error (`true`) or left as a literal string in
+    /// the effective POM (`false`).
+    ///
+    /// Maven evaluates plugin configuration and property values lazily:
+    /// an unresolved placeholder inside `<properties>` or inside a
+    /// plugin `<configuration>` is left as a literal `${...}` in the
+    /// effective POM and is the consuming plugin's responsibility at
+    /// execution time (it may auto-default the missing input, or pass
+    /// the literal through). The canonical example is
+    /// `spring-boot-starter-parent`, which defines
+    /// `<spring-boot.run.main-class>${start-class}</spring-boot.run.main-class>` —
+    /// a property that legitimately references a child-supplied
+    /// property the child is not required to set.
+    ///
+    /// Coord-bearing locations remain strict because we cannot resolve
+    /// a dependency or hit a URL whose text still contains `${...}`.
+    fn is_strict(&self) -> bool {
+        match self {
+            // Lenient: Maven leaves these as literal `${...}` when
+            // unresolved; consumers handle the literal.
+            Self::Property(_) | Self::PluginConfiguration { .. } => false,
+            // Strict: an unresolved placeholder makes the value
+            // unusable downstream.
+            Self::DependencyVersion { .. }
+            | Self::PluginVersion { .. }
+            | Self::PomField(_)
+            | Self::RepositoryUrl(_)
+            | Self::Other(_) => true,
+        }
+    }
+}
+
 /// Resolves a `<parent>` declaration to its POM. Production
 /// implementations consult the local cache + Maven Central; test
 /// implementations typically use a hardcoded map.
@@ -872,10 +906,24 @@ fn pass(
                         continue;
                     }
                     None => {
-                        return Err(EffectiveError::UnresolvedPlaceholder {
-                            placeholder: placeholder.to_string(),
-                            location: format!("{loc:?}"),
-                        });
+                        if loc.is_strict() {
+                            return Err(EffectiveError::UnresolvedPlaceholder {
+                                placeholder: placeholder.to_string(),
+                                location: format!("{loc:?}"),
+                            });
+                        }
+                        // Lenient location (`Property` /
+                        // `PluginConfiguration`): copy the literal
+                        // `${...}` through unchanged. Crucially we do
+                        // NOT set `fired = true` — that would make
+                        // `interp`'s loop iterate forever on a string
+                        // that contains a placeholder we'll never
+                        // resolve. The audit log skips this case
+                        // because nothing was substituted; the literal
+                        // is observable in the effective POM.
+                        out.push_str(placeholder);
+                        i = end + 1;
+                        continue;
                     }
                 }
             }
@@ -1534,5 +1582,88 @@ mod tests {
         let eff = build_effective(input, &mut r).expect("ok");
         // Should produce no audit entries — fast path took.
         assert!(eff.interpolations.is_empty());
+    }
+
+    #[test]
+    fn test_31_unresolved_property_value_left_as_literal() {
+        // Reproduces the `spring-boot-starter-parent` pattern: a parent
+        // POM declares `<spring-boot.run.main-class>${start-class}</…>`
+        // where `start-class` is meant to be supplied by the child or
+        // auto-defaulted by the plugin at execution time. The child
+        // here doesn't define `start-class`. Maven leaves the literal
+        // `${start-class}` in the effective POM; Barista must too.
+        let mut r = TestResolver::default();
+        let mut parent = pom("org.example", "parent", "1");
+        parent.properties = props(&[("spring-boot.run.main-class", "${start-class}")]);
+        r.add(parent);
+
+        let mut child = pom("g", "c", "1");
+        child.parent = Some(parent_ref("org.example", "parent", "1"));
+        let eff = build_effective(child, &mut r).expect("must not error on lenient location");
+        assert_eq!(
+            eff.pom
+                .properties
+                .entries
+                .get("spring-boot.run.main-class")
+                .map(String::as_str),
+            Some("${start-class}"),
+            "unresolved placeholder in a `<properties>` value should be \
+             left as a literal `${{...}}` string, matching Maven's lazy \
+             evaluation semantics"
+        );
+    }
+
+    #[test]
+    fn test_32_unresolved_plugin_configuration_left_as_literal() {
+        // A plugin configuration value with an unresolved placeholder
+        // is the plugin's problem to evaluate (or default) at run
+        // time. Building the effective POM must not error on it.
+        let mut r = TestResolver::default();
+        let mut input = pom("g", "a", "1.0");
+        let mut cfg = XmlValue::default();
+        cfg.children.insert(
+            "encoding".to_string(),
+            vec![XmlValue {
+                text: Some("${project.build.sourceEncoding}".to_string()),
+                ..XmlValue::default()
+            }],
+        );
+        input.build = Some(RawBuild {
+            plugins: vec![RawPlugin {
+                group_id: "org.apache.maven.plugins".to_string(),
+                artifact_id: "maven-compiler-plugin".to_string(),
+                configuration: Some(cfg),
+                ..RawPlugin::default()
+            }],
+            ..RawBuild::default()
+        });
+        let eff = build_effective(input, &mut r).expect("lenient on plugin <configuration>");
+        let encoding = eff.pom.build.unwrap().plugins[0]
+            .configuration
+            .as_ref()
+            .unwrap()
+            .children
+            .get("encoding")
+            .unwrap()[0]
+            .text
+            .clone();
+        assert_eq!(encoding.as_deref(), Some("${project.build.sourceEncoding}"));
+    }
+
+    #[test]
+    fn test_33_unresolved_dependency_version_still_errors() {
+        // Strict locations are unchanged: an unresolved placeholder in
+        // a coordinate-bearing field must still surface as an error,
+        // because the coordinate is unusable downstream.
+        let mut r = TestResolver::default();
+        let mut input = pom("g", "a", "1.0");
+        input
+            .dependencies
+            .push(dep("org.example", "lib", Some("${undefined.version}")));
+        let err = build_effective(input, &mut r).unwrap_err();
+        assert!(
+            matches!(err, EffectiveError::UnresolvedPlaceholder { .. }),
+            "expected UnresolvedPlaceholder, got {err:?}"
+        );
     }
 }
