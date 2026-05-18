@@ -1,0 +1,56 @@
+# Bench.toml — P03 / D2 warm-resolve.
+#
+# Measures the second-half of a `barista pull` / `mvn dependency:resolve`
+# invocation against the vendored P03 Spring Boot starter-web project
+# with both ~/.m2 and ~/.barista/cache warm: no network fetches, no
+# upstream metadata refresh — purely resolver computation + lockfile
+# write (barista) / Maven model build + plugin classpath resolution
+# (mvn). This is PRD §17.10 Dimension D2 (warm-cache resolve).
+#
+# `command` carries the legacy single-baseline shape so older tools
+# that still consult that field (the perf-gate placeholder, schema
+# validators) keep working. The new `[[baselines]]` array drives the
+# actual cross-tool measurement.
+#
+# Each baseline's `prepare` clears any per-invocation state that would
+# advantage repeats (barista's lockfile-clean fast path; Maven's
+# in-process metadata cache from a prior run).
+
+schema = "barista.bench.manifest/v1"
+id = "P03-pull-warm"
+display_name = "Spring Boot starter-web — warm dependency resolution"
+category = "corpus"
+corpus_id = "spring-boot-starter-web-app-3.3.5"
+command = "barista pull --update"
+metrics = ["wall_ms"]
+hardware_tier = 2
+iterations = 10
+warmup_iterations = 2
+
+[[baselines]]
+id = "barista"
+display_name = "barista pull --update"
+command = "barista pull --update"
+prepare = "rm -f barista.lock"
+
+[[baselines]]
+id = "mvn"
+display_name = "Apache Maven 3.9.9 — dependency:resolve"
+command = "mvn -B -q -U dependency:resolve"
+# mvn has no easy per-invocation reset; rely on ~/.m2 staying warm.
+
+# Per PRD §17.10 D2 +15% warm-resolve tolerance.
+[allowed_variance]
+wall_ms_p95 = 0.15
+
+[labels]
+dimension = "D2"
+shape = "tiny-target"
+modules = "1"
+direct_deps = "1"
+transitive_deps = "170"
+jdk = "21"
+maven_version = "3.9.9"
+spring_boot_version = "3.3.5"
+checkout_kind = "vendored-symlink"
+checkout_target = "bench/projects/p03/checkout"

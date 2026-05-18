@@ -1,0 +1,60 @@
+# Bench.toml — P03 / clean → package (warm caches).
+#
+# Measures the full `clean → package` lifecycle (7 mojos for this
+# project: process-resources, compile, process-test-resources,
+# test-compile, test, prepare-package, package) against the vendored
+# P03 Spring Boot starter-web project with both ~/.m2 and
+# ~/.barista/cache warm. Tests are skipped (`-DskipTests`) because
+# this fixture has no test classes — running surefire over an empty
+# suite would add ~200ms of plugin-bootstrap noise across all three
+# baselines and obscure the lifecycle-orchestration delta we care
+# about.
+#
+# Three baselines: same shape as `p03-compile-warm` plus the
+# additional 5 mojos that the `package` phase runs beyond `compile`.
+# Useful for separating "how fast can each tool dispatch a single
+# mojo" from "how fast can each tool walk a multi-mojo lifecycle".
+
+schema = "barista.bench.manifest/v1"
+id = "P03-package-warm"
+display_name = "Spring Boot starter-web — clean → package (warm caches)"
+category = "corpus"
+corpus_id = "spring-boot-starter-web-app-3.3.5"
+command = "barista package -DskipTests"
+metrics = ["wall_ms"]
+hardware_tier = 2
+iterations = 10
+warmup_iterations = 2
+
+[[baselines]]
+id = "barista"
+display_name = "barista package -DskipTests (warm daemon)"
+command = "barista package -DskipTests"
+prepare = "rm -rf target"
+
+[[baselines]]
+id = "barista-no-daemon"
+display_name = "barista --no-daemon package -DskipTests (forked mvn)"
+command = "barista --no-daemon package -DskipTests"
+prepare = "rm -rf target"
+
+[[baselines]]
+id = "mvn"
+display_name = "Apache Maven 3.9.9 — package -DskipTests"
+command = "mvn -B -q package -DskipTests"
+prepare = "rm -rf target"
+
+[allowed_variance]
+wall_ms_p95 = 0.15
+
+[labels]
+dimension = "D4"
+shape = "tiny-target"
+modules = "1"
+direct_deps = "1"
+transitive_deps = "170"
+jdk = "21"
+maven_version = "3.9.9"
+spring_boot_version = "3.3.5"
+checkout_kind = "vendored-symlink"
+checkout_target = "bench/projects/p03/checkout"

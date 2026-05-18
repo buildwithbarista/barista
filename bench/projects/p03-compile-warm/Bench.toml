@@ -1,0 +1,68 @@
+# Bench.toml — P03 / clean → compile (warm caches).
+#
+# Measures `clean → compile` against the vendored P03 Spring Boot
+# starter-web project with both ~/.m2 and ~/.barista/cache warm — the
+# everyday inner-loop developer case after the daemon has been warmed
+# by previous invocations. Each iteration's `prepare` step (`rm -rf
+# target/`) forces an actual compile so the timing reflects real
+# work, not a no-op classpath check.
+#
+# Three baselines:
+#
+# - `barista`         : default daemon path (warm barback dispatching
+#                       mojos via the embedded Maven 4 core).
+# - `barista-no-daemon`: forked-mvn fallback (`barista --no-daemon
+#                       compile`) — the apples-to-apples shim around
+#                       plain mvn; useful for isolating the barista
+#                       CLI overhead from the daemon's value-add.
+# - `mvn`             : Apache Maven 3.9.9 (the pinned reference
+#                       version).
+#
+# This is closest to PRD §17.10 Dimension D4 (cold build), but every
+# iteration starts with a populated cache; the "cold" half of D4 is a
+# separate manifest (P03-compile-cold) once the M A.5 network mirror
+# lands.
+
+schema = "barista.bench.manifest/v1"
+id = "P03-compile-warm"
+display_name = "Spring Boot starter-web — clean → compile (warm caches)"
+category = "corpus"
+corpus_id = "spring-boot-starter-web-app-3.3.5"
+command = "barista compile"
+metrics = ["wall_ms"]
+hardware_tier = 2
+iterations = 10
+warmup_iterations = 2
+
+[[baselines]]
+id = "barista"
+display_name = "barista compile (warm daemon)"
+command = "barista compile"
+prepare = "rm -rf target"
+
+[[baselines]]
+id = "barista-no-daemon"
+display_name = "barista --no-daemon compile (forked mvn)"
+command = "barista --no-daemon compile"
+prepare = "rm -rf target"
+
+[[baselines]]
+id = "mvn"
+display_name = "Apache Maven 3.9.9 — compile"
+command = "mvn -B -q compile"
+prepare = "rm -rf target"
+
+[allowed_variance]
+wall_ms_p95 = 0.15
+
+[labels]
+dimension = "D4"
+shape = "tiny-target"
+modules = "1"
+direct_deps = "1"
+transitive_deps = "170"
+jdk = "21"
+maven_version = "3.9.9"
+spring_boot_version = "3.3.5"
+checkout_kind = "vendored-symlink"
+checkout_target = "bench/projects/p03/checkout"

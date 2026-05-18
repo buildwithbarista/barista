@@ -1,0 +1,19 @@
+# Bench-runner output directory.
+#
+# `barista-bench run --output bench/runs/<run_id>/` writes per-run
+# results.json + index.json artifacts here. By default these are
+# **local only** — they reflect this developer's hardware tier and
+# environment, not the canonical R-Bench-1/2/3 numbers the dashboard
+# publishes. Checked-in runs are explicit exceptions: a small set of
+# representative datasets that double as documentation + dashboard
+# fixtures. Anything not explicitly opted in is ignored.
+
+# Default: ignore everything under bench/runs/.
+*
+
+# Explicit exceptions — each checked-in run-directory must be listed
+# here. Use this for runs that are referenced from public docs (e.g.
+# the walkthrough writeup) or that ship as dashboard fixtures.
+!.gitignore
+!walkthrough-2026-05-18/
+!walkthrough-2026-05-18/**

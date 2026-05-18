@@ -1,0 +1,82 @@
+{
+  "schema": "barista.bench.results/v1",
+  "manifest_id": "P03-pull-warm",
+  "baseline_id": "barista",
+  "resolved_command": "barista pull --update",
+  "run_id": "2026-05-18T13:38:21Z-7b1b33a1",
+  "timestamp": "2026-05-18T13:38:21Z",
+  "git_sha": "7b1b33a1e2f2a5c0a2c3b320479beb77580bd5da",
+  "barista_version": "0.1.0-alpha.0",
+  "hardware_tier": 2,
+  "runner_id": "ajb-mbp.local",
+  "hardware": {
+    "id": "ajb-mbp.local",
+    "cpu": "Apple M4 Max",
+    "cores_physical": 16,
+    "cores_logical": 16,
+    "memory_gb": 128,
+    "os": "macOS 26.2"
+  },
+  "iterations": [
+    {
+      "iteration": 0,
+      "wall_ms": 948,
+      "exit_code": 0
+    },
+    {
+      "iteration": 1,
+      "wall_ms": 852,
+      "exit_code": 0
+    },
+    {
+      "iteration": 2,
+      "wall_ms": 936,
+      "exit_code": 0
+    },
+    {
+      "iteration": 3,
+      "wall_ms": 866,
+      "exit_code": 0
+    },
+    {
+      "iteration": 4,
+      "wall_ms": 848,
+      "exit_code": 0
+    },
+    {
+      "iteration": 5,
+      "wall_ms": 878,
+      "exit_code": 0
+    },
+    {
+      "iteration": 6,
+      "wall_ms": 1213,
+      "exit_code": 0
+    },
+    {
+      "iteration": 7,
+      "wall_ms": 819,
+      "exit_code": 0
+    },
+    {
+      "iteration": 8,
+      "wall_ms": 810,
+      "exit_code": 0
+    },
+    {
+      "iteration": 9,
+      "wall_ms": 893,
+      "exit_code": 0
+    }
+  ],
+  "summary": {
+    "avg_wall_ms": 906.3,
+    "median_wall_ms": 872.0,
+    "p95_wall_ms": 1213.0,
+    "stddev_wall_ms": 116.68099911963196
+  },
+  "metadata": {
+    "baseline_display_name": "barista pull --update",
+    "corpus_id": "spring-boot-starter-web-app-3.3.5"
+  }
+}
