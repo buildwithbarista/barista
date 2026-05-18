@@ -232,10 +232,28 @@ fn run_full_fetch(
         path: cache_root.clone(),
         detail: e.to_string(),
     })?;
-    let index = Index::open(cache_root).map_err(|e| PullError::IndexOpen {
-        path: cache_root.clone(),
-        detail: e.to_string(),
-    })?;
+    // Use the recovery-aware opener (M2.3 T10): a torn journal tail
+    // (e.g. an earlier process killed mid-append, or — empirically —
+    // a long sequence of back-to-back `pull --update` invocations
+    // that ended up leaving the journal in a partial state) is
+    // repaired by truncating to the last known-good record. The
+    // strict `Index::open` would have failed exit 1 here with
+    // `journal at ... ends mid-record (truncation detected)`. The
+    // truncation event is surfaced to the user via stderr so they
+    // know the cache self-healed.
+    let (index, open_report) =
+        Index::open_with_recovery(cache_root).map_err(|e| PullError::IndexOpen {
+            path: cache_root.clone(),
+            detail: e.to_string(),
+        })?;
+    if open_report.journal_truncated {
+        eprintln!(
+            "barista: warning: cache index journal at {} had a torn tail; \
+             truncated at byte offset {} and continuing.",
+            cache_root.join("index").join("journal.log").display(),
+            open_report.journal_truncated_at.unwrap_or(0),
+        );
+    }
     // The `BARISTA_TEST_UPSTREAM_URL` env var lets integration
     // tests (cmd_pull_full_fetch.rs) point the fetcher at a
     // wiremock server. Production resolves to Maven Central.
