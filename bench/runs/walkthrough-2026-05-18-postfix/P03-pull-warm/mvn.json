@@ -1,0 +1,82 @@
+{
+  "schema": "barista.bench.results/v1",
+  "manifest_id": "P03-pull-warm",
+  "baseline_id": "mvn",
+  "resolved_command": "mvn -B -q -U dependency:resolve",
+  "run_id": "2026-05-18T15:55:03Z-24661a63",
+  "timestamp": "2026-05-18T15:55:03Z",
+  "git_sha": "24661a63a4b02bd526a2f7ee7c0b9a99dae9cccc",
+  "barista_version": "0.1.0-alpha.0",
+  "hardware_tier": 2,
+  "runner_id": "ajb-mbp.local",
+  "hardware": {
+    "id": "ajb-mbp.local",
+    "cpu": "Apple M4 Max",
+    "cores_physical": 16,
+    "cores_logical": 16,
+    "memory_gb": 128,
+    "os": "macOS 26.2"
+  },
+  "iterations": [
+    {
+      "iteration": 0,
+      "wall_ms": 1375,
+      "exit_code": 0
+    },
+    {
+      "iteration": 1,
+      "wall_ms": 1393,
+      "exit_code": 0
+    },
+    {
+      "iteration": 2,
+      "wall_ms": 1387,
+      "exit_code": 0
+    },
+    {
+      "iteration": 3,
+      "wall_ms": 1369,
+      "exit_code": 0
+    },
+    {
+      "iteration": 4,
+      "wall_ms": 1390,
+      "exit_code": 0
+    },
+    {
+      "iteration": 5,
+      "wall_ms": 1405,
+      "exit_code": 0
+    },
+    {
+      "iteration": 6,
+      "wall_ms": 1399,
+      "exit_code": 0
+    },
+    {
+      "iteration": 7,
+      "wall_ms": 1374,
+      "exit_code": 0
+    },
+    {
+      "iteration": 8,
+      "wall_ms": 1415,
+      "exit_code": 0
+    },
+    {
+      "iteration": 9,
+      "wall_ms": 1406,
+      "exit_code": 0
+    }
+  ],
+  "summary": {
+    "avg_wall_ms": 1391.3,
+    "median_wall_ms": 1391.5,
+    "p95_wall_ms": 1415.0,
+    "stddev_wall_ms": 15.311941599795746
+  },
+  "metadata": {
+    "baseline_display_name": "Apache Maven 3.9.9 — dependency:resolve",
+    "corpus_id": "spring-boot-starter-web-app-3.3.5"
+  }
+}

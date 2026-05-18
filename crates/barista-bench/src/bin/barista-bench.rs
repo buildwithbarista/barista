@@ -376,10 +376,25 @@ fn run_argv(cwd: &Path, cmdline: &str, measured: bool) -> Result<i32, String> {
     cmd.args(&argv[1..]);
     cmd.current_dir(cwd);
     // Stream stdout/stderr to /dev/null during measurement so terminal
-    // I/O doesn't dominate the timing on a small workload. In dry-run /
-    // debugging we may want this configurable, but v0.1 hardcodes.
-    cmd.stdout(Stdio::null());
-    cmd.stderr(Stdio::null());
+    // I/O doesn't dominate the timing on a small workload.
+    // `BARISTA_BENCH_PASSTHROUGH=1` flips both streams to inherit for
+    // debugging a failing baseline; the wall-clock measurement is
+    // then noise-polluted (terminal I/O) but the failure cause is
+    // visible.
+    let passthrough = std::env::var("BARISTA_BENCH_PASSTHROUGH").is_ok();
+    if passthrough {
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+    } else {
+        cmd.stdout(Stdio::null());
+        // Keep stderr open during measurement so a failure surfaces
+        // its diagnostic. The overhead of writing a few hundred bytes
+        // of error text is negligible against second-scale timings
+        // and is invaluable when a baseline fails: pre-fix the
+        // harness would surface only `non-zero exit (2) from ...`
+        // with the actual cause silenced.
+        cmd.stderr(Stdio::inherit());
+    }
     let status = cmd.status().map_err(|e| {
         format!(
             "failed to spawn `{}` (cwd={}): {e}",
