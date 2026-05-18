@@ -19,6 +19,17 @@ toml = "0.8"
 thiserror = "2"
 clap = { version = "4.6", features = ["derive"] }
 
+# `--capture` mode dependencies. Kept optional so the bench harness
+# still builds + tests cleanly on a host without mitmproxy installed;
+# enable with `--features capture` for the network-measurement path.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "process", "time", "fs", "io-util", "net"], optional = true }
+barista-netcap = { path = "../barista-netcap", optional = true }
+barista-netanalyze = { path = "../barista-netanalyze", optional = true }
+
+[features]
+default = ["capture"]
+capture = ["dep:tokio", "dep:barista-netcap", "dep:barista-netanalyze"]
+
 [dev-dependencies]
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"

@@ -137,7 +137,14 @@ pub struct IterationMeasurement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_rss_kb: Option<u64>,
 
-    /// Network bytes read.
+    /// Number of distinct HTTP requests the iteration emitted to
+    /// upstream repositories. Populated by the `--capture` harness
+    /// mode (parses a mitmproxy HAR); absent on timing-pass runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_calls: Option<u64>,
+
+    /// Network bytes read (counted from HAR response payloads under
+    /// `--capture`; absent on timing-pass runs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_bytes: Option<u64>,
 

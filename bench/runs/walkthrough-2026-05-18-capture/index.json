@@ -1,0 +1,27 @@
+{
+  "git_sha": "001026d7e0245f903691f11ea8f41dfb13169213",
+  "hardware": {
+    "cores_logical": 16,
+    "cores_physical": 16,
+    "cpu": "Apple M4 Max",
+    "id": "ajb-mbp.local",
+    "memory_gb": 128,
+    "os": "macOS 26.2"
+  },
+  "produced_by": "barista-bench",
+  "results": [
+    "P03-compile-warm/barista-no-daemon.json",
+    "P03-compile-warm/barista.json",
+    "P03-compile-warm/mvn.json",
+    "P03-package-warm/barista-no-daemon.json",
+    "P03-package-warm/barista.json",
+    "P03-package-warm/mvn.json",
+    "P03-pull-warm/barista.json",
+    "P03-pull-warm/mvn.json"
+  ],
+  "results_root": ".",
+  "run_id": "2026-05-18T17:42:53Z-001026d7",
+  "runner_id": "ajb-mbp.local",
+  "schema": "barista.bench.index/v1",
+  "timestamp": "2026-05-18T17:42:53Z"
+}

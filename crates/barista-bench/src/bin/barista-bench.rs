@@ -114,6 +114,30 @@ struct RunArgs {
     /// subprocesses. Useful for dry-running CI wiring changes.
     #[arg(long)]
     dry_run: bool,
+
+    /// Capture pass: route each barista subprocess through a
+    /// per-iteration `mitmdump` reverse-proxy session, parse the
+    /// resulting HAR, and write per-iteration `network_calls` +
+    /// `network_bytes` into each `results.json`. Wall-clock under
+    /// `--capture` is mitmproxy-instrumented and is NOT comparable
+    /// to a `--capture`-free timing pass — emit both passes
+    /// separately if you want both numbers.
+    ///
+    /// mvn / mvnd baselines are not captured by this flag at v0.1
+    /// (their proxy wiring lives in
+    /// `scripts/run-baseline-captures.sh`); barista baselines are
+    /// detected by argv[0] = `"barista"` and captured. Other
+    /// baselines run normally and leave `network_*` as `None`.
+    #[cfg(feature = "capture")]
+    #[arg(long)]
+    capture: bool,
+
+    /// Upstream URL the capture-mode reverse proxy forwards barista
+    /// requests to. Defaults to Maven Central; override for an
+    /// alternate mirror.
+    #[cfg(feature = "capture")]
+    #[arg(long, value_name = "URL", default_value = "https://repo.maven.apache.org/maven2")]
+    capture_upstream: String,
 }
 
 fn main() {
@@ -203,10 +227,15 @@ fn run(args: RunArgs) -> i32 {
         let warmup = args.warmup_iterations.unwrap_or(manifest.warmup_iterations);
 
         for baseline in &baselines {
+            #[cfg(feature = "capture")]
+            let mode_tag = if args.capture { " [capture]" } else { "" };
+            #[cfg(not(feature = "capture"))]
+            let mode_tag = "";
             eprintln!(
-                "\nbarista-bench: {} / {}  ({} warmup + {} measured) — cwd={}",
+                "\nbarista-bench: {} / {}{}  ({} warmup + {} measured) — cwd={}",
                 manifest.id,
                 baseline.id,
+                mode_tag,
                 warmup,
                 iterations,
                 cwd.display()
@@ -218,7 +247,26 @@ fn run(args: RunArgs) -> i32 {
                 }
                 continue;
             }
-            match measure_baseline(&cwd, baseline, warmup, iterations) {
+            #[cfg(feature = "capture")]
+            let measurement = if args.capture {
+                let har_dir = output_root
+                    .join(&manifest.id)
+                    .join(format!("{}-capture", baseline.id));
+                capture::measure_baseline_with_capture(
+                    &cwd,
+                    baseline,
+                    warmup,
+                    iterations,
+                    &args.capture_upstream,
+                    &har_dir,
+                )
+            } else {
+                measure_baseline(&cwd, baseline, warmup, iterations)
+            };
+            #[cfg(not(feature = "capture"))]
+            let measurement = measure_baseline(&cwd, baseline, warmup, iterations);
+
+            match measurement {
                 Ok(iters) => {
                     let doc = build_results_doc(
                         manifest,
@@ -354,6 +402,7 @@ fn measure_baseline(
             cpu_user_ms: None,
             cpu_sys_ms: None,
             peak_rss_kb: None,
+            network_calls: None,
             network_bytes: None,
             disk_read_bytes: None,
             disk_write_bytes: None,
@@ -829,10 +878,315 @@ mod tests {
             cpu_user_ms: None,
             cpu_sys_ms: None,
             peak_rss_kb: None,
+            network_calls: None,
             network_bytes: None,
             disk_read_bytes: None,
             disk_write_bytes: None,
             exit_code: 0,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `--capture` mode: drive a per-iteration mitmproxy reverse-proxy
+// session, parse the captured HAR via barista-netanalyze, and emit
+// `network_calls` + `network_bytes` alongside `wall_ms`.
+//
+// Gated by the `capture` cargo feature (on by default). The feature
+// pulls in `tokio` + `barista-netcap` + `barista-netanalyze`; hosts
+// without mitmproxy installed can build with `--no-default-features`
+// to get a timing-only harness with no async runtime.
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "capture")]
+mod capture {
+    use std::path::Path;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    use barista_bench::IterationMeasurement;
+    use barista_netanalyze::har::parse_har_bytes;
+    use barista_netcap::{CaptureConfig, CaptureSession};
+
+    use super::{Baseline, shell_split};
+
+    /// Time mitmdump takes to bind its listen socket after spawn.
+    /// mitmproxy doesn't emit a "ready" signal we can wait on (per the
+    /// netcap docs), so we poll for a TCP listener with a tight budget.
+    const READY_POLL_TIMEOUT: Duration = Duration::from_secs(5);
+    const READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+    /// True iff the baseline's command line is a barista invocation
+    /// that the capture path can route through mitmproxy.
+    ///
+    /// Captures rely on barista's `BARISTA_TEST_UPSTREAM_URL` env
+    /// var to redirect the native resolver to our localhost
+    /// mitmdump. That hook is only wired into the **native** barista
+    /// paths (`barista pull`, the daemon-path lifecycle phases).
+    ///
+    /// Specifically excluded:
+    ///
+    /// - `barista --no-daemon ...`: forks an upstream `mvn` process
+    ///   that talks to Maven Central directly. The env var has no
+    ///   effect; mitmdump receives no traffic; the captured HAR is
+    ///   missing entirely (mitmdump 12.x doesn't write an empty
+    ///   HAR shell when no requests arrive).
+    /// - `mvn` / `mvnd`: need a settings.xml `<proxies>` wiring, not
+    ///   yet supported in-harness; their captures live in
+    ///   `scripts/run-baseline-captures.sh` and the M B.1 baseline
+    ///   archives.
+    ///
+    /// Excluded baselines fall through to the normal (timing-only)
+    /// measurement path with `network_*` left as `None`.
+    fn baseline_is_capturable(baseline: &Baseline) -> bool {
+        let argv = shell_split(&baseline.command);
+        if argv.first().map(String::as_str) != Some("barista") {
+            return false;
+        }
+        // Any subsequent `--no-daemon` flag means barista forks mvn
+        // for the lifecycle phase and bypasses our env hook.
+        !argv.iter().any(|a| a == "--no-daemon")
+    }
+
+    pub fn measure_baseline_with_capture(
+        cwd: &Path,
+        baseline: &Baseline,
+        warmup: u32,
+        iterations: u32,
+        upstream_url: &str,
+        har_dir: &Path,
+    ) -> Result<Vec<IterationMeasurement>, String> {
+        if !baseline_is_capturable(baseline) {
+            eprintln!(
+                "  ⓘ {} is not a barista baseline; capture is skipped (network_* will be None).",
+                baseline.id
+            );
+            return super::measure_baseline(cwd, baseline, warmup, iterations);
+        }
+
+        std::fs::create_dir_all(har_dir).map_err(|e| {
+            format!("could not create HAR output dir {}: {e}", har_dir.display())
+        })?;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("tokio runtime build: {e}"))?;
+
+        // Warmup iterations: same shape as production timing path, but
+        // each subprocess goes through a capture session so the warmup
+        // JIT is identical to the measured runs. HAR is discarded.
+        for w in 0..warmup {
+            if let Some(prepare) = &baseline.prepare {
+                super::run_argv(cwd, prepare, /*measured=*/ false)
+                    .map_err(|e| format!("warmup {w} prepare failed: {e}"))?;
+            }
+            let _ = rt
+                .block_on(run_one_capture_iteration(
+                    cwd,
+                    baseline,
+                    upstream_url,
+                    &har_dir.join(format!("warmup-{w}.har")),
+                ))
+                .map_err(|e| format!("warmup {w} capture iteration failed: {e}"))?;
+        }
+
+        // Measured iterations: same flow, HAR retained, request counts
+        // populated.
+        let mut iters = Vec::with_capacity(iterations as usize);
+        for i in 0..iterations {
+            if let Some(prepare) = &baseline.prepare {
+                super::run_argv(cwd, prepare, /*measured=*/ false)
+                    .map_err(|e| format!("iter {i} prepare failed: {e}"))?;
+            }
+            let har_path = har_dir.join(format!("iter-{i}.har"));
+            let outcome = rt
+                .block_on(run_one_capture_iteration(
+                    cwd,
+                    baseline,
+                    upstream_url,
+                    &har_path,
+                ))
+                .map_err(|e| format!("iter {i} capture failed: {e}"))?;
+            let (calls, bytes) = parse_har_counts(&har_path).unwrap_or((None, None));
+            iters.push(IterationMeasurement {
+                iteration: i,
+                wall_ms: outcome.wall_ms,
+                cpu_user_ms: None,
+                cpu_sys_ms: None,
+                peak_rss_kb: None,
+                network_calls: calls,
+                network_bytes: bytes,
+                disk_read_bytes: None,
+                disk_write_bytes: None,
+                exit_code: outcome.exit_code,
+            });
+        }
+        Ok(iters)
+    }
+
+    struct IterationOutcome {
+        wall_ms: u64,
+        exit_code: i32,
+    }
+
+    async fn run_one_capture_iteration(
+        cwd: &Path,
+        baseline: &Baseline,
+        upstream_url: &str,
+        har_path: &Path,
+    ) -> Result<IterationOutcome, String> {
+        // mitmproxy's `reverse:` mode wants `scheme://host[:port]`
+        // only — no path. Split the configured upstream URL into the
+        // host part (handed to mitmdump) and the path part (kept on
+        // the BARISTA_TEST_UPSTREAM_URL we hand to the subprocess).
+        // The split mirrors the URL semantics reqwest already honors
+        // when joining a base URL against a request path.
+        let (mitm_target, upstream_path) = split_upstream(upstream_url)?;
+
+        // Spawn mitmdump in reverse-proxy mode targeting the host.
+        // The subprocess connects to localhost:<chosen_port> over
+        // plain HTTP; mitmdump forwards each request to the upstream
+        // over HTTPS and writes both directions into the HAR. No CA
+        // cert install required because the subprocess talks plain
+        // HTTP to localhost.
+        let mut cfg = CaptureConfig::for_har(har_path.to_path_buf());
+        cfg.extra_args = vec![
+            "--mode".to_string(),
+            format!("reverse:{mitm_target}"),
+            // Don't fail if upstream's TLS cert chain isn't 100% clean
+            // from this host; the capture is the test subject.
+            "--ssl-insecure".to_string(),
+        ];
+        let session = CaptureSession::start(cfg)
+            .await
+            .map_err(|e| format!("CaptureSession::start: {e}"))?;
+
+        let listen_port = session.listen_port();
+        wait_for_listener(listen_port).await?;
+
+        let proxy_url = format!("http://127.0.0.1:{listen_port}{upstream_path}");
+
+        // Subprocess setup mirrors super::run_argv but with the
+        // upstream env var pointing at our proxy. We measure wall_ms
+        // around just the subprocess — not the proxy spawn/teardown
+        // overhead, which would otherwise dominate small workloads.
+        let argv = shell_split(&baseline.command);
+        if argv.is_empty() {
+            return Err(format!("empty command: {:?}", baseline.command));
+        }
+        let mut cmd = Command::new(&argv[0]);
+        cmd.args(&argv[1..]);
+        cmd.current_dir(cwd);
+        // The same env-controlled stderr passthrough super::run_argv
+        // uses, applied here so a failing capture iteration is
+        // self-debuggable.
+        let passthrough = std::env::var("BARISTA_BENCH_PASSTHROUGH").is_ok();
+        if passthrough {
+            cmd.stdout(Stdio::inherit());
+            cmd.stderr(Stdio::inherit());
+        } else {
+            cmd.stdout(Stdio::null());
+            cmd.stderr(Stdio::inherit());
+        }
+        cmd.env("BARISTA_TEST_UPSTREAM_URL", &proxy_url);
+
+        let start = Instant::now();
+        let status = cmd
+            .status()
+            .map_err(|e| format!("failed to spawn `{}`: {e}", argv.join(" ")))?;
+        let wall_ms = start.elapsed().as_millis() as u64;
+        let exit_code = status.code().unwrap_or(-1);
+
+        // Tear down the proxy. mitmdump flushes HAR on signal; the
+        // post-stop file is what we parse.
+        let _ = session
+            .stop()
+            .await
+            .map_err(|e| format!("CaptureSession::stop: {e}"))?;
+
+        Ok(IterationOutcome { wall_ms, exit_code })
+    }
+
+    async fn wait_for_listener(port: u16) -> Result<(), String> {
+        let deadline = Instant::now() + READY_POLL_TIMEOUT;
+        loop {
+            if tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_ok()
+            {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "mitmdump did not begin listening on 127.0.0.1:{port} within {:?}",
+                    READY_POLL_TIMEOUT
+                ));
+            }
+            tokio::time::sleep(READY_POLL_INTERVAL).await;
+        }
+    }
+
+    /// Split an upstream URL like `https://repo.maven.apache.org/maven2`
+    /// into `("https://repo.maven.apache.org", "/maven2")`. The first
+    /// half is what mitmdump's `--mode reverse:` accepts; the second
+    /// half is the path prefix we hand back to barista via
+    /// `BARISTA_TEST_UPSTREAM_URL`. Path-less inputs return an empty
+    /// second element.
+    fn split_upstream(url: &str) -> Result<(String, String), String> {
+        let (scheme, rest) = url
+            .split_once("://")
+            .ok_or_else(|| format!("upstream URL missing scheme: {url:?}"))?;
+        match rest.find('/') {
+            Some(slash) => {
+                let host = &rest[..slash];
+                let path = &rest[slash..];
+                Ok((format!("{scheme}://{host}"), path.to_string()))
+            }
+            None => Ok((format!("{scheme}://{rest}"), String::new())),
+        }
+    }
+
+    #[cfg(test)]
+    mod split_upstream_tests {
+        use super::split_upstream;
+
+        #[test]
+        fn splits_off_maven_path() {
+            let (host, path) = split_upstream("https://repo.maven.apache.org/maven2").unwrap();
+            assert_eq!(host, "https://repo.maven.apache.org");
+            assert_eq!(path, "/maven2");
+        }
+
+        #[test]
+        fn host_only_returns_empty_path() {
+            let (host, path) = split_upstream("https://repo.maven.apache.org").unwrap();
+            assert_eq!(host, "https://repo.maven.apache.org");
+            assert_eq!(path, "");
+        }
+
+        #[test]
+        fn rejects_missing_scheme() {
+            assert!(split_upstream("repo.maven.apache.org/maven2").is_err());
+        }
+    }
+
+    /// Parse the HAR at `path` and return `(network_calls, network_bytes)`.
+    /// Returns `(None, None)` if the file doesn't exist or doesn't
+    /// parse; the harness reports the iteration as zero-counts rather
+    /// than failing the whole baseline.
+    fn parse_har_counts(path: &Path) -> Option<(Option<u64>, Option<u64>)> {
+        let bytes = std::fs::read(path).ok()?;
+        let har = parse_har_bytes(&bytes).ok()?;
+        let entries = &har.log.entries;
+        let calls = entries.len() as u64;
+        let total_bytes: i64 = entries
+            .iter()
+            .map(|e| {
+                // HAR content.size can be -1 ("unknown"); clamp to 0.
+                e.response.content.size.max(0)
+            })
+            .sum();
+        Some((Some(calls), Some(total_bytes.max(0) as u64)))
     }
 }

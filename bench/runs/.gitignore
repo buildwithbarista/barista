@@ -19,3 +19,10 @@
 !walkthrough-2026-05-18/**
 !walkthrough-2026-05-18-postfix/
 !walkthrough-2026-05-18-postfix/**
+!walkthrough-2026-05-18-capture/
+!walkthrough-2026-05-18-capture/**
+# But: HAR files (the raw mitmproxy output) are not committed.
+# Real-workload HARs can be ~80 MB each; we keep only the parsed
+# results.json / index.json. The `*-capture/` subdirectories where
+# the HARs land remain ignored across every dataset.
+walkthrough-2026-05-18-capture/**/*-capture/**

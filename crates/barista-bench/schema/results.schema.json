@@ -103,6 +103,7 @@
           "cpu_user_ms": { "type": "integer", "minimum": 0 },
           "cpu_sys_ms": { "type": "integer", "minimum": 0 },
           "peak_rss_kb": { "type": "integer", "minimum": 0 },
+          "network_calls": { "type": "integer", "minimum": 0 },
           "network_bytes": { "type": "integer", "minimum": 0 },
           "disk_read_bytes": { "type": "integer", "minimum": 0 },
           "disk_write_bytes": { "type": "integer", "minimum": 0 },

@@ -22,7 +22,7 @@ display_name = "Spring Boot starter-web — warm dependency resolution"
 category = "corpus"
 corpus_id = "spring-boot-starter-web-app-3.3.5"
 command = "barista pull --update"
-metrics = ["wall_ms"]
+metrics = ["wall_ms", "network_calls", "network_bytes"]
 hardware_tier = 2
 iterations = 10
 warmup_iterations = 2
@@ -39,9 +39,15 @@ display_name = "Apache Maven 3.9.9 — dependency:resolve"
 command = "mvn -B -q -U dependency:resolve"
 # mvn has no easy per-invocation reset; rely on ~/.m2 staying warm.
 
-# Per PRD §17.10 D2 +15% warm-resolve tolerance.
+# Per PRD §17.10 D2 +15% warm-resolve tolerance. `network_*` budgets
+# are tighter than wall-clock because request counts are deterministic
+# given a fixed dependency graph; small noise comes from
+# Maven-metadata refresh policies (mvn-side) and conditional-GET
+# behaviour (`network_bytes_p95` swallows a bit more for the latter).
 [allowed_variance]
 wall_ms_p95 = 0.15
+network_calls_p95 = 0.05
+network_bytes_p95 = 0.20
 
 [labels]
 dimension = "D2"

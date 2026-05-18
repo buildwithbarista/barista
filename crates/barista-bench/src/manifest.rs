@@ -224,7 +224,14 @@ pub enum KnownMetric {
     CpuSysMs,
     /// Peak resident-set size, kibibytes.
     PeakRssKb,
-    /// Bytes read from the network during the run.
+    /// Number of distinct HTTP requests the build emitted to upstream
+    /// repositories during the iteration. Captured via the
+    /// `--capture` harness mode by parsing a mitmproxy HAR; absent on
+    /// timing-pass runs.
+    NetworkCalls,
+    /// Bytes read from the network during the run. Counted from HAR
+    /// response payloads under `--capture`; absent on timing-pass
+    /// runs.
     NetworkBytes,
     /// Bytes read from disk during the run.
     DiskReadBytes,

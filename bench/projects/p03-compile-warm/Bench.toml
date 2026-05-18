@@ -29,7 +29,7 @@ display_name = "Spring Boot starter-web — clean → compile (warm caches)"
 category = "corpus"
 corpus_id = "spring-boot-starter-web-app-3.3.5"
 command = "barista compile"
-metrics = ["wall_ms"]
+metrics = ["wall_ms", "network_calls", "network_bytes"]
 hardware_tier = 2
 iterations = 10
 warmup_iterations = 2
@@ -54,6 +54,8 @@ prepare = "rm -rf target"
 
 [allowed_variance]
 wall_ms_p95 = 0.15
+network_calls_p95 = 0.05
+network_bytes_p95 = 0.20
 
 [labels]
 dimension = "D4"
