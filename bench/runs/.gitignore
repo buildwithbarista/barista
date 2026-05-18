@@ -21,8 +21,16 @@
 !walkthrough-2026-05-18-postfix/**
 !walkthrough-2026-05-18-capture/
 !walkthrough-2026-05-18-capture/**
+!walkthrough-2026-05-18-cold/
+!walkthrough-2026-05-18-cold/**
 # But: HAR files (the raw mitmproxy output) are not committed.
 # Real-workload HARs can be ~80 MB each; we keep only the parsed
 # results.json / index.json. The `*-capture/` subdirectories where
 # the HARs land remain ignored across every dataset.
 walkthrough-2026-05-18-capture/**/*-capture/**
+walkthrough-2026-05-18-cold/**/*-capture/**
+# And: per-iteration cold-cache tempdirs land at
+# `<dataset>/cold-caches/...` and can run to tens of MB per
+# iteration (the entire artifact closure of the workload). Forensic
+# inspection only; not for git.
+walkthrough-2026-05-18-cold/cold-caches/**

@@ -1,0 +1,71 @@
+# Bench.toml — P03 / D1 cold dependency resolution.
+#
+# Mirrors `p03-pull-warm` but declares `cache_isolation =
+# "per-iteration"` so the harness allocates a fresh tempdir before
+# every measured iteration and routes both barista and mvn at it:
+#
+#   - barista subprocess gets `BARISTA_PATHS__CACHE_DIR=<tmp>/barista`
+#     so the CAS is empty when the iteration starts.
+#   - mvn subprocess gets `MAVEN_OPTS=-Dmaven.repo.local=<tmp>/m2`
+#     so `~/.m2` is bypassed for a fresh local-repo per iteration.
+#
+# This is PRD §17.10 Dimension D1 (cold-cache resolve, hard +10%
+# ceiling). It's the **only** honest way to measure "how many calls
+# to Maven Central does each tool make" — warm-cache numbers always
+# say zero on barista because the lockfile fast-path doesn't reach
+# upstream.
+#
+# Iterations reduced to 3 (from the warm variant's 10) because each
+# cold iteration genuinely fetches the full ~170-dep closure from
+# Maven Central; 10 iterations × 3 baselines × multiple manifests
+# adds up to gigabytes of upstream traffic and minutes of wall time.
+
+schema = "barista.bench.manifest/v1"
+id = "P03-pull-cold"
+display_name = "Spring Boot starter-web — cold dependency resolution"
+category = "corpus"
+corpus_id = "spring-boot-starter-web-app-3.3.5"
+command = "barista pull --update"
+metrics = ["wall_ms", "network_calls", "network_bytes"]
+hardware_tier = 2
+iterations = 3
+warmup_iterations = 1
+cache_isolation = "per-iteration"
+
+[[baselines]]
+id = "barista"
+display_name = "barista pull --update (cold cache)"
+command = "barista pull --update"
+# `barista.lock` lives in the project root; deleting it forces a
+# full re-resolve from scratch each iteration. The harness handles
+# the CAS reset by routing each iteration to a fresh tempdir.
+prepare = "rm -f barista.lock"
+
+[[baselines]]
+id = "mvn"
+display_name = "Apache Maven 3.9.9 — dependency:resolve (cold cache)"
+command = "mvn -B -q dependency:resolve"
+# No project-side cleanup needed; the harness routes mvn's
+# local repo to a fresh tempdir via MAVEN_OPTS=-Dmaven.repo.local=...
+# so every iteration is genuinely cold.
+
+# Per PRD §17.10 D1 +10% hard ceiling on cold-cache regressions.
+# Call-counts are highly deterministic per Maven artifact graph;
+# byte budgets are looser to absorb HTTP framing + gzip variance.
+[allowed_variance]
+wall_ms_p95 = 0.10
+network_calls_p95 = 0.02
+network_bytes_p95 = 0.20
+
+[labels]
+dimension = "D1"
+shape = "tiny-target"
+modules = "1"
+direct_deps = "1"
+transitive_deps = "170"
+jdk = "21"
+maven_version = "3.9.9"
+spring_boot_version = "3.3.5"
+checkout_kind = "vendored-symlink"
+checkout_target = "bench/projects/p03/checkout"
+cache_isolation = "per-iteration"

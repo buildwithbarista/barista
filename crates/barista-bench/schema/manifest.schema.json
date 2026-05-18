@@ -118,6 +118,12 @@
         "type": "string"
       },
       "description": "Free-form labels attached to dashboard rows."
+    },
+    "cache_isolation": {
+      "type": "string",
+      "enum": ["none", "per-iteration"],
+      "default": "none",
+      "description": "Per-iteration cache strategy. `none` shares the caller's caches across iterations (warm scenario). `per-iteration` allocates a fresh tempdir per iteration and routes barista (BARISTA_PATHS__CACHE_DIR) and mvn/mvnd (MAVEN_OPTS=-Dmaven.repo.local=...) to it (cold scenario; PRD §17.10 D1/D4)."
     }
   }
 }

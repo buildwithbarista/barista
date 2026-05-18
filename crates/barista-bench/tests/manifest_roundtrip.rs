@@ -232,6 +232,44 @@ command = "barista compile"
     );
 }
 
+// ---------------------------------------------------------------------------
+// cache_isolation — opt-in per-iteration tempdirs for cold-cache runs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cache_isolation_defaults_to_none() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03"
+display_name = "P03"
+category = "corpus"
+command = "barista pull"
+metrics = ["wall_ms"]
+hardware_tier = 2
+"#;
+    let m = Manifest::from_toml_str(raw).expect("parses");
+    assert_eq!(m.cache_isolation, barista_bench::CacheIsolation::None);
+}
+
+#[test]
+fn cache_isolation_per_iteration_parses() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03-pull-cold"
+display_name = "P03 pull, cold cache"
+category = "corpus"
+command = "barista pull --update"
+metrics = ["wall_ms", "network_calls"]
+hardware_tier = 2
+cache_isolation = "per-iteration"
+"#;
+    let m = Manifest::from_toml_str(raw).expect("parses");
+    assert_eq!(
+        m.cache_isolation,
+        barista_bench::CacheIsolation::PerIteration
+    );
+}
+
 #[test]
 fn rejects_empty_baseline_id() {
     let raw = r#"

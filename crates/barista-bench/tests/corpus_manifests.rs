@@ -202,6 +202,7 @@ fn every_corpus_manifest_has_a_checkout_dir() {
         "p03-pull-warm",
         "p03-compile-warm",
         "p03-package-warm",
+        "p03-pull-cold",
     ] {
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -286,6 +287,23 @@ fn p03_compile_warm_manifest_parses() {
     assert_eq!(
         manifest.labels.get("dimension").map(String::as_str),
         Some("D4")
+    );
+}
+
+#[test]
+fn p03_pull_cold_manifest_parses() {
+    let path = manifest_path("p03-pull-cold");
+    let manifest =
+        load_manifest(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+    assert_p03_lifecycle_invariants(&manifest, "P03-pull-cold", &["barista", "mvn"]);
+    assert_eq!(
+        manifest.labels.get("dimension").map(String::as_str),
+        Some("D1")
+    );
+    assert_eq!(
+        manifest.cache_isolation,
+        barista_bench::CacheIsolation::PerIteration,
+        "cold-cache manifest must opt into per-iteration isolation"
     );
 }
 

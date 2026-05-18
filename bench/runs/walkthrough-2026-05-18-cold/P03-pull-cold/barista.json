@@ -1,0 +1,39 @@
+{
+  "schema": "barista.bench.results/v1",
+  "manifest_id": "P03-pull-cold",
+  "baseline_id": "barista",
+  "resolved_command": "barista pull --update",
+  "run_id": "2026-05-18T18:24:36Z-00bd5a82",
+  "timestamp": "2026-05-18T18:24:36Z",
+  "git_sha": "00bd5a8216b47b1822bc9b0333c5e601384cd176",
+  "barista_version": "0.1.0-alpha.0",
+  "hardware_tier": 2,
+  "runner_id": "ajb-mbp.local",
+  "hardware": {
+    "id": "ajb-mbp.local",
+    "cpu": "Apple M4 Max",
+    "cores_physical": 16,
+    "cores_logical": 16,
+    "memory_gb": 128,
+    "os": "macOS 26.2"
+  },
+  "iterations": [
+    {
+      "iteration": 0,
+      "wall_ms": 18574,
+      "network_calls": 438,
+      "network_bytes": 21158541,
+      "exit_code": 0
+    }
+  ],
+  "summary": {
+    "avg_wall_ms": 18574.0,
+    "median_wall_ms": 18574.0,
+    "p95_wall_ms": 18574.0,
+    "stddev_wall_ms": 0.0
+  },
+  "metadata": {
+    "baseline_display_name": "barista pull --update (cold cache)",
+    "corpus_id": "spring-boot-starter-web-app-3.3.5"
+  }
+}

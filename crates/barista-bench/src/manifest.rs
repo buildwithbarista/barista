@@ -110,6 +110,31 @@ pub struct Manifest {
     /// Free-form labels attached to dashboard rows (e.g. `"shape": "library"`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub labels: BTreeMap<String, String>,
+
+    /// Cache-isolation policy for the harness. Default `none` means
+    /// every iteration shares the caller's caches (warm-cache
+    /// scenario — `~/.barista/cache` + `~/.m2` populated by prior
+    /// runs). `per-iteration` tells the harness to allocate a fresh
+    /// tempdir per measured iteration and route both barista (via
+    /// `BARISTA_PATHS__CACHE_DIR`) and mvn/mvnd (via `MAVEN_OPTS=-Dmaven.repo.local=...`)
+    /// to it — every iteration genuinely re-fetches from upstream,
+    /// which is the only honest way to measure "calls to Maven
+    /// Central" on a project.
+    #[serde(default)]
+    pub cache_isolation: CacheIsolation,
+}
+
+/// How the harness manages per-iteration cache state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum CacheIsolation {
+    /// Share the caller's caches across iterations (warm scenario).
+    #[default]
+    None,
+    /// Allocate a fresh tempdir per iteration so every iteration is
+    /// a cold-cache run. Surface for the per-PRD-§17.10 D1 (cold
+    /// dependency resolution) and D4 (cold build) dimensions.
+    PerIteration,
 }
 
 /// Benchmark category — drives which harness consumes the manifest.

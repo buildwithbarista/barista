@@ -247,6 +247,20 @@ fn run(args: RunArgs) -> i32 {
                 }
                 continue;
             }
+            // Per-iteration cold-cache root, materialized only when
+            // the manifest opts in. Each iteration gets its own
+            // subdirectory under this root so a forensic look at
+            // "what files did iter 3 download" stays straightforward.
+            let cold_cache_root: Option<PathBuf> = match manifest.cache_isolation {
+                barista_bench::CacheIsolation::PerIteration => Some(
+                    output_root
+                        .join("cold-caches")
+                        .join(&manifest.id)
+                        .join(&baseline.id),
+                ),
+                barista_bench::CacheIsolation::None => None,
+            };
+
             #[cfg(feature = "capture")]
             let measurement = if args.capture {
                 let har_dir = output_root
@@ -259,12 +273,14 @@ fn run(args: RunArgs) -> i32 {
                     iterations,
                     &args.capture_upstream,
                     &har_dir,
+                    cold_cache_root.as_deref(),
                 )
             } else {
-                measure_baseline(&cwd, baseline, warmup, iterations)
+                measure_baseline(&cwd, baseline, warmup, iterations, cold_cache_root.as_deref())
             };
             #[cfg(not(feature = "capture"))]
-            let measurement = measure_baseline(&cwd, baseline, warmup, iterations);
+            let measurement =
+                measure_baseline(&cwd, baseline, warmup, iterations, cold_cache_root.as_deref());
 
             match measurement {
                 Ok(iters) => {
@@ -376,25 +392,28 @@ fn measure_baseline(
     baseline: &Baseline,
     warmup: u32,
     iterations: u32,
+    cache_root_base: Option<&Path>,
 ) -> Result<Vec<IterationMeasurement>, String> {
     // Warmup runs: discard times, but they DO get the `prepare` step so
     // each iteration starts from a clean tree.
-    for _ in 0..warmup {
+    for w in 0..warmup {
+        let env = cold_cache_env(cache_root_base, "warmup", w)?;
         if let Some(prepare) = &baseline.prepare {
-            run_argv(cwd, prepare, /*measured=*/ false)
+            run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
                 .map_err(|e| format!("warmup prepare failed: {e}"))?;
         }
-        let _ = run_argv(cwd, &baseline.command, /*measured=*/ false)?;
+        let _ = run_argv_with_env(cwd, &baseline.command, /*measured=*/ false, &env)?;
     }
     // Measured runs.
     let mut iters = Vec::with_capacity(iterations as usize);
     for i in 0..iterations {
+        let env = cold_cache_env(cache_root_base, "iter", i)?;
         if let Some(prepare) = &baseline.prepare {
-            run_argv(cwd, prepare, /*measured=*/ false)
+            run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
                 .map_err(|e| format!("iteration {i} prepare failed: {e}"))?;
         }
         let start = Instant::now();
-        let exit = run_argv(cwd, &baseline.command, /*measured=*/ true)?;
+        let exit = run_argv_with_env(cwd, &baseline.command, /*measured=*/ true, &env)?;
         let wall_ms = start.elapsed().as_millis() as u64;
         iters.push(IterationMeasurement {
             iteration: i,
@@ -412,11 +431,85 @@ fn measure_baseline(
     Ok(iters)
 }
 
-/// Run an argv-split command in `cwd`. Returns the exit code; an exit
+/// Compute the env-var pairs that route the subprocess at iteration
+/// `idx` of phase `phase` (`"warmup"` or `"iter"`) to an isolated
+/// cache root under `cache_root_base`. Returns an empty vec when the
+/// manifest didn't opt into cache isolation. The function creates
+/// the iteration's tempdir (plus `barista/` + `m2/` subdirectories)
+/// before returning so the subprocess can write into them.
+///
+/// All paths are absolutised before they're handed to the subprocess
+/// because `cmd.current_dir(...)` makes the subprocess's CWD different
+/// from the parent's CWD — a relative `BARISTA_PATHS__CACHE_DIR` would
+/// resolve against the subprocess's CWD (typically a checkout) and
+/// silently miss the intended tempdir.
+///
+/// Three env vars are set:
+///
+/// - `BARISTA_PATHS__CACHE_DIR` — barista's CAS/index/lock root.
+/// - `BARISTA_PATHS__M2_REPOSITORY` — barista's fallback for
+///   already-fetched artifacts. Without overriding this, barista
+///   hardlinks straight out of the user's `~/.m2/repository` and
+///   makes ZERO network calls even with an empty CAS, which makes
+///   "cold-cache" measurements meaningless.
+/// - `MAVEN_OPTS` (with `-Dmaven.repo.local=...`) — mvn/mvnd's local
+///   repository, so each iteration is genuinely cold against
+///   `mvn dependency:resolve` too.
+fn cold_cache_env(
+    cache_root_base: Option<&Path>,
+    phase: &str,
+    idx: u32,
+) -> Result<Vec<(&'static str, String)>, String> {
+    let Some(base) = cache_root_base else {
+        return Ok(Vec::new());
+    };
+    let iter_dir = base.join(format!("{phase}-{idx}"));
+    let barista_cache = iter_dir.join("barista");
+    let m2 = iter_dir.join("m2");
+    fs::create_dir_all(&barista_cache).map_err(|e| {
+        format!(
+            "creating cold-cache barista root {}: {e}",
+            barista_cache.display()
+        )
+    })?;
+    fs::create_dir_all(&m2)
+        .map_err(|e| format!("creating cold-cache m2 root {}: {e}", m2.display()))?;
+    // Resolve to absolute paths so a subprocess CWD change doesn't
+    // misroute. `canonicalize` follows symlinks, which is what we
+    // want — the iteration dirs are real paths after the
+    // `create_dir_all` above.
+    let barista_cache_abs = fs::canonicalize(&barista_cache).map_err(|e| {
+        format!(
+            "canonicalize {} (barista cache root): {e}",
+            barista_cache.display()
+        )
+    })?;
+    let m2_abs = fs::canonicalize(&m2)
+        .map_err(|e| format!("canonicalize {} (m2 root): {e}", m2.display()))?;
+    Ok(vec![
+        (
+            "BARISTA_PATHS__CACHE_DIR",
+            barista_cache_abs.display().to_string(),
+        ),
+        (
+            "BARISTA_PATHS__M2_REPOSITORY",
+            m2_abs.display().to_string(),
+        ),
+        ("MAVEN_OPTS", format!("-Dmaven.repo.local={}", m2_abs.display())),
+    ])
+}
+
+/// Run an argv-split command in `cwd`, optionally with extra env
+/// vars layered onto the subprocess. Returns the exit code; an exit
 /// other than `0` is an error during warmup (we abort) but allowed
 /// during measurement (recorded on the iteration so the dashboard can
 /// flag failed runs).
-fn run_argv(cwd: &Path, cmdline: &str, measured: bool) -> Result<i32, String> {
+fn run_argv_with_env(
+    cwd: &Path,
+    cmdline: &str,
+    measured: bool,
+    env: &[(&str, String)],
+) -> Result<i32, String> {
     let argv = shell_split(cmdline);
     if argv.is_empty() {
         return Err(format!("empty command: {cmdline:?}"));
@@ -424,6 +517,9 @@ fn run_argv(cwd: &Path, cmdline: &str, measured: bool) -> Result<i32, String> {
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]);
     cmd.current_dir(cwd);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     // Stream stdout/stderr to /dev/null during measurement so terminal
     // I/O doesn't dominate the timing on a small workload.
     // `BARISTA_BENCH_PASSTHROUGH=1` flips both streams to inherit for
@@ -532,8 +628,22 @@ fn build_results_doc(
 
 fn summarize(iters: &[IterationMeasurement]) -> Summary {
     debug_assert!(!iters.is_empty(), "summarize requires ≥1 iteration");
-    let n = iters.len() as f64;
-    let walls: Vec<f64> = iters.iter().map(|i| i.wall_ms as f64).collect();
+    // Filter to successful iterations only — failed iterations (exit
+    // code ≠ 0; common when Maven Central rate-limits a rapid
+    // cold-pull sequence with HTTP 429) measure 'how fast the tool
+    // surfaces the failure', not the workload. If literally every
+    // iteration failed, fall back to the full set so the summary
+    // isn't a degenerate zero — the dashboard can still see the
+    // non-zero exit codes per iteration and flag the run.
+    let successful: Vec<&IterationMeasurement> =
+        iters.iter().filter(|i| i.exit_code == 0).collect();
+    let source: Vec<&IterationMeasurement> = if successful.is_empty() {
+        iters.iter().collect()
+    } else {
+        successful
+    };
+    let n = source.len() as f64;
+    let walls: Vec<f64> = source.iter().map(|i| i.wall_ms as f64).collect();
     let avg = walls.iter().sum::<f64>() / n;
     let mut sorted = walls.clone();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -955,13 +1065,14 @@ mod capture {
         iterations: u32,
         upstream_url: &str,
         har_dir: &Path,
+        cache_root_base: Option<&Path>,
     ) -> Result<Vec<IterationMeasurement>, String> {
         if !baseline_is_capturable(baseline) {
             eprintln!(
                 "  ⓘ {} is not a barista baseline; capture is skipped (network_* will be None).",
                 baseline.id
             );
-            return super::measure_baseline(cwd, baseline, warmup, iterations);
+            return super::measure_baseline(cwd, baseline, warmup, iterations, cache_root_base);
         }
 
         std::fs::create_dir_all(har_dir).map_err(|e| {
@@ -977,8 +1088,9 @@ mod capture {
         // each subprocess goes through a capture session so the warmup
         // JIT is identical to the measured runs. HAR is discarded.
         for w in 0..warmup {
+            let env = super::cold_cache_env(cache_root_base, "warmup", w)?;
             if let Some(prepare) = &baseline.prepare {
-                super::run_argv(cwd, prepare, /*measured=*/ false)
+                super::run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
                     .map_err(|e| format!("warmup {w} prepare failed: {e}"))?;
             }
             let _ = rt
@@ -987,6 +1099,7 @@ mod capture {
                     baseline,
                     upstream_url,
                     &har_dir.join(format!("warmup-{w}.har")),
+                    &env,
                 ))
                 .map_err(|e| format!("warmup {w} capture iteration failed: {e}"))?;
         }
@@ -995,8 +1108,9 @@ mod capture {
         // populated.
         let mut iters = Vec::with_capacity(iterations as usize);
         for i in 0..iterations {
+            let env = super::cold_cache_env(cache_root_base, "iter", i)?;
             if let Some(prepare) = &baseline.prepare {
-                super::run_argv(cwd, prepare, /*measured=*/ false)
+                super::run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
                     .map_err(|e| format!("iter {i} prepare failed: {e}"))?;
             }
             let har_path = har_dir.join(format!("iter-{i}.har"));
@@ -1006,6 +1120,7 @@ mod capture {
                     baseline,
                     upstream_url,
                     &har_path,
+                    &env,
                 ))
                 .map_err(|e| format!("iter {i} capture failed: {e}"))?;
             let (calls, bytes) = parse_har_counts(&har_path).unwrap_or((None, None));
@@ -1035,6 +1150,7 @@ mod capture {
         baseline: &Baseline,
         upstream_url: &str,
         har_path: &Path,
+        extra_env: &[(&str, String)],
     ) -> Result<IterationOutcome, String> {
         // mitmproxy's `reverse:` mode wants `scheme://host[:port]`
         // only — no path. Split the configured upstream URL into the
@@ -1090,6 +1206,9 @@ mod capture {
             cmd.stderr(Stdio::inherit());
         }
         cmd.env("BARISTA_TEST_UPSTREAM_URL", &proxy_url);
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
 
         let start = Instant::now();
         let status = cmd
