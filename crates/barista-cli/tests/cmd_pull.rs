@@ -7,7 +7,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::as_conversions
+    clippy::as_conversions,
+    unsafe_code
 )]
 
 //! Integration tests for `barista pull`.
@@ -141,17 +142,43 @@ fn no_fetch_with_lockfile_succeeds() {
     assert_eq!(lf.entries[0].coords, "org.example:lib");
 }
 
-// ---- full-fetch path: returns NotYetImplemented ------------------------
+// ---- full-fetch path: empty-deps POM succeeds offline ------------------
 
 #[test]
-fn full_fetch_returns_not_yet_implemented() {
+fn full_fetch_empty_deps_succeeds_offline() {
+    // The minimal pom.xml has no <parent> and no <dependencies>, so
+    // the full-fetch path resolves to an empty graph and never
+    // touches the network. It should produce a barista.lock with
+    // zero entries.
     let td = tempfile::tempdir().unwrap();
     let root = fresh_project(&td);
+    // Point the cache_dir + m2 at the tempdir so the test is hermetic.
+    let cache = td.path().join("cache");
+    let m2 = td.path().join("m2");
+    let prev_cache = std::env::var_os("BARISTA_PATHS__CACHE_DIR");
+    let prev_m2 = std::env::var_os("BARISTA_PATHS__M2_REPOSITORY");
+    // SAFETY: env mutation; restored at end.
+    unsafe {
+        std::env::set_var("BARISTA_PATHS__CACHE_DIR", &cache);
+        std::env::set_var("BARISTA_PATHS__M2_REPOSITORY", &m2);
+    }
     let code = run_dispatch(&["barista", "--root", root.to_str().unwrap(), "pull"]);
-    assert_eq!(
-        code, 2,
-        "exit 2 for the full-fetch path until M3.x cache wiring lands"
-    );
+    // SAFETY: restore env.
+    unsafe {
+        match prev_cache {
+            Some(v) => std::env::set_var("BARISTA_PATHS__CACHE_DIR", v),
+            None => std::env::remove_var("BARISTA_PATHS__CACHE_DIR"),
+        }
+        match prev_m2 {
+            Some(v) => std::env::set_var("BARISTA_PATHS__M2_REPOSITORY", v),
+            None => std::env::remove_var("BARISTA_PATHS__M2_REPOSITORY"),
+        }
+    }
+    assert_eq!(code, 0, "empty-deps project should pull cleanly offline");
+    let lock_path = root.join("barista.lock");
+    assert!(lock_path.exists(), "lockfile must be written");
+    let lf = Lockfile::read(&lock_path).unwrap();
+    assert_eq!(lf.entries.len(), 0, "no deps → no entries");
 }
 
 // ---- bad project root --------------------------------------------------
