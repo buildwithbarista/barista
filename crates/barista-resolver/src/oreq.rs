@@ -260,7 +260,9 @@ impl OreqSession {
     /// only advance through [`Self::record_frozen_skip`] which the
     /// caller invokes after deciding to take the short-circuit path.
     pub fn frozen_pin(&self, coords: &Coords) -> Option<String> {
-        self.frozen_pins.as_ref().and_then(|p| p.get(coords).cloned())
+        self.frozen_pins
+            .as_ref()
+            .and_then(|p| p.get(coords).cloned())
     }
 
     /// O-REQ-01: look up `(repo, coords)` in the in-session metadata
@@ -343,10 +345,7 @@ impl OreqSession {
             coords: coords.clone(),
             version: version.to_string(),
         };
-        let guard = self
-            .raw_pom_cache
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let guard = self.raw_pom_cache.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(p) = guard.get(&key) {
             self.counters
                 .oreq_04_parent_pom_dedup_avoided
@@ -367,10 +366,7 @@ impl OreqSession {
             coords: coords.clone(),
             version: version.to_string(),
         };
-        let mut guard = self
-            .raw_pom_cache
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let mut guard = self.raw_pom_cache.lock().unwrap_or_else(|p| p.into_inner());
         guard.insert(key, pom);
     }
 
@@ -582,7 +578,11 @@ mod tests {
         s.deposit_parent_pom(
             &coords,
             "3.2.0",
-            raw_pom("org.springframework.boot", "spring-boot-dependencies", "3.2.0"),
+            raw_pom(
+                "org.springframework.boot",
+                "spring-boot-dependencies",
+                "3.2.0",
+            ),
         );
         // Two sibling starter POMs walk the parent chain → second
         // lookup hits the cache.

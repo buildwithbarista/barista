@@ -272,7 +272,11 @@ pub fn dispatch_lifecycle(
     // level `tokio::join_all` parallelism. Per-module action streams
     // remain sequential (Maven lifecycle ordering inside a module is
     // load-bearing); the parallelism is at the module level.
-    let total_planned: usize = reactor.modules.iter().map(|m| m.action_graph.actions.len()).sum();
+    let total_planned: usize = reactor
+        .modules
+        .iter()
+        .map(|m| m.action_graph.actions.len())
+        .sum();
     let (invocations, executed, failed_actions, total_respawns, final_handle) =
         if reactor.is_single_module() {
             dispatch_single_module(
@@ -401,7 +405,13 @@ fn dispatch_single_module(
             duration_ms,
         });
     }
-    Ok((invocations, executed, failed_actions, total_respawns, handle))
+    Ok((
+        invocations,
+        executed,
+        failed_actions,
+        total_respawns,
+        handle,
+    ))
 }
 
 /// Multi-module reactor dispatcher (M4.3 T4).
@@ -570,7 +580,13 @@ fn dispatch_reactor_modules(
             Err(e) => return Err(e),
         }
     }
-    Ok((invocations, executed, failed_actions, total_respawns, initial_handle))
+    Ok((
+        invocations,
+        executed,
+        failed_actions,
+        total_respawns,
+        initial_handle,
+    ))
 }
 
 /// Per-module outcome from the multi-module dispatcher.

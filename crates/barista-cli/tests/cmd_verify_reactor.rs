@@ -132,7 +132,12 @@ fn write_leaf_module(dir: &Path, name: &str, deps: &[&str]) {
     )
     .unwrap();
     // Capitalize the module name for the class. `a` → `A`.
-    let class = name.chars().next().unwrap().to_ascii_uppercase().to_string();
+    let class = name
+        .chars()
+        .next()
+        .unwrap()
+        .to_ascii_uppercase()
+        .to_string();
     let body = if deps.is_empty() {
         format!(
             "package example;\npublic final class {class} {{ public static String name() {{ return \"{name}\"; }} }}\n"
@@ -151,7 +156,11 @@ fn write_leaf_module(dir: &Path, name: &str, deps: &[&str]) {
             "package example;\npublic final class {class} {{ public static String name() {{ return \"{name}+\" + {dep_class}.name(); }} }}\n"
         )
     };
-    fs::write(dir.join(format!("src/main/java/example/{class}.java")), body).unwrap();
+    fs::write(
+        dir.join(format!("src/main/java/example/{class}.java")),
+        body,
+    )
+    .unwrap();
 }
 
 // ----- topology tests --------------------------------------------
@@ -164,7 +173,12 @@ fn reactor_three_module_fixture_topo_orders_a_before_b_and_c() {
     // 4 modules: parent + a + b + c.
     assert_eq!(r.modules.len(), 4);
     // Find the index of each by artifact id.
-    let idx = |a: &str| r.modules.iter().position(|m| m.id.artifact_id == a).unwrap();
+    let idx = |a: &str| {
+        r.modules
+            .iter()
+            .position(|m| m.id.artifact_id == a)
+            .unwrap()
+    };
     let parent = idx("reactor-fixture");
     let a = idx("a");
     let b = idx("b");
@@ -181,13 +195,7 @@ fn reactor_three_module_fixture_topo_orders_a_before_b_and_c() {
     assert!(!l0.contains(&c), "c not in level 0 (depends on a)");
 
     // Both b and c land in some later level.
-    let later: BTreeSet<usize> = r
-        .topo_levels
-        .iter()
-        .skip(1)
-        .flatten()
-        .copied()
-        .collect();
+    let later: BTreeSet<usize> = r.topo_levels.iter().skip(1).flatten().copied().collect();
     assert!(later.contains(&b), "b reaches a later level");
     assert!(later.contains(&c), "c reaches a later level");
 

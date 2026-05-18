@@ -610,7 +610,10 @@ where
         }
     }
 
-    Ok(outcomes.into_iter().map(Option::unwrap_or_default).collect())
+    Ok(outcomes
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect())
 }
 
 #[cfg(test)]
@@ -923,8 +926,7 @@ mod tests {
                 <version>1.0.0</version>
             </project>"#,
         );
-        let reactor =
-            Reactor::from_project_root(root, MavenPhase::Verify, false).unwrap();
+        let reactor = Reactor::from_project_root(root, MavenPhase::Verify, false).unwrap();
         assert!(reactor.is_single_module());
         assert_eq!(reactor.topo_levels, vec![vec![0]]);
     }
@@ -953,10 +955,7 @@ mod tests {
         type Outcome = String;
         type Error = String;
 
-        fn dispatch(
-            &self,
-            module: &ModuleNode,
-        ) -> ModuleDispatchFuture<String, String> {
+        fn dispatch(&self, module: &ModuleNode) -> ModuleDispatchFuture<String, String> {
             let name = module.id.artifact_id.clone();
             let state = Arc::clone(&self.state);
             let delay_ms = self.delay_ms;

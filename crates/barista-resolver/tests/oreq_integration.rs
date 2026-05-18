@@ -31,12 +31,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use barista_coords::Coords;
-use barista_pom::{
-    EffectivePom, Properties, RawDependency, RawPom, ResolvedPom,
-    raw::RawParent,
-};
+use barista_pom::{EffectivePom, Properties, RawDependency, RawPom, ResolvedPom, raw::RawParent};
 use barista_resolver::oreq::OreqSession;
-use barista_resolver::source::{FetchOrigin, GaMetadata, MetadataError, MetadataSource, ResolveKey};
+use barista_resolver::source::{
+    FetchOrigin, GaMetadata, MetadataError, MetadataSource, ResolveKey,
+};
 use barista_resolver::walker::{WalkOptions, walk};
 
 // ---------------------------------------------------------------------------
@@ -116,7 +115,10 @@ impl CountingSource {
 
     fn add_pom(&mut self, coords: Coords, version: impl Into<String>, p: RawPom) {
         let v = version.into();
-        self.metadata.entry(coords.clone()).or_default().push(v.clone());
+        self.metadata
+            .entry(coords.clone())
+            .or_default()
+            .push(v.clone());
         self.poms.insert((coords, v), p);
     }
 
@@ -192,16 +194,26 @@ async fn oreq_01_metadata_dedup_via_walker() {
     src.add_pom(
         co("ex", "wrapper"),
         "1.0",
-        pom("ex", "wrapper", "1.0", vec![{
-            let mut d = dep("ex", "lib", "RELEASE");
-            d.version = Some("RELEASE".into());
-            d
-        }]),
+        pom(
+            "ex",
+            "wrapper",
+            "1.0",
+            vec![{
+                let mut d = dep("ex", "lib", "RELEASE");
+                d.version = Some("RELEASE".into());
+                d
+            }],
+        ),
     );
 
     let mut root_dep = dep("ex", "lib", "RELEASE");
     root_dep.version = Some("RELEASE".into());
-    let root = pom("ex", "root", "1.0", vec![root_dep, dep("ex", "wrapper", "1.0")]);
+    let root = pom(
+        "ex",
+        "root",
+        "1.0",
+        vec![root_dep, dep("ex", "wrapper", "1.0")],
+    );
 
     let session = Arc::new(OreqSession::new());
     // Disable the skipper so the second `ex:lib` visit actually
@@ -372,11 +384,16 @@ async fn oreq_04_parent_pom_deduped_across_walks_sharing_session() {
         vec![dep("ex", "starter-web", "1.0")],
     );
     let opts = opts_with_session(Arc::clone(&session));
-    let _g1 = walk(&resolved(root_a), &src, &opts).await.expect("walk-a ok");
+    let _g1 = walk(&resolved(root_a), &src, &opts)
+        .await
+        .expect("walk-a ok");
     // After walk-1: counter is 0 (no dedup yet — each coord was new).
     assert_eq!(session.stats().oreq_04_avoided, 0);
     let pom_calls_after_walk1 = src.pom_call_count();
-    assert!(pom_calls_after_walk1 >= 2, "walk-1 should fetch at least starter-web + platform-bom");
+    assert!(
+        pom_calls_after_walk1 >= 2,
+        "walk-1 should fetch at least starter-web + platform-bom"
+    );
 
     // Walk 2: module-B depends on starter-jdbc (which also pulls platform-bom).
     let root_b = pom(
@@ -385,7 +402,9 @@ async fn oreq_04_parent_pom_deduped_across_walks_sharing_session() {
         "1.0",
         vec![dep("ex", "starter-jdbc", "1.0")],
     );
-    let g2 = walk(&resolved(root_b), &src, &opts).await.expect("walk-b ok");
+    let g2 = walk(&resolved(root_b), &src, &opts)
+        .await
+        .expect("walk-b ok");
     // platform-bom is served from session cache → O-REQ-04 fires.
     assert!(
         g2.oreq_stats.oreq_04_avoided >= 1,
@@ -440,7 +459,12 @@ async fn oreq_05_effective_pom_deduped_across_walks_sharing_session() {
     let session = Arc::new(OreqSession::new());
     let opts = opts_with_session(Arc::clone(&session));
     let _ = walk(
-        &resolved(pom("ex", "root-1", "1.0", vec![dep("ex", "module-a", "1.0")])),
+        &resolved(pom(
+            "ex",
+            "root-1",
+            "1.0",
+            vec![dep("ex", "module-a", "1.0")],
+        )),
         &src,
         &opts,
     )
@@ -448,7 +472,12 @@ async fn oreq_05_effective_pom_deduped_across_walks_sharing_session() {
     .expect("walk-1 ok");
     assert_eq!(session.stats().oreq_05_avoided, 0);
     let g2 = walk(
-        &resolved(pom("ex", "root-2", "1.0", vec![dep("ex", "module-b", "1.0")])),
+        &resolved(pom(
+            "ex",
+            "root-2",
+            "1.0",
+            vec![dep("ex", "module-b", "1.0")],
+        )),
         &src,
         &opts,
     )
@@ -483,27 +512,25 @@ async fn all_five_counters_advance_across_two_walks_sharing_session() {
     let mut src = CountingSource::new().with_metadata_origin(FetchOrigin::Disk);
     src.add_pom(co("ex", "lib"), "1.0", pom("ex", "lib", "1.0", vec![]));
     src.add_pom(co("ex", "lib"), "2.0", pom("ex", "lib", "2.0", vec![]));
-    src.add_pom(co("ex", "pinned"), "9.9", pom("ex", "pinned", "9.9", vec![]));
-    src.add_pom(co("ex", "shared"), "1.0", pom("ex", "shared", "1.0", vec![]));
+    src.add_pom(
+        co("ex", "pinned"),
+        "9.9",
+        pom("ex", "pinned", "9.9", vec![]),
+    );
+    src.add_pom(
+        co("ex", "shared"),
+        "1.0",
+        pom("ex", "shared", "1.0", vec![]),
+    );
     src.add_pom(
         co("ex", "module-a"),
         "1.0",
-        pom(
-            "ex",
-            "module-a",
-            "1.0",
-            vec![dep("ex", "shared", "1.0")],
-        ),
+        pom("ex", "module-a", "1.0", vec![dep("ex", "shared", "1.0")]),
     );
     src.add_pom(
         co("ex", "module-b"),
         "1.0",
-        pom(
-            "ex",
-            "module-b",
-            "1.0",
-            vec![dep("ex", "shared", "1.0")],
-        ),
+        pom("ex", "module-b", "1.0", vec![dep("ex", "shared", "1.0")]),
     );
 
     let mut pins = HashMap::new();
@@ -528,7 +555,9 @@ async fn all_five_counters_advance_across_two_walks_sharing_session() {
         "1.0",
         vec![lib_rel, pinned_latest, dep("ex", "module-a", "1.0")],
     );
-    let _g1 = walk(&resolved(root_1), &src, &opts).await.expect("walk-1 ok");
+    let _g1 = walk(&resolved(root_1), &src, &opts)
+        .await
+        .expect("walk-1 ok");
 
     // After walk-1 we expect O-REQ-02 (Disk metadata) and O-REQ-03
     // (one frozen-skip) to have fired, but not the dedup-shaped ones.
@@ -545,12 +574,17 @@ async fn all_five_counters_advance_across_two_walks_sharing_session() {
         "1.0",
         vec![lib_rel_2, dep("ex", "module-b", "1.0")],
     );
-    let g2 = walk(&resolved(root_2), &src, &opts).await.expect("walk-2 ok");
+    let g2 = walk(&resolved(root_2), &src, &opts)
+        .await
+        .expect("walk-2 ok");
 
     let stats = session.stats();
     assert!(stats.oreq_01_avoided >= 1, "O-REQ-01 must fire: {stats:?}");
     assert!(stats.oreq_02_avoided >= 1, "O-REQ-02 must fire: {stats:?}");
-    assert_eq!(stats.oreq_03_avoided, 1, "O-REQ-03 must fire once: {stats:?}");
+    assert_eq!(
+        stats.oreq_03_avoided, 1,
+        "O-REQ-03 must fire once: {stats:?}"
+    );
     assert!(stats.oreq_04_avoided >= 1, "O-REQ-04 must fire: {stats:?}");
     assert!(stats.oreq_05_avoided >= 1, "O-REQ-05 must fire: {stats:?}");
     assert!(stats.total_avoided() >= 5, "total avoided: {stats:?}");
