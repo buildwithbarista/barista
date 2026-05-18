@@ -137,35 +137,56 @@ impl Scope {
     /// via a parent path of effective-scope `parent_path_scope` and the
     /// dep itself declares `declared`, this returns the resulting
     /// transitive scope, or `None` if the transitive should be omitted.
+    ///
+    /// Maven's rule, paraphrased:
+    ///
+    /// - A transitive whose **declared** scope is `provided`, `test`,
+    ///   `system`, or `import` is **dropped**. The Maven docs phrase
+    ///   this as "provided / test / system dependencies are not
+    ///   transitive"; in practice `mvn dependency:tree` omits these,
+    ///   and a build's compile classpath does not see them. Concrete
+    ///   example: `log4j-to-slf4j`'s POM declares `org.osgi.core` at
+    ///   `<scope>provided</scope>` — Maven omits `org.osgi.core` from
+    ///   the closure of any project that pulls in `log4j-to-slf4j`.
+    /// - A parent in the path whose effective scope is `provided`,
+    ///   `system`, or `import` is non-transitive: the entire subtree
+    ///   below it is dropped. (For `provided`, this is the same rule
+    ///   as above, applied recursively: a `provided` direct-dep does
+    ///   not propagate its closure to consumers.)
+    /// - Otherwise, the transitive's effective scope is computed by
+    ///   the standard table for the remaining `(compile, runtime)`
+    ///   parent-row × `(compile, runtime)` declared-column pairs, with
+    ///   `test` parent-row preserving `test` on its transitives.
     pub fn inherit(parent_path_scope: Scope, declared: Scope) -> Option<Scope> {
         use Scope::*;
+
+        // Declared scope drops first: provided / test / system / import
+        // transitives are never propagated, regardless of parent path.
+        match declared {
+            Provided | Test | System | Import => return None,
+            _ => {}
+        }
+
+        // Parent-path scope drops second: provided / system / import
+        // parents have non-transitive closures.
+        match parent_path_scope {
+            Provided | System | Import => return None,
+            _ => {}
+        }
+
+        // Remaining cases are the Maven mediation table restricted to
+        // the (compile, runtime) declared × (compile, runtime, test)
+        // parent grid.
         match (parent_path_scope, declared) {
             (Compile, Compile) => Some(Compile),
             (Compile, Runtime) => Some(Runtime),
-            (Compile, Provided) => Some(Provided),
-            (Compile, Test) => None,
-            (Compile, System) => None,
-            (Provided, Compile) => Some(Provided),
-            (Provided, Runtime) => Some(Provided),
-            (Provided, Provided) => Some(Provided),
-            (Provided, Test) => None,
-            (Provided, System) => None,
             (Runtime, Compile) => Some(Runtime),
             (Runtime, Runtime) => Some(Runtime),
-            (Runtime, Test) => None,
-            (Runtime, Provided) => None,
-            (Runtime, System) => None,
-            (Compile, Import) => None,
-            (Provided, Import) => None,
-            (Runtime, Import) => None,
-            (Test, Import) => None,
             (Test, Compile) => Some(Test),
             (Test, Runtime) => Some(Test),
-            (Test, Provided) => None,
-            (Test, Test) => None,
-            (Test, System) => None,
-            (System, _) => None,
-            (Import, _) => None,
+            // Every other (parent, declared) combination has already
+            // been filtered above.
+            _ => None,
         }
     }
 }
@@ -1372,10 +1393,14 @@ mod tests {
         assert_eq!(b.scope, Scope::Test);
     }
 
-    // ---- 4. Provided is non-transitive (becomes provided) -----------------
+    // ---- 4. Provided direct dep is non-transitive: its closure is dropped --
 
     #[tokio::test]
-    async fn provided_parent_makes_transitive_provided() {
+    async fn provided_direct_does_not_transit() {
+        // Maven rule: a `provided`-scoped direct dep is kept (compile +
+        // test classpath need it), but its transitive closure is NOT
+        // propagated to consumers. `mvn dependency:tree` shows only the
+        // direct provided node, not its descendants.
         let mut src = FixtureSource::new();
         src.add_pom(
             co("ex", "A"),
@@ -1399,8 +1424,15 @@ mod tests {
         );
         let g = run(root, &src).await;
         assert_eq!(
-            g.winners.get(&co("ex", "B")).unwrap().scope,
-            Scope::Provided
+            g.winners.get(&co("ex", "A")).map(|d| d.scope),
+            Some(Scope::Provided),
+            "A is kept as a direct provided dep"
+        );
+        assert!(
+            g.winners.get(&co("ex", "B")).is_none(),
+            "B is the closure of a `provided` direct dep — must not be \
+             pulled into the consumer's graph; closure = {:?}",
+            g.winners.keys().collect::<Vec<_>>()
         );
     }
 
@@ -1956,21 +1988,82 @@ mod tests {
     }
 
     // 30. Scope::inherit fully covers Maven's table — direct enum test.
+    //
+    // Maven's transitive-scope rule: any declared `provided` / `test`
+    // / `system` / `import` is dropped on a transitive (rows below
+    // marked `None` in the declared-side columns), and any parent at
+    // `provided` / `system` / `import` is non-transitive (rows below
+    // marked `None` on the parent-side rows). Surviving cases are the
+    // (compile|runtime|test parent) × (compile|runtime declared) grid
+    // with the usual mediation: runtime widens, test stickies, etc.
     #[test]
     fn scope_inherit_table_smoke() {
         use Scope::*;
+        // Surviving (parent, declared) pairs.
         assert_eq!(Scope::inherit(Compile, Compile), Some(Compile));
         assert_eq!(Scope::inherit(Compile, Runtime), Some(Runtime));
-        assert_eq!(Scope::inherit(Compile, Provided), Some(Provided));
-        assert_eq!(Scope::inherit(Compile, Test), None);
-        assert_eq!(Scope::inherit(Provided, Compile), Some(Provided));
-        assert_eq!(Scope::inherit(Provided, Runtime), Some(Provided));
         assert_eq!(Scope::inherit(Runtime, Compile), Some(Runtime));
-        assert_eq!(Scope::inherit(Runtime, Test), None);
+        assert_eq!(Scope::inherit(Runtime, Runtime), Some(Runtime));
         assert_eq!(Scope::inherit(Test, Compile), Some(Test));
         assert_eq!(Scope::inherit(Test, Runtime), Some(Test));
+        // Declared = provided / test / system / import → drop, always.
+        // This is the row whose old behavior produced the spurious
+        // `org.osgi.core`, `error_prone_annotations`, `jsr305` etc.
+        // transitives in real-world Spring Boot lockfiles.
+        assert_eq!(Scope::inherit(Compile, Provided), None);
+        assert_eq!(Scope::inherit(Compile, Test), None);
+        assert_eq!(Scope::inherit(Compile, System), None);
+        assert_eq!(Scope::inherit(Compile, Import), None);
+        assert_eq!(Scope::inherit(Runtime, Provided), None);
+        assert_eq!(Scope::inherit(Runtime, Test), None);
+        assert_eq!(Scope::inherit(Test, Provided), None);
+        assert_eq!(Scope::inherit(Test, Test), None);
+        // Parent = provided / system / import → drop entire subtree.
+        assert_eq!(Scope::inherit(Provided, Compile), None);
+        assert_eq!(Scope::inherit(Provided, Runtime), None);
+        assert_eq!(Scope::inherit(Provided, Provided), None);
         assert_eq!(Scope::inherit(System, Compile), None);
         assert_eq!(Scope::inherit(Import, Compile), None);
+    }
+
+    // 32 (sibling of #30). Walker-integration regression: a transitive
+    // POM that declares a `provided`-scope dep — the
+    // `log4j-to-slf4j → org.osgi.core` shape — must not pull that dep
+    // into the closure. Pre-fix, `Scope::inherit(Compile, Provided)`
+    // returned `Some(Provided)` and the walker recorded a winner.
+    #[tokio::test]
+    async fn provided_scope_transitive_is_dropped() {
+        let mut src = FixtureSource::new();
+
+        // lib-a is at compile scope in the root; its POM declares a
+        // single transitive at provided scope.
+        let lib_a_pom = {
+            let mut p = pom("ex", "lib-a", "1.0", vec![]);
+            p.dependencies.push(RawDependency {
+                group_id: "ex".into(),
+                artifact_id: "system-api".into(),
+                version: Some("1.0".into()),
+                scope: Some("provided".into()),
+                ..RawDependency::default()
+            });
+            p
+        };
+        src.add_pom(co("ex", "lib-a"), "1.0", lib_a_pom);
+        src.add_pom(
+            co("ex", "system-api"),
+            "1.0",
+            pom("ex", "system-api", "1.0", vec![]),
+        );
+
+        let root = pom("ex", "root", "1.0", vec![dep("ex", "lib-a", "1.0")]);
+        let g = run(root, &src).await;
+
+        assert_eq!(versions(&g, "ex", "lib-a"), Some("1.0".into()));
+        assert!(
+            versions(&g, "ex", "system-api").is_none(),
+            "provided-scope transitive must be dropped; closure = {:?}",
+            g.winners.keys().collect::<Vec<_>>()
+        );
     }
 
     // 31. Scope::parse defaults to Compile on unknown.
