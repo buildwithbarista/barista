@@ -192,11 +192,16 @@ impl CaptureSession {
     /// the HAR, and return a [`CaptureSummary`].
     ///
     /// On Unix this sends SIGTERM via `Child::kill`, which Tokio
-    /// implements as `SIGKILL` — that's the right choice here because
-    /// mitmproxy's HAR add-on flushes synchronously on shutdown
-    /// regardless of signal (it registers an `atexit`-style handler at
-    /// addon load time). If a future mitmproxy release changes that,
-    /// this is the place to switch to SIGTERM via `nix::sys::signal`.
+    /// implements as `SIGKILL` on Unix. **mitmproxy 12.2.3 does NOT
+    /// flush its HAR add-on on SIGKILL** (verified empirically: the
+    /// `--set hardump=...` output file is absent after a SIGKILL
+    /// shutdown, present after a SIGTERM shutdown). An earlier
+    /// generation of the netcap crate assumed the add-on registered
+    /// an `atexit`-style hook that survived SIGKILL; that assumption
+    /// no longer holds. We send SIGTERM via the system `kill(1)`
+    /// binary instead — keeps the crate free of a `nix` / `libc`
+    /// dependency — and fall back to `tokio::process::Child::kill`
+    /// (SIGKILL) on stop_timeout so we never leak a stuck mitmdump.
     pub async fn stop(mut self) -> Result<CaptureSummary, NetcapError> {
         // `take()` so a panic after this point doesn't double-kill via
         // the Drop guard.
@@ -206,18 +211,27 @@ impl CaptureSession {
             .take()
             .expect("CaptureSession::stop called twice — would have moved by ownership");
 
-        // Send the stop signal. `start_kill` is the non-blocking
-        // variant — we then await the exit status under a timeout
-        // below.
-        child.start_kill().map_err(NetcapError::Io)?;
+        // Send SIGTERM via the system `kill` binary so mitmproxy's
+        // HAR add-on gets a chance to flush. If the child has no PID
+        // (already exited), there's nothing to signal — `wait()`
+        // below will surface its status.
+        if let Some(pid) = child.id() {
+            let _ = std::process::Command::new("kill")
+                .arg("-TERM")
+                .arg(pid.to_string())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
 
         let status = match time::timeout(self.stop_timeout, child.wait()).await {
             Ok(Ok(status)) => status,
             Ok(Err(io)) => return Err(NetcapError::Io(io)),
             Err(_) => {
-                // Force-kill on timeout. `kill_on_drop` will mop up if
-                // even this fails (e.g. the process is in
-                // uninterruptible sleep).
+                // SIGTERM didn't take within the budget. Escalate to
+                // SIGKILL via `tokio::process::Child::kill`; the
+                // resulting HAR may be missing/truncated but we
+                // refuse to block forever.
                 let _ = child.kill().await;
                 return Err(NetcapError::StopTimeout);
             }
