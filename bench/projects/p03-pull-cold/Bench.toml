@@ -28,9 +28,26 @@ corpus_id = "spring-boot-starter-web-app-3.3.5"
 command = "barista pull --update"
 metrics = ["wall_ms", "network_calls", "network_bytes"]
 hardware_tier = 2
-iterations = 3
-warmup_iterations = 1
+# `iterations = 1` until the BARISTA_PATHS__CACHE_DIR override-leak
+# bug is closed (filed). Empirically, iter 0 of a cold-cache run
+# correctly goes through the proxy (438 calls captured) but iter 1+
+# pull from a fallback host cache somehow despite the per-iteration
+# env-var override, producing degenerate 0-call iterations that
+# poison medians. Iteration-spacing infrastructure is in place
+# (iteration_spacing_seconds below) and ready to drive iterations≥2
+# the moment the leak is closed.
+iterations = 1
+warmup_iterations = 0
 cache_isolation = "per-iteration"
+# Rate-limit avoidance: Maven Central returns HTTP 429 when several
+# ~438-request cold pulls land in quick succession. A 60-second
+# spacing keeps the cell under the threshold in practice. Empirical
+# floor; lowering this should be done by re-running and watching
+# for 429 in the build log, not by reasoning from theory. Inactive
+# at iterations=1 (the harness skips spacing before the first and
+# after the last iteration) but kept declared so it activates
+# automatically when iterations bumps back up.
+iteration_spacing_seconds = 60
 
 [[baselines]]
 id = "barista"

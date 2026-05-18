@@ -101,6 +101,21 @@ pub struct Manifest {
     #[serde(default = "default_warmup_iterations")]
     pub warmup_iterations: u32,
 
+    /// Seconds to sleep between successive iterations (warmup AND
+    /// measured), NOT before the first or after the last. Default 0.
+    ///
+    /// Cold-cache manifests opt into a non-zero value to space
+    /// real-network iterations under Maven Central's rate-limit
+    /// threshold. Three back-to-back ~438-request cold pulls have
+    /// been observed to trigger HTTP 429 from Maven Central; a
+    /// `iteration_spacing_seconds = 60` gap keeps the cell under
+    /// the threshold in practice.
+    ///
+    /// Warm-cache manifests should leave this at the default 0 —
+    /// there's no upstream traffic to throttle.
+    #[serde(default)]
+    pub iteration_spacing_seconds: u32,
+
     /// Optional per-metric variance budget. Map key is a metric name
     /// (e.g. `"wall_ms_p95"`); value is the fractional drift tolerated
     /// by the regression gate (e.g. `0.10` for 10%).

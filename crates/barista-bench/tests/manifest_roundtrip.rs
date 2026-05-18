@@ -252,6 +252,37 @@ hardware_tier = 2
 }
 
 #[test]
+fn iteration_spacing_defaults_to_zero() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03"
+display_name = "P03"
+category = "corpus"
+command = "barista pull"
+metrics = ["wall_ms"]
+hardware_tier = 2
+"#;
+    let m = Manifest::from_toml_str(raw).expect("parses");
+    assert_eq!(m.iteration_spacing_seconds, 0);
+}
+
+#[test]
+fn iteration_spacing_parses_non_zero() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03-pull-cold"
+display_name = "P03 pull, cold"
+category = "corpus"
+command = "barista pull --update"
+metrics = ["wall_ms"]
+hardware_tier = 2
+iteration_spacing_seconds = 60
+"#;
+    let m = Manifest::from_toml_str(raw).expect("parses");
+    assert_eq!(m.iteration_spacing_seconds, 60);
+}
+
+#[test]
 fn cache_isolation_per_iteration_parses() {
     let raw = r#"
 schema = "barista.bench.manifest/v1"

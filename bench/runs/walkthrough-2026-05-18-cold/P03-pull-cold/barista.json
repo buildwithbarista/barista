@@ -3,9 +3,9 @@
   "manifest_id": "P03-pull-cold",
   "baseline_id": "barista",
   "resolved_command": "barista pull --update",
-  "run_id": "2026-05-18T22:55:34Z-e8b43909",
-  "timestamp": "2026-05-18T22:55:34Z",
-  "git_sha": "e8b43909aa41509431fcb32968e6200f2ff26bd3",
+  "run_id": "2026-05-18T23:53:08Z-807650d4",
+  "timestamp": "2026-05-18T23:53:08Z",
+  "git_sha": "807650d477b6daafdd72c759483c32f8166a2ea9",
   "barista_version": "0.1.0-alpha.0",
   "hardware_tier": 2,
   "runner_id": "ajb-mbp.local",
@@ -20,16 +20,16 @@
   "iterations": [
     {
       "iteration": 0,
-      "wall_ms": 26367,
+      "wall_ms": 21243,
       "network_calls": 438,
       "network_bytes": 21158541,
       "exit_code": 0
     }
   ],
   "summary": {
-    "avg_wall_ms": 26367.0,
-    "median_wall_ms": 26367.0,
-    "p95_wall_ms": 26367.0,
+    "avg_wall_ms": 21243.0,
+    "median_wall_ms": 21243.0,
+    "p95_wall_ms": 21243.0,
     "stddev_wall_ms": 0.0
   },
   "metadata": {

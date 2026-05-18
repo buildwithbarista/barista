@@ -91,6 +91,14 @@ struct RunArgs {
     #[arg(long, value_name = "N")]
     warmup_iterations: Option<u32>,
 
+    /// Override the manifest's `iteration_spacing_seconds`. Sleeps
+    /// between successive iterations (warmup AND measured); never
+    /// before the first or after the last. Set higher than the
+    /// manifest's default when an upstream rate-limit is observed;
+    /// set to 0 to disable spacing entirely.
+    #[arg(long, value_name = "SECONDS")]
+    iteration_spacing_seconds: Option<u32>,
+
     /// Output directory. Each `(manifest, baseline)` pair writes to
     /// `<output>/<manifest_id>/<baseline_id>.json`. Default:
     /// `bench-runs/<run_id>/`.
@@ -225,6 +233,10 @@ fn run(args: RunArgs) -> i32 {
 
         let iterations = args.iterations.unwrap_or(manifest.iterations);
         let warmup = args.warmup_iterations.unwrap_or(manifest.warmup_iterations);
+        let spacing = std::time::Duration::from_secs(
+            args.iteration_spacing_seconds
+                .unwrap_or(manifest.iteration_spacing_seconds) as u64,
+        );
 
         for baseline in &baselines {
             #[cfg(feature = "capture")]
@@ -271,16 +283,30 @@ fn run(args: RunArgs) -> i32 {
                     baseline,
                     warmup,
                     iterations,
+                    spacing,
                     &args.capture_upstream,
                     &har_dir,
                     cold_cache_root.as_deref(),
                 )
             } else {
-                measure_baseline(&cwd, baseline, warmup, iterations, cold_cache_root.as_deref())
+                measure_baseline(
+                    &cwd,
+                    baseline,
+                    warmup,
+                    iterations,
+                    spacing,
+                    cold_cache_root.as_deref(),
+                )
             };
             #[cfg(not(feature = "capture"))]
-            let measurement =
-                measure_baseline(&cwd, baseline, warmup, iterations, cold_cache_root.as_deref());
+            let measurement = measure_baseline(
+                &cwd,
+                baseline,
+                warmup,
+                iterations,
+                spacing,
+                cold_cache_root.as_deref(),
+            );
 
             match measurement {
                 Ok(iters) => {
@@ -392,11 +418,15 @@ fn measure_baseline(
     baseline: &Baseline,
     warmup: u32,
     iterations: u32,
+    spacing: std::time::Duration,
     cache_root_base: Option<&Path>,
 ) -> Result<Vec<IterationMeasurement>, String> {
     // Warmup runs: discard times, but they DO get the `prepare` step so
     // each iteration starts from a clean tree.
     for w in 0..warmup {
+        if w > 0 {
+            sleep_with_notice(spacing, "warmup", w);
+        }
         let env = cold_cache_env(cache_root_base, "warmup", w)?;
         if let Some(prepare) = &baseline.prepare {
             run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
@@ -407,6 +437,13 @@ fn measure_baseline(
     // Measured runs.
     let mut iters = Vec::with_capacity(iterations as usize);
     for i in 0..iterations {
+        // Space between iterations (NOT before the first; NOT after
+        // the last). When warmup_iterations > 0, also space between
+        // the final warmup and the first measured iteration — Maven
+        // Central's rate-limit window doesn't distinguish them.
+        if i > 0 || warmup > 0 {
+            sleep_with_notice(spacing, "iter", i);
+        }
         let env = cold_cache_env(cache_root_base, "iter", i)?;
         if let Some(prepare) = &baseline.prepare {
             run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
@@ -429,6 +466,20 @@ fn measure_baseline(
         });
     }
     Ok(iters)
+}
+
+/// Sleep `dur` between iterations, with a stderr notice so the
+/// operator knows the bench isn't hung. No-op for zero-second
+/// durations.
+fn sleep_with_notice(dur: std::time::Duration, phase: &str, idx: u32) {
+    if dur.is_zero() {
+        return;
+    }
+    eprintln!(
+        "  ⏱  sleeping {}s before {phase} {idx} (rate-limit-aware spacing)",
+        dur.as_secs()
+    );
+    std::thread::sleep(dur);
 }
 
 /// Compute the env-var pairs that route the subprocess at iteration
@@ -1076,6 +1127,7 @@ mod capture {
         baseline: &Baseline,
         warmup: u32,
         iterations: u32,
+        spacing: std::time::Duration,
         upstream_url: &str,
         har_dir: &Path,
         cache_root_base: Option<&Path>,
@@ -1086,7 +1138,14 @@ mod capture {
                 "  ⓘ {} is not capturable by this harness; running timing-only (network_* will be None).",
                 baseline.id
             );
-            return super::measure_baseline(cwd, baseline, warmup, iterations, cache_root_base);
+            return super::measure_baseline(
+                cwd,
+                baseline,
+                warmup,
+                iterations,
+                spacing,
+                cache_root_base,
+            );
         }
 
         std::fs::create_dir_all(har_dir).map_err(|e| {
@@ -1102,6 +1161,9 @@ mod capture {
         // each subprocess goes through a capture session so the warmup
         // JIT is identical to the measured runs. HAR is discarded.
         for w in 0..warmup {
+            if w > 0 {
+                super::sleep_with_notice(spacing, "warmup", w);
+            }
             let env = super::cold_cache_env(cache_root_base, "warmup", w)?;
             if let Some(prepare) = &baseline.prepare {
                 super::run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)
@@ -1126,6 +1188,14 @@ mod capture {
         // populated.
         let mut iters = Vec::with_capacity(iterations as usize);
         for i in 0..iterations {
+            // Space between iterations (NOT before the first; NOT
+            // after the last). Also space between the final warmup
+            // and the first measured iteration when both exist —
+            // upstream rate-limit windows don't distinguish warmup
+            // from measured.
+            if i > 0 || warmup > 0 {
+                super::sleep_with_notice(spacing, "iter", i);
+            }
             let env = super::cold_cache_env(cache_root_base, "iter", i)?;
             if let Some(prepare) = &baseline.prepare {
                 super::run_argv_with_env(cwd, prepare, /*measured=*/ false, &env)

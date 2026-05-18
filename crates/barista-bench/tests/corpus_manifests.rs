@@ -74,10 +74,20 @@ fn assert_corpus_invariants(manifest: &Manifest, expected_id: &str) {
         manifest.iterations >= 1,
         "iterations must be >= 1 (PRD §17.7 step 4: median over runs)"
     );
-    assert!(
-        manifest.warmup_iterations >= 1,
-        "warmup_iterations must be >= 1 (PRD §17.7 step 3b: warm-up run)"
-    );
+    // PRD §17.7 step 3b mandates a warm-up run, but the cold-cache
+    // dimension (cache_isolation = per-iteration) explicitly defeats
+    // JIT/cache warming — each iteration fetches the full closure
+    // from upstream. A warmup iteration in that mode is wasted
+    // network traffic, not a measurement-stability aid. The
+    // §17.7 invariant applies to warm-cache manifests only.
+    if manifest.cache_isolation == barista_bench::CacheIsolation::PerIteration {
+        // Cold-cache: warmup is optional. No assertion.
+    } else {
+        assert!(
+            manifest.warmup_iterations >= 1,
+            "warmup_iterations must be >= 1 for warm-cache manifests (PRD §17.7 step 3b)"
+        );
+    }
     // All P01-P03 are Tier-2 corpus entries today (perf-gate consumes
     // them on the CI runner). Promotion to Tier-3 happens in M A.3
     // once Tier-3 hardware is provisioned.

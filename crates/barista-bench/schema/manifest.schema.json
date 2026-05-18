@@ -104,6 +104,12 @@
       "default": 1,
       "description": "Number of un-measured warmup iterations."
     },
+    "iteration_spacing_seconds": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Seconds to sleep between successive iterations (warmup AND measured). Cold-cache manifests opt into a non-zero value to space real-network iterations under the upstream rate-limit threshold (Maven Central HTTP 429 on rapid ~438-request cold pulls is the documented case). Default 0 = no spacing."
+    },
     "allowed_variance": {
       "type": "object",
       "additionalProperties": {
