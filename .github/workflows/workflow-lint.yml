@@ -244,3 +244,21 @@ jobs:
         # workflow because the audit surface is the same: "the project's
         # automation config is well-formed and behaves as declared".
         run: bash scripts/test-dco-workflow.sh
+
+      - name: Validate parity-check harness comparison logic
+        shell: bash
+        # Exercises the artifact-divergence harness at
+        # `crates/barista-test-fixtures/scripts/parity-check.sh` via
+        # its `--compare-only` mode. Asserts byte-equal `target/`
+        # trees PASS, a seeded one-byte divergence FAILs with the
+        # diverging file named in the output, a missing-side
+        # artifact FAILs, ignore-list paths (surefire-reports/,
+        # maven-status/, *.log) are honored, and usage / env errors
+        # exit with the documented codes. The full build-and-diff
+        # run against the corpus is too slow + network-dependent for
+        # every PR; it's a nightly job once v0.2 wires the daemon
+        # path. This validation covers the load-bearing logic so the
+        # M4.3 T5 acceptance contract ("`parity-check.sh` exits
+        # non-zero on a seeded byte-divergence fixture and zero on
+        # the matching baseline") is mechanically gated on every PR.
+        run: bash scripts/test-parity-check.sh

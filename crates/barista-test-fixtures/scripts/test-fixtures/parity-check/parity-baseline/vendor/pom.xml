@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>build.barista.fixtures</groupId>
+  <artifactId>parity-baseline</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <!--
+    Minimal 1-module Java fixture for the parity-check harness
+    meta-test. Pinned plugin versions keep bytecode + packaging
+    deterministic across hosts. No tests, no extra plugins — the
+    smaller the fixture, the faster the meta-test.
+  -->
+
+  <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!--
+      Static outputTimestamp so the produced JAR's archive headers
+      and MANIFEST.MF don't embed wall-clock build time. Without
+      this, two consecutive `mvn package` runs against the same
+      sources produce different JAR bytes — which would defeat the
+      parity-check's premise. Value matches the M4.3 T6 IT epoch
+      (2020-01-01T00:00:00Z); maven-jar-plugin validates this
+      property is inside [1980-01-02, 2099-12-31].
+    -->
+    <project.build.outputTimestamp>2020-01-01T00:00:00Z</project.build.outputTimestamp>
+  </properties>
+
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+      <plugin>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.1</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>

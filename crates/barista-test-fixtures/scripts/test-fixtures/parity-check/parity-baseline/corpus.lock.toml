@@ -1,0 +1,30 @@
+id = "parity-baseline"
+description = "Minimal 1-module Java fixture for the parity-check harness meta-test. Vendored; no upstream clone."
+git_url = ""
+ref = "v0.1.0"
+ref_kind = "vendored"
+
+jdk = "21"
+maven_version = "3.9.9"
+
+# `package` (not `verify`) — the fixture carries no tests and no
+# integration-test plugins; `package` is the cheapest phase that
+# exercises compile + JAR archive (the part of the lifecycle where
+# byte-divergence between mvn and barista would surface).
+build_cmd = "mvn -B package"
+
+build_time_minutes = 1
+
+notes = """
+Tiny vendored project that lives outside `test-corpus/` because it's
+meta-test infrastructure for the parity-check harness, not a real
+Maven-compatibility corpus entry. Lives under
+`crates/barista-test-fixtures/scripts/test-fixtures/parity-check/`
+so the meta-test can point the harness at it via `--corpus-dir`.
+
+The pom pins maven-compiler-plugin and maven-jar-plugin so the
+bytecode shape and packaging behavior are host-independent — same
+shape as the M4.3 T6 reproducibility-IT fixture, deliberately so.
+
+Bump intentionally: edit `vendor/` + bump `ref` to a new version slug.
+"""
