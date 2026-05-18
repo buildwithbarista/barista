@@ -259,6 +259,25 @@ pub enum WalkError {
         version: String,
         detail: String,
     },
+    /// A transitive POM declared `<parent>` but the parent chain
+    /// couldn't be fully fetched from the metadata source. This was a
+    /// silent skip before — every POM with a `<parent>` had its
+    /// transitive subtree dropped, which under-counted Maven Central
+    /// closures by ~15% on Spring-Boot-shaped projects.
+    #[error("could not resolve parent chain for {coords}:{version}: {detail}")]
+    ParentChainResolution {
+        coords: String,
+        version: String,
+        detail: String,
+    },
+    /// Building the effective POM (parent merge + interpolation +
+    /// depMgt + profiles + BOM imports) failed for a transitive dep.
+    #[error("could not build effective POM for {coords}:{version}: {detail}")]
+    EffectivePomResolution {
+        coords: String,
+        version: String,
+        detail: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -617,36 +636,19 @@ async fn process_item<S: MetadataSource + ?Sized>(
             // shared parent). EFF-LINK: docs/efficiency/findings/EFF-2026-006.md
             let (raw_pom, _origin) =
                 fetch_pom_via_session(source, &coords, &fetch_version, opts).await?;
-            match resolve_child_pom(raw_pom, &opts.activation) {
-                Ok(r) => {
-                    session.deposit_effective_pom(&coords, &fetch_version, r.clone());
-                    r
-                }
-                Err(_) => {
-                    // Fall back to "do not expand what we can't resolve"
-                    // — matches the spec's "T2 stays small" stance.
-                    return Ok(());
-                }
-            }
+            let r = resolve_child_pom(source, &coords, &fetch_version, raw_pom, opts).await?;
+            session.deposit_effective_pom(&coords, &fetch_version, r.clone());
+            r
         }
     } else {
         let (raw_pom, _origin) = source.fetch_pom(&coords, &fetch_version).await?;
-        // Resolve the child POM (parent merge + interpolation + depMgt). For
-        // the resolver-only walker, we use a parent resolver that delegates
-        // back into `source.fetch_pom` synchronously. To avoid re-entering
-        // async from sync, we pre-fetch the parent chain... in practice, for
-        // T2 most fixtures + Maven-Central POMs have already-resolved deps
-        // by the time we get here. To keep T2 simple and deterministic, we
-        // run resolve_pom with a `NoParentResolver` that returns an empty
-        // POM on any parent ask. T7 / M2.3 will plug in a real parent
-        // resolver backed by the same MetadataSource.
-        match resolve_child_pom(raw_pom, &opts.activation) {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = e;
-                return Ok(());
-            }
-        }
+        // Async-prefetch the parent chain into a map, then run the
+        // sync `resolve_pom` against a `MapParentResolver`. The old
+        // path used a `NoParentResolver` stub and silently dropped any
+        // transitive subtree rooted at a POM declaring `<parent>`,
+        // which under-counted Maven Central closures (e.g. the entire
+        // jackson-databind / logback-classic subtrees of Spring Boot).
+        resolve_child_pom(source, &coords, &fetch_version, raw_pom, opts).await?
     };
 
     let child_depth = depth.saturating_add(1);
@@ -961,31 +963,182 @@ fn interval_contains(iv: &crate::version_spec::Interval, v: &Version) -> bool {
 // Child POM resolution
 // ---------------------------------------------------------------------------
 
-/// A [`ParentResolver`] that returns an empty POM for every parent ask.
-/// Used by the walker when resolving fetched transitive POMs: the M2.1
-/// task-2 surface is intentionally narrow — proper parent-chain
-/// resolution for transitives is the job of T7's golden-tests scaffolding
-/// (and ultimately of M2.3's cache-backed resolver). For fixtures whose
-/// POMs are already self-contained (no `<parent>` element) this resolver
-/// is never consulted; for real-world POMs it degrades to "do not expand
-/// what we can't resolve" without crashing.
-struct NoParentResolver;
+/// A sync [`ParentResolver`] backed by a pre-built map of the parent
+/// chain. The walker async-fetches every ancestor before invoking
+/// [`resolve_pom`], so by the time this resolver is consulted every
+/// lookup is an in-memory `HashMap::get`. This bridges
+/// [`resolve_pom`]'s sync `ParentResolver` trait to the async
+/// [`MetadataSource`] API without re-entering the tokio runtime
+/// recursively.
+struct MapParentResolver {
+    chain: HashMap<(String, String, String), RawPom>,
+}
 
-impl ParentResolver for NoParentResolver {
+impl ParentResolver for MapParentResolver {
     fn resolve(&mut self, parent: &barista_pom::RawParent) -> Result<RawPom, String> {
-        Err(format!(
-            "no parent resolver wired (looked up {}:{}:{})",
-            parent.group_id, parent.artifact_id, parent.version
-        ))
+        let key = (
+            parent.group_id.clone(),
+            parent.artifact_id.clone(),
+            parent.version.clone(),
+        );
+        self.chain.get(&key).cloned().ok_or_else(|| {
+            format!(
+                "parent {}:{}:{} not in prefetched chain",
+                parent.group_id, parent.artifact_id, parent.version
+            )
+        })
     }
 }
 
-fn resolve_child_pom(
+/// Walk the parent chain rooted at `raw_pom`, async-fetching each
+/// ancestor through `source` into a `(group, artifact, version) ->
+/// RawPom` map keyed for [`MapParentResolver`].
+///
+/// Capped at [`barista_pom::MAX_CHAIN_DEPTH`]; cycle short-circuits.
+/// In both cases we stop accumulating but return the partial map and
+/// let [`barista_pom::build_effective`] surface a structured
+/// `ChainTooDeep` / `CircularParent` diagnostic when it re-walks the
+/// chain. A fetch failure mid-chain surfaces as
+/// [`WalkError::ParentChainResolution`].
+async fn prefetch_parent_chain<S: MetadataSource + ?Sized>(
+    source: &S,
+    raw_pom: &RawPom,
+    opts: &WalkOptions,
+) -> Result<HashMap<(String, String, String), RawPom>, WalkError> {
+    let mut chain: HashMap<(String, String, String), RawPom> = HashMap::new();
+    let mut current = raw_pom.parent.clone();
+    let mut depth = 0usize;
+    while let Some(p) = current {
+        if depth >= barista_pom::MAX_CHAIN_DEPTH {
+            break;
+        }
+        let key = (p.group_id.clone(), p.artifact_id.clone(), p.version.clone());
+        if chain.contains_key(&key) {
+            break;
+        }
+        let coords =
+            Coords::new(&p.group_id, &p.artifact_id).map_err(|e| WalkError::ParentChainResolution {
+                coords: format!("{}:{}", p.group_id, p.artifact_id),
+                version: p.version.clone(),
+                detail: e.to_string(),
+            })?;
+        let (parent_pom, _origin) = fetch_pom_via_session(source, &coords, &p.version, opts)
+            .await
+            .map_err(|e| WalkError::ParentChainResolution {
+                coords: coords.to_string(),
+                version: p.version.clone(),
+                detail: e.to_string(),
+            })?;
+        current = parent_pom.parent.clone();
+        chain.insert(key, parent_pom);
+        depth += 1;
+    }
+    Ok(chain)
+}
+
+/// Maximum number of iterative-prefetch rounds when
+/// [`resolve_child_pom`] discovers an unseen parent / BOM. Each round
+/// strictly grows the prefetched-chain map, so the loop is bounded by
+/// the size of the (g, a, v) universe; this cap is a defence-in-depth
+/// guard against pathological feedback loops.
+const MAX_PARENT_PREFETCH_ROUNDS: usize = 64;
+
+/// Parse a `"group:artifact:version"` triple, as produced by
+/// [`barista_pom::ResolveError`] / [`barista_pom::EffectiveError`]
+/// when they surface an unresolvable coordinate.
+fn parse_gav(s: &str) -> Option<(String, String, String)> {
+    let parts: Vec<&str> = s.splitn(3, ':').collect();
+    if parts.len() != 3 || parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    Some((parts[0].into(), parts[1].into(), parts[2].into()))
+}
+
+/// Resolve a transitive POM's effective form, awaiting any parent or
+/// BOM-import fetches via `source`.
+///
+/// Earlier iterations of the walker stubbed parent resolution out
+/// entirely and silently truncated transitive subtrees rooted at any
+/// POM declaring `<parent>` — which in Maven Central includes
+/// `jackson-databind`, `logback-classic`, `log4j-to-slf4j`, and
+/// effectively every artifact published from a multi-module project.
+/// That under-counted Spring Boot's transitive closure by ~15% and
+/// produced lockfiles that looked valid but were wrong.
+///
+/// Strategy: pre-fetch the parent chain into a map, then iterate.
+/// [`resolve_pom`] consults [`MapParentResolver`] synchronously; if a
+/// lookup misses (a previously-unseen parent in a deeper chain, or a
+/// BOM import the resolver tries to splice), the resolver surfaces a
+/// structured error carrying the missing `(group, artifact, version)`.
+/// We async-fetch the missing artifact + its own parent chain, fold
+/// the result into the map, and retry. The loop is bounded by
+/// [`MAX_PARENT_PREFETCH_ROUNDS`] but typically converges in 1–4
+/// rounds for real-world POMs.
+async fn resolve_child_pom<S: MetadataSource + ?Sized>(
+    source: &S,
+    coords: &Coords,
+    version: &str,
     raw: RawPom,
-    activation: &ActivationContext,
-) -> Result<ResolvedPom, barista_pom::ResolveError> {
-    let mut r = NoParentResolver;
-    resolve_pom(raw, &mut r, activation)
+    opts: &WalkOptions,
+) -> Result<ResolvedPom, WalkError> {
+    let mut chain = prefetch_parent_chain(source, &raw, opts).await?;
+
+    for _ in 0..MAX_PARENT_PREFETCH_ROUNDS {
+        let mut r = MapParentResolver {
+            chain: chain.clone(),
+        };
+        match resolve_pom(raw.clone(), &mut r, &opts.activation) {
+            Ok(resolved) => return Ok(resolved),
+            Err(barista_pom::ResolveError::Effective(
+                barista_pom::EffectiveError::ParentResolution {
+                    coords: missing, ..
+                },
+            ))
+            | Err(barista_pom::ResolveError::BomImportResolution {
+                coords: missing, ..
+            }) => {
+                let (mg, ma, mv) = parse_gav(&missing).ok_or_else(|| {
+                    WalkError::EffectivePomResolution {
+                        coords: coords.to_string(),
+                        version: version.to_string(),
+                        detail: format!("unparseable missing-coord from resolver: {missing}"),
+                    }
+                })?;
+                let mc = Coords::new(&mg, &ma).map_err(|e| WalkError::ParentChainResolution {
+                    coords: format!("{mg}:{ma}"),
+                    version: mv.clone(),
+                    detail: e.to_string(),
+                })?;
+                let (missing_pom, _origin) = fetch_pom_via_session(source, &mc, &mv, opts)
+                    .await
+                    .map_err(|e| WalkError::ParentChainResolution {
+                        coords: mc.to_string(),
+                        version: mv.clone(),
+                        detail: e.to_string(),
+                    })?;
+                // Also pre-fetch the missing artifact's own parent
+                // chain so the next round doesn't have to recurse for
+                // every ancestor individually.
+                let extra = prefetch_parent_chain(source, &missing_pom, opts).await?;
+                chain.insert((mg, ma, mv), missing_pom);
+                chain.extend(extra);
+            }
+            Err(e) => {
+                return Err(WalkError::EffectivePomResolution {
+                    coords: coords.to_string(),
+                    version: version.to_string(),
+                    detail: e.to_string(),
+                });
+            }
+        }
+    }
+    Err(WalkError::EffectivePomResolution {
+        coords: coords.to_string(),
+        version: version.to_string(),
+        detail: format!(
+            "parent-prefetch fixed point did not converge after {MAX_PARENT_PREFETCH_ROUNDS} rounds"
+        ),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1832,5 +1985,80 @@ mod tests {
         assert_eq!(Scope::parse(Some("system")), Scope::System);
         assert_eq!(Scope::parse(Some("import")), Scope::Import);
         assert_eq!(Scope::parse(Some("garbage")), Scope::Compile);
+    }
+
+    // 32. Regression: a transitive POM declaring `<parent>` must have
+    //     its own `<dependencies>` walked, not silently dropped.
+    //     This mirrors the jackson-databind / logback-classic shape
+    //     that under-counted Spring Boot closures by ~15% before the
+    //     walker grew `MapParentResolver` + `prefetch_parent_chain`.
+    #[tokio::test]
+    async fn parent_bearing_transitive_recurses_into_its_deps() {
+        let mut src = FixtureSource::new();
+
+        // Parent POM that contributes no deps to its child — exists
+        // only so lib-a's `<parent>` declaration resolves.
+        src.add_pom(
+            co("ex", "lib-parent"),
+            "1.0",
+            pom("ex", "lib-parent", "1.0", vec![]),
+        );
+
+        // lib-a: declares `<parent>lib-parent</parent>` *and* a
+        // compile-scope dep on lib-b. The pre-fix walker silently
+        // returned Ok(()) here because `NoParentResolver` errored on
+        // the parent ask, so lib-b was never enqueued.
+        let mut lib_a = pom("ex", "lib-a", "1.0", vec![dep("ex", "lib-b", "1.0")]);
+        lib_a.parent = Some(barista_pom::RawParent {
+            group_id: "ex".into(),
+            artifact_id: "lib-parent".into(),
+            version: "1.0".into(),
+            relative_path: None,
+        });
+        src.add_pom(co("ex", "lib-a"), "1.0", lib_a);
+
+        // lib-b: leaf, no transitives.
+        src.add_pom(co("ex", "lib-b"), "1.0", pom("ex", "lib-b", "1.0", vec![]));
+
+        let root = pom("ex", "root", "1.0", vec![dep("ex", "lib-a", "1.0")]);
+        let g = run(root, &src).await;
+
+        assert_eq!(versions(&g, "ex", "lib-a"), Some("1.0".into()));
+        assert_eq!(
+            versions(&g, "ex", "lib-b"),
+            Some("1.0".into()),
+            "lib-b should be in winners — the walker must recurse into \
+             a transitive POM's <dependencies> even when that POM \
+             declares a <parent>"
+        );
+    }
+
+    // 33. Companion to #32: when the parent itself cannot be fetched,
+    //     surface the failure loudly instead of silently dropping the
+    //     subtree. The pre-fix walker would have produced a wrong but
+    //     "successful" lockfile here.
+    #[tokio::test]
+    async fn unresolvable_parent_surfaces_walk_error() {
+        let mut src = FixtureSource::new();
+
+        // lib-a declares a parent that is NOT in the fixture.
+        let mut lib_a = pom("ex", "lib-a", "1.0", vec![]);
+        lib_a.parent = Some(barista_pom::RawParent {
+            group_id: "ex".into(),
+            artifact_id: "missing-parent".into(),
+            version: "1.0".into(),
+            relative_path: None,
+        });
+        src.add_pom(co("ex", "lib-a"), "1.0", lib_a);
+
+        let root = pom("ex", "root", "1.0", vec![dep("ex", "lib-a", "1.0")]);
+        let opts = WalkOptions::default();
+        let err = walk(&resolved(root), &src, &opts)
+            .await
+            .expect_err("walk must surface the parent fetch failure");
+        assert!(
+            matches!(err, WalkError::ParentChainResolution { .. }),
+            "expected ParentChainResolution, got {err:?}"
+        );
     }
 }
