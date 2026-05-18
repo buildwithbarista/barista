@@ -43,7 +43,39 @@
     "command": {
       "type": "string",
       "minLength": 1,
-      "description": "Shell command line invoked under measurement."
+      "description": "Default command line invoked under measurement when `baselines` is absent/empty. When `baselines` is non-empty, each baseline's `command` is used instead and this field is informational."
+    },
+    "baselines": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "display_name", "command"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9][a-z0-9-]*$",
+            "description": "Stable lowercase kebab-case identifier; echoed into `results.json::baseline_id`."
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Argv-style command line; shell features (&&, |, $VAR) are NOT supported."
+          },
+          "prepare": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional argv-style command run before each measured iteration (e.g. `rm -rf target`); its wall-clock time is NOT included in the measurement."
+          }
+        }
+      },
+      "description": "Optional cross-tool baselines. One results.json document is emitted per (manifest, baseline)."
     },
     "metrics": {
       "type": "array",

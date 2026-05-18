@@ -32,6 +32,19 @@ pub struct ResultsDocument {
     /// [`crate::Manifest::id`].
     pub manifest_id: String,
 
+    /// Optional identifier of the baseline within the manifest's
+    /// `[[baselines]]` array (e.g. `"barista"`, `"mvn"`). Omitted on
+    /// legacy single-baseline runs so older results documents
+    /// continue to validate against the v1 schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_id: Option<String>,
+
+    /// Optional record of the actual command line invoked under
+    /// measurement. Lets reviewers audit what was measured without
+    /// back-referencing the manifest's `[[baselines]]` array.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_command: Option<String>,
+
     /// Stable identifier for this run. Convention: `<rfc3339>-<git_sha_short>`,
     /// e.g. `2026-05-10T18:30:00Z-abcd1234`.
     pub run_id: String,

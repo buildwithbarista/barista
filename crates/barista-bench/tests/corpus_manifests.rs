@@ -192,9 +192,17 @@ fn p03_manifest_parses() {
 #[test]
 fn every_corpus_manifest_has_a_checkout_dir() {
     // Defensive: catch the case where someone adds a Bench.toml but
-    // forgets to create the `checkout/` directory the harness will
-    // chdir into at run time.
-    for id in ["p01", "p02", "p03"] {
+    // forgets to create the `checkout/` directory (or symlink) the
+    // harness will chdir into at run time. P03's lifecycle sub-entries
+    // share the parent P03 checkout via symlink.
+    for id in [
+        "p01",
+        "p02",
+        "p03",
+        "p03-pull-warm",
+        "p03-compile-warm",
+        "p03-package-warm",
+    ] {
         let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
@@ -208,4 +216,91 @@ fn every_corpus_manifest_has_a_checkout_dir() {
             checkout.display()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// P03 lifecycle sub-manifests — cross-tool baseline shape introduced
+// 2026-05-18. Each measures a single lifecycle dimension (pull, compile,
+// package) against barista + (optionally) barista-no-daemon + mvn.
+// ---------------------------------------------------------------------------
+
+/// Shared assertions for the P03 lifecycle sub-manifests: they all
+/// share P03's corpus_id, declare baselines, and target Tier-2.
+fn assert_p03_lifecycle_invariants(manifest: &Manifest, expected_id: &str, want_baselines: &[&str]) {
+    assert_corpus_invariants(manifest, expected_id);
+    assert_eq!(
+        manifest.corpus_id.as_deref(),
+        Some("spring-boot-starter-web-app-3.3.5"),
+        "P03 lifecycle entries share the parent corpus_id"
+    );
+    assert_eq!(
+        manifest.labels.get("checkout_kind").map(String::as_str),
+        Some("vendored-symlink"),
+        "lifecycle entries link to the parent P03 checkout/"
+    );
+    assert_eq!(
+        manifest.labels.get("checkout_target").map(String::as_str),
+        Some("bench/projects/p03/checkout"),
+        "checkout_target label must point at the canonical P03 checkout"
+    );
+    let baselines = manifest.effective_baselines();
+    assert_eq!(
+        baselines.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+        want_baselines,
+        "baseline ids + order must match"
+    );
+    // Every baseline must declare a non-empty command and (where
+    // appropriate) a prepare step.
+    for b in &baselines {
+        assert!(!b.command.trim().is_empty(), "baseline `{}` has empty command", b.id);
+        assert!(
+            !b.display_name.trim().is_empty(),
+            "baseline `{}` has empty display_name",
+            b.id
+        );
+    }
+}
+
+#[test]
+fn p03_pull_warm_manifest_parses() {
+    let path = manifest_path("p03-pull-warm");
+    let manifest =
+        load_manifest(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+    assert_p03_lifecycle_invariants(&manifest, "P03-pull-warm", &["barista", "mvn"]);
+    assert_eq!(
+        manifest.labels.get("dimension").map(String::as_str),
+        Some("D2")
+    );
+}
+
+#[test]
+fn p03_compile_warm_manifest_parses() {
+    let path = manifest_path("p03-compile-warm");
+    let manifest =
+        load_manifest(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+    assert_p03_lifecycle_invariants(
+        &manifest,
+        "P03-compile-warm",
+        &["barista", "barista-no-daemon", "mvn"],
+    );
+    assert_eq!(
+        manifest.labels.get("dimension").map(String::as_str),
+        Some("D4")
+    );
+}
+
+#[test]
+fn p03_package_warm_manifest_parses() {
+    let path = manifest_path("p03-package-warm");
+    let manifest =
+        load_manifest(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+    assert_p03_lifecycle_invariants(
+        &manifest,
+        "P03-package-warm",
+        &["barista", "barista-no-daemon", "mvn"],
+    );
+    assert_eq!(
+        manifest.labels.get("dimension").map(String::as_str),
+        Some("D4")
+    );
 }

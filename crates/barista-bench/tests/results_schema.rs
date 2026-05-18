@@ -73,6 +73,8 @@ fn rust_emitted_results_validate_against_schema() {
     let doc = ResultsDocument {
         schema: RESULTS_SCHEMA.to_string(),
         manifest_id: "P01".to_string(),
+        baseline_id: None,
+        resolved_command: None,
         run_id: "2026-05-10T18:00:00Z-deadbeef".to_string(),
         timestamp: "2026-05-10T18:00:00Z".to_string(),
         git_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
@@ -192,6 +194,8 @@ fn write_results_round_trips_through_disk() {
     let doc = ResultsDocument {
         schema: RESULTS_SCHEMA.to_string(),
         manifest_id: "P01".to_string(),
+        baseline_id: None,
+        resolved_command: None,
         run_id: "2026-05-10T18:00:00Z-deadbeef".to_string(),
         timestamp: "2026-05-10T18:00:00Z".to_string(),
         git_sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),

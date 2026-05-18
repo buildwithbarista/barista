@@ -65,11 +65,25 @@ pub struct Manifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub corpus_id: Option<String>,
 
-    /// Shell command line to invoke under measurement. The harness
-    /// runs this in a subprocess with a clean environment; per-shell
-    /// quoting is not interpreted (the harness uses `argv`-style
-    /// splitting).
+    /// Default shell command line to invoke under measurement.
+    ///
+    /// Backwards-compatible with the v0.1 single-baseline manifest
+    /// shape: when [`Self::baselines`] is empty, the harness derives
+    /// a single implicit baseline with `id = "barista"` whose
+    /// `command` equals this field. When [`Self::baselines`] is
+    /// non-empty, every measurement runs out of an explicit
+    /// `[[baselines]]` entry; this field is retained on the document
+    /// for tools that still consult it (e.g. the perf-gate workflow's
+    /// placeholder), but the harness ignores it at run time.
     pub command: String,
+
+    /// Optional cross-tool baselines: one entry per tool variant to
+    /// measure (e.g. `barista`, `barista-no-daemon`, `mvn`, `mvnd`).
+    /// Each `(manifest, baseline)` pair produces one `results.json`
+    /// document. Empty (the default) preserves the legacy
+    /// single-baseline shape.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub baselines: Vec<Baseline>,
 
     /// Which counters the harness should capture for every iteration.
     /// The set must be non-empty.
@@ -106,6 +120,40 @@ pub enum Category {
     Microbench,
     /// Tier-2 / Tier-3 task-oriented reference project.
     Corpus,
+}
+
+/// One cross-tool baseline inside [`Manifest::baselines`].
+///
+/// Each entry names a single tool variant (e.g. `mvn`, `mvnd`,
+/// `barista`, `barista-no-daemon`) and the exact command line that
+/// invokes it. The harness produces one `results.json` document per
+/// baseline so the dashboard can render each variant as its own row /
+/// trend line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Baseline {
+    /// Stable identifier for this baseline, lowercase kebab-case
+    /// (e.g. `"barista"`, `"barista-no-daemon"`, `"mvn"`, `"mvnd"`).
+    /// Echoed into `results.json::baseline_id`; the dashboard uses
+    /// it as the chart-series key.
+    pub id: String,
+
+    /// Human-readable name for the dashboard (e.g.
+    /// `"barista (warm daemon)"`).
+    pub display_name: String,
+
+    /// Argv-style command line — the harness splits on whitespace and
+    /// runs `argv[0]` with `argv[1..]` as arguments. Shell features
+    /// (`&&`, `|`, `$VAR`) are NOT supported; for multi-step setup
+    /// use [`Self::prepare`].
+    pub command: String,
+
+    /// Optional command run once before each measured iteration (e.g.
+    /// `rm -rf target` to force a clean compile). Run synchronously;
+    /// its wall-clock time is NOT included in the measurement.
+    /// Argv-style (same splitting rules as [`Self::command`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<String>,
 }
 
 /// Hardware tier the manifest is calibrated for. See PRD §17.6.
@@ -238,6 +286,53 @@ impl Manifest {
         if self.iterations == 0 {
             return Err(Error::ManifestInvalid("iterations must be >= 1".into()));
         }
+        // Baseline-section validation: ids must be unique + non-empty,
+        // display_name + command must be non-empty per entry.
+        let mut seen_ids = std::collections::HashSet::new();
+        for (i, b) in self.baselines.iter().enumerate() {
+            if b.id.trim().is_empty() {
+                return Err(Error::ManifestInvalid(format!(
+                    "baselines[{i}].id must not be empty"
+                )));
+            }
+            if !seen_ids.insert(b.id.clone()) {
+                return Err(Error::ManifestInvalid(format!(
+                    "duplicate baseline id `{}` in baselines[{i}]",
+                    b.id
+                )));
+            }
+            if b.display_name.trim().is_empty() {
+                return Err(Error::ManifestInvalid(format!(
+                    "baselines[{i}] (id `{}`).display_name must not be empty",
+                    b.id
+                )));
+            }
+            if b.command.trim().is_empty() {
+                return Err(Error::ManifestInvalid(format!(
+                    "baselines[{i}] (id `{}`).command must not be empty",
+                    b.id
+                )));
+            }
+        }
         Ok(())
+    }
+
+    /// Return the effective list of baselines for this manifest.
+    ///
+    /// When [`Self::baselines`] is non-empty, returns clones of those
+    /// entries. When empty, derives a single implicit baseline with
+    /// `id = "barista"`, `display_name = "barista"`, `command =
+    /// Self::command` — preserving the v0.1 single-baseline shape.
+    pub fn effective_baselines(&self) -> Vec<Baseline> {
+        if self.baselines.is_empty() {
+            vec![Baseline {
+                id: "barista".to_string(),
+                display_name: "barista".to_string(),
+                command: self.command.clone(),
+                prepare: None,
+            }]
+        } else {
+            self.baselines.clone()
+        }
     }
 }

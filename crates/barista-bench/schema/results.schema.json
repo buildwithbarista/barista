@@ -28,6 +28,17 @@
       "minLength": 1,
       "description": "ID of the manifest that produced this run."
     },
+    "baseline_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Identifier of the baseline within the manifest's [[baselines]] array (e.g. `barista`, `mvn`). Omitted on legacy single-baseline runs."
+    },
+    "resolved_command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The actual command line invoked under measurement. Optional; included so reviewers can audit what was measured without back-referencing the manifest."
+    },
     "run_id": {
       "type": "string",
       "minLength": 1,

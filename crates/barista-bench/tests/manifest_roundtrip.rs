@@ -136,3 +136,118 @@ totally_unknown_field = "boo"
     let err = Manifest::from_toml_str(raw).unwrap_err();
     assert!(matches!(err, Error::ManifestParse(_)));
 }
+
+// ---------------------------------------------------------------------------
+// [[baselines]] — cross-tool baseline section (added 2026-05-18)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn legacy_no_baselines_section_derives_implicit_barista() {
+    // A manifest without a [[baselines]] section continues to parse
+    // (backward compat with the v0.1 single-command shape) and the
+    // harness sees a single implicit baseline named `barista`.
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03"
+display_name = "Spring Boot starter-web"
+category = "corpus"
+command = "barista verify"
+metrics = ["wall_ms"]
+hardware_tier = 2
+"#;
+    let m = Manifest::from_toml_str(raw).expect("legacy shape parses");
+    assert!(m.baselines.is_empty());
+    let eff = m.effective_baselines();
+    assert_eq!(eff.len(), 1);
+    assert_eq!(eff[0].id, "barista");
+    assert_eq!(eff[0].command, "barista verify");
+}
+
+#[test]
+fn baselines_section_parses_with_multiple_entries() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03-package-warm"
+display_name = "Spring Boot starter-web — warm package"
+category = "corpus"
+command = "barista package -DskipTests"
+metrics = ["wall_ms"]
+hardware_tier = 2
+
+[[baselines]]
+id = "barista"
+display_name = "barista (warm daemon)"
+command = "barista package -DskipTests"
+prepare = "rm -rf target"
+
+[[baselines]]
+id = "barista-no-daemon"
+display_name = "barista (--no-daemon, forked mvn)"
+command = "barista --no-daemon package -DskipTests"
+prepare = "rm -rf target"
+
+[[baselines]]
+id = "mvn"
+display_name = "Apache Maven 3.9.9"
+command = "mvn -B -q package -DskipTests"
+prepare = "rm -rf target"
+"#;
+    let m = Manifest::from_toml_str(raw).expect("parses");
+    assert_eq!(m.baselines.len(), 3);
+    let eff = m.effective_baselines();
+    assert_eq!(eff.len(), 3);
+    assert_eq!(eff[0].id, "barista");
+    assert_eq!(eff[1].id, "barista-no-daemon");
+    assert_eq!(eff[2].id, "mvn");
+    assert_eq!(eff[0].prepare.as_deref(), Some("rm -rf target"));
+}
+
+#[test]
+fn rejects_duplicate_baseline_ids() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03"
+display_name = "P03"
+category = "corpus"
+command = "barista verify"
+metrics = ["wall_ms"]
+hardware_tier = 2
+
+[[baselines]]
+id = "barista"
+display_name = "barista"
+command = "barista verify"
+
+[[baselines]]
+id = "barista"
+display_name = "second barista"
+command = "barista compile"
+"#;
+    let err = Manifest::from_toml_str(raw).unwrap_err();
+    let msg = err.to_string();
+    assert!(matches!(err, Error::ManifestInvalid(_)), "got: {msg}");
+    assert!(
+        msg.contains("duplicate baseline id"),
+        "diagnostic should mention duplicate baseline id: {msg}"
+    );
+}
+
+#[test]
+fn rejects_empty_baseline_id() {
+    let raw = r#"
+schema = "barista.bench.manifest/v1"
+id = "P03"
+display_name = "P03"
+category = "corpus"
+command = "barista verify"
+metrics = ["wall_ms"]
+hardware_tier = 2
+
+[[baselines]]
+id = ""
+display_name = "barista"
+command = "barista verify"
+"#;
+    let err = Manifest::from_toml_str(raw).unwrap_err();
+    assert!(matches!(err, Error::ManifestInvalid(_)));
+}

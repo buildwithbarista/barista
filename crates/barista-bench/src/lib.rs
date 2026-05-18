@@ -59,7 +59,7 @@ use std::fs;
 use std::path::Path;
 
 pub use error::Error;
-pub use manifest::{HardwareTier, Manifest, Metric};
+pub use manifest::{Baseline, HardwareTier, Manifest, Metric};
 pub use results::{IterationMeasurement, ResultsDocument, RunHardware, Summary};
 
 /// Schema identifier emitted in `Bench.toml`'s top-level `schema` field.
