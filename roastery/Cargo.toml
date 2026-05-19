@@ -85,14 +85,54 @@ hex = "0.4"
 # backend) still requires `async-trait` because the trait must be
 # object-safe.
 async-trait = "0.1"
+# `serde` + `serde_json` shape the JSON request/response bodies the
+# barista-protocol handler accepts and emits (the `cas/missing`
+# batch-presence endpoint, the `capabilities` payload, the structured
+# error body). axum already pulls `serde_json` in transitively for
+# its `Json` extractor; declaring it explicitly here documents the
+# direct dependency so a future axum bump can't silently drop it.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `tokio-util`'s `io::ReaderStream` adapts the `AsyncRead` returned by
+# `Cas::get` into a `Stream<Item = io::Result<Bytes>>` that
+# `axum::body::Body::from_stream` consumes — the streaming GET
+# codepath never has to buffer a full blob in memory.
+tokio-util = { version = "0.7", features = ["io"] }
+# `bytes::Bytes` is the chunk type axum's body stream yields and the
+# item type `StreamReader` expects on the put codepath. Already pulled
+# in transitively by `axum`; declared here so the put-body adapter
+# can name the type directly.
+bytes = "1"
+# `futures-util` provides the `Stream` trait + `TryStreamExt` we use
+# to map axum's body errors to `io::Error` before feeding the chunks
+# to `tokio_util::io::StreamReader`. Already in the transitive graph
+# via axum/tower; declared here for the direct import.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [dev-dependencies]
-# `reqwest` drives the smoke tests. `rustls-tls` is the future-proof
-# TLS backend (matches the M5.1 T5 plan); `http2` makes the client
-# willing to negotiate h2 once TLS is enabled. For the plain-TCP
-# scaffold tests the connection stays HTTP/1.1.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+# `reqwest` drives the integration tests. `rustls-tls` is the
+# future-proof TLS backend (matches a later TLS-enablement task);
+# `http2` makes the client willing to negotiate h2 once TLS is on. The
+# `json` feature unlocks `RequestBuilder::json` + `Response::json` for
+# the barista-protocol JSON payload tests; over plain TCP the
+# connection stays HTTP/1.1.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+# `serde_json::json!` builds the JSON request bodies the
+# `proto_barista` integration tests send; same crate the library
+# depends on so no extra graph cost.
+serde_json = "1"
+# `sha2` and `hex` are used by the integration tests to compute the
+# canonical SHA-256 digest of a test blob before issuing a request,
+# without going through the library's `Digest::of_bytes` helper (the
+# tests deliberately spell out the round-trip path the library is
+# verifying).
+sha2 = "0.10"
+hex = "0.4"
+# `axum` lets the integration tests assemble a router by hand against
+# the public sub-router constructor; same version the library depends
+# on so the API is the one production uses.
+axum = "0.8"
 
 [lints]
 workspace = true

@@ -19,16 +19,20 @@
 //!   that carries the storage backend, and the graceful-shutdown
 //!   loop. Subsequent milestones bolt their routes, layers, and gRPC
 //!   services onto the extension points reserved in this module.
+//! - [`proto`] — wire-protocol handlers. Each submodule owns one
+//!   surface and exposes a `router(state)` constructor the `server`
+//!   assembly merges in.
 //! - [`error`] — the crate-local `RoasteryError` enum, the
 //!   `StorageError` enum surfaced by the storage layer, and the
 //!   crate-wide `Result` alias.
 
 pub mod config;
 pub mod error;
+pub mod proto;
 pub mod server;
 pub mod storage;
 
 pub use config::{ServerConfig, StorageBackend, TlsConfig};
-pub use error::{Result, RoasteryError, StorageError};
+pub use error::{ErrorBody, Result, RoasteryError, StorageError};
 pub use server::{AppState, init_tracing, run};
 pub use storage::{Cas, Digest, FsCas, GcsCas, S3Cas, Stat};

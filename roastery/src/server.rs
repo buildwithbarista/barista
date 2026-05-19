@@ -48,13 +48,19 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// Contains the boxed CAS backend (so the trait stays object-safe and
 /// the same router code drives `FsCas` in production and a mock or
-/// in-memory backend in tests). Cheap to clone (`Arc` bump); axum
-/// clones state per request handler when needed.
+/// in-memory backend in tests) plus the resolved [`ServerConfig`] so
+/// handlers can introspect the deployment shape (e.g. the
+/// barista-protocol `capabilities` endpoint reports the storage
+/// backend discriminant). Cheap to clone (`Arc` bumps); axum clones
+/// state per request handler when needed.
 #[derive(Clone)]
 pub struct AppState {
     /// Content-addressed storage backend. Constructed from
     /// [`ServerConfig::storage`] in [`run`].
     pub cas: Arc<dyn Cas>,
+    /// Resolved server configuration. Shared by `Arc` so handlers can
+    /// read fields without copying the whole struct on every request.
+    pub config: Arc<ServerConfig>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -62,7 +68,10 @@ impl std::fmt::Debug for AppState {
         // `dyn Cas` is not `Debug`; print a stable placeholder so
         // tracing macros that include `AppState` in their payload
         // don't fail to compile.
-        f.debug_struct("AppState").field("cas", &"<dyn Cas>").finish()
+        f.debug_struct("AppState")
+            .field("cas", &"<dyn Cas>")
+            .field("config", &self.config)
+            .finish()
     }
 }
 
@@ -101,13 +110,20 @@ fn build_cas(backend: &StorageBackend) -> Result<Arc<dyn Cas>> {
 /// handlers that consume it (`axum::extract::State<AppState>`). The
 /// scaffold itself still serves only the placeholder root.
 fn build_router(state: AppState) -> Router {
+    // The barista-protocol surface (mounted under `/v1/…`) lives in
+    // its own sub-router so the wire-protocol concerns stay isolated
+    // from this assembly. `Router::merge` composes both sub-routers
+    // into one — they share the listener, the `TraceLayer`, and the
+    // graceful-shutdown path. The merged router applies the shared
+    // `AppState` exactly once at the bottom of the chain.
     Router::new()
         .route("/", get(placeholder_root))
-        // T2 (this task): the CAS backend lives on `state.cas`, ready
-        // for T3 and T4 to mount handlers that call it.
-        // T3: barista-protocol routes mount here (with state).
+        // T2: the CAS backend lives on `state.cas`, ready for T3 and
+        // T4 to mount handlers that call it.
+        // T3 (this task): barista-protocol routes are merged in below.
         // T4: REAPI gRPC services merge in via `Router::merge`.
         // T7: `/healthz`, `/metrics`, `/version` mount here.
+        .merge(crate::proto::barista::router())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
     // T5: wrap with auth `Layer` once auth lands.
@@ -134,7 +150,10 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     // Build the CAS backend up front so a misconfigured storage layer
     // is a startup error, not a first-request error.
     let cas = build_cas(&config.storage)?;
-    let state = AppState { cas };
+    let state = AppState {
+        cas,
+        config: Arc::new(config.clone()),
+    };
 
     let listener = TcpListener::bind(config.bind)
         .await
@@ -232,7 +251,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let cas = FsCas::new(tmp.path().to_path_buf()).unwrap();
         let cas: Arc<dyn Cas> = Arc::new(cas);
-        let state = AppState { cas };
+        let config = ServerConfig::with_bind("127.0.0.1:0".parse().unwrap());
+        let state = AppState {
+            cas,
+            config: Arc::new(config),
+        };
         (tmp, state)
     }
 

@@ -38,14 +38,116 @@ vars (see next section).
 A quick check from another terminal:
 
 ```bash
-curl -i http://127.0.0.1:7878/
+curl -i http://127.0.0.1:7878/v1/health
 # HTTP/1.1 200 OK
-# roastery 0.1.0-alpha.0 scaffold
+# content-type: application/json
+# {"status":"ok","protocol":"barista","version":"v1"}
 ```
 
 To shut the server down, send `SIGINT` (Ctrl-C) or — on Unix —
 `SIGTERM`. The graceful-shutdown path stops accepting new
 connections; in-flight requests complete on their own.
+
+## HTTP API
+
+The server speaks the **barista-protocol** — a small, fixed REST/JSON
+surface every Barista client release knows how to talk to. All routes
+live under `/v1/`; the SHA-256 of a blob is the only identifier used
+in URLs and on the wire.
+
+| Method | Path                              | Purpose                                                            |
+|--------|-----------------------------------|--------------------------------------------------------------------|
+| `GET`  | `/v1/cas/sha256/{digest}`         | Fetch a blob. Streams the body. 404 if absent, 400 if malformed.   |
+| `HEAD` | `/v1/cas/sha256/{digest}`         | Existence check. Same headers as `GET`, empty body.                |
+| `PUT`  | `/v1/cas/sha256/{digest}`         | Upload + verify. 201 on success (incl. re-upload), 400 on mismatch.|
+| `POST` | `/v1/cas/missing`                 | Batch presence check (≤ 1000 entries per call).                    |
+| `GET`  | `/v1/health`                      | Barista-protocol liveness.                                         |
+| `GET`  | `/v1/capabilities`                | Server feature flags + the configured storage backend.             |
+
+### Response headers (CAS endpoints)
+
+Every successful `GET`, `HEAD`, and `PUT` against `/v1/cas/sha256/…`
+sets:
+
+- `Content-Type: application/octet-stream` (GET only)
+- `Content-Length: <size>` — the blob length in bytes.
+- `X-Barista-Digest: sha256:<hex>` — echo of the canonical digest.
+
+### `PUT` semantics
+
+- The path digest is authoritative — bytes are hashed as they stream
+  in and the put fails with `400 BAR-CAS-001` if the result doesn't
+  match.
+- Optional `Content-SHA256: sha256:<hex>` (or bare `<hex>`) request
+  header asserts the same digest at the header layer; a mismatch
+  between the header and the URL is a `400 BAR-CAS-001`.
+- Re-PUTting an existing blob is idempotent and returns `201` — under
+  SHA-256, "same digest" is by definition "same bytes."
+
+### `cas/missing` shape
+
+Request:
+
+```json
+{ "digests": ["sha256:<hex>", "<hex>", ...] }
+```
+
+Bare hex and `sha256:`-prefixed entries are both accepted. Responses
+always emit the canonical `sha256:` prefix:
+
+```json
+{ "missing": ["sha256:<hex>", ...] }
+```
+
+`missing` contains only the subset of supplied digests that are NOT
+present in the store. Submitting more than 1000 entries in a single
+request returns `413 BAR-CAS-004` — clients should batch.
+
+### Error body shape
+
+Every non-2xx response carries a JSON error body with a stable code:
+
+```json
+{
+  "code": "BAR-CAS-001",
+  "message": "digest mismatch",
+  "expected": "...",
+  "actual": "..."
+}
+```
+
+`expected` and `actual` are only set on the digest-mismatch code; the
+generic shape is `{ "code", "message" }`.
+
+| Code          | HTTP | Meaning                                                   |
+|---------------|------|-----------------------------------------------------------|
+| `BAR-CAS-001` | 400  | Digest in URL/header disagreed with the body's hash.      |
+| `BAR-CAS-002` | 400  | Digest string was not a 64-char lowercase hex SHA-256.    |
+| `BAR-CAS-003` | 501  | Storage backend is not yet implemented (S3/GCS stubs).    |
+| `BAR-CAS-004` | 413  | Batch request exceeded the per-call cap of 1000 entries.  |
+| `BAR-CAS-005` | 400  | Request body did not match the documented JSON schema.    |
+| `BAR-CAS-099` | 500  | Unclassified internal/storage I/O failure.                |
+| `BAR-CAS-404` | 404  | Blob not present in the store.                            |
+
+### Curl recipes
+
+```bash
+# Upload a blob (digest is authoritative).
+BLOB=$(echo -n "hello, roastery" | sha256sum | cut -d' ' -f1)
+echo -n "hello, roastery" | curl -i --data-binary @- \
+    -X PUT "http://127.0.0.1:7878/v1/cas/sha256/$BLOB"
+
+# Fetch it back.
+curl -i "http://127.0.0.1:7878/v1/cas/sha256/$BLOB"
+
+# Existence check.
+curl -I "http://127.0.0.1:7878/v1/cas/sha256/$BLOB"
+
+# Batch presence.
+curl -i -X POST "http://127.0.0.1:7878/v1/cas/missing" \
+    -H 'content-type: application/json' \
+    -d "{\"digests\":[\"sha256:$BLOB\",\"sha256:000…0\"]}"
+```
 
 ## Configuration
 
@@ -81,14 +183,19 @@ roastery/
 │   ├── lib.rs            re-exports the public API
 │   ├── config.rs         ServerConfig + env-var loader
 │   ├── server.rs         Router assembly, AppState, shutdown loop
-│   ├── error.rs          RoasteryError + StorageError + Result alias
+│   ├── error.rs          RoasteryError + StorageError + ErrorBody
+│   ├── proto/            wire-protocol handlers
+│   │   ├── mod.rs        module root
+│   │   ├── barista.rs    barista-protocol REST/JSON (/v1/…)
+│   │   └── reapi.rs      REAPI gRPC placeholder (filled in later)
 │   └── storage/          content-addressed storage
 │       ├── mod.rs        Digest, Stat, Cas trait
 │       ├── fs.rs         filesystem-backed Cas (production default)
 │       ├── s3.rs         S3 stub (v0.2)
 │       └── gcs.rs        GCS stub (v0.2)
 └── tests/
-    └── smoke.rs          integration tests: start, serve, shut down
+    ├── smoke.rs          scaffold smoke tests
+    └── proto_barista.rs  barista-protocol HTTP integration tests
 ```
 
 ## Storage backend
@@ -158,7 +265,8 @@ source for `// T<N>:` comments to find the exact extension points:
   `server::AppState`; storage HTTP routes (`/cas/:hash`, `/ac/:hash`,
   …) are not mounted yet — that belongs to the protocol handlers.
 - **T3 — barista-protocol**: the small REST/JSON handler Barista
-  clients speak. Mounts on the router and reads `state.cas`.
+  clients speak. Mounted under `/v1/` — see the **HTTP API** section
+  above for the full endpoint and error-code reference.
 - **T4 — REAPI gRPC**: the `bazel-remote`-compatible gRPC surface,
   served via `tonic` and merged into the axum router with
   `Router::merge` (both stacks share `hyper` + `tower`).
@@ -176,8 +284,10 @@ cargo test -p roastery
 ```
 
 The integration tests in `tests/smoke.rs` spawn the server on an
-ephemeral port and issue a real `reqwest` call against `GET /`. They
-do not require any environment setup.
+ephemeral port and issue a real `reqwest` call against `GET /`. The
+tests in `tests/proto_barista.rs` exercise the full barista-protocol
+surface end-to-end against a live server instance backed by a
+`TempDir` filesystem CAS. Neither set requires any environment setup.
 
 ## License
 

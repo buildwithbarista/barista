@@ -20,6 +20,10 @@ use std::io;
 use std::net::SocketAddr;
 use std::path::Path;
 
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use serde::Serialize;
 use thiserror::Error;
 
 /// All fatal errors the roastery server can surface from `run`.
@@ -116,4 +120,120 @@ pub enum StorageError {
         /// Human-readable context.
         context: String,
     },
+}
+
+/// JSON-serialisable error body the protocol handlers return on every
+/// non-2xx response.
+///
+/// The shape is stable: callers (the Barista CLI, third-party clients)
+/// can match on `code` to dispatch on the failure mode without parsing
+/// `message`. Optional `expected` / `actual` fields are populated for
+/// digest-mismatch errors so a client can surface "you said X, the
+/// bytes hashed to Y" diagnostics without a second round-trip.
+///
+/// ## `BAR-CAS-NNN` code reference
+///
+/// | Code         | HTTP | Meaning                                                   |
+/// |--------------|------|-----------------------------------------------------------|
+/// | `BAR-CAS-001`| 400  | Digest in URL/header disagreed with the body's hash.      |
+/// | `BAR-CAS-002`| 400  | Digest string was not a 64-char lowercase hex SHA-256.    |
+/// | `BAR-CAS-003`| 501  | Storage backend is not yet implemented (S3/GCS stubs).    |
+/// | `BAR-CAS-004`| 413  | Batch request exceeded the documented per-call cap.       |
+/// | `BAR-CAS-005`| 400  | Request body did not match the documented JSON schema.    |
+/// | `BAR-CAS-099`| 500  | Unclassified internal/storage I/O failure.                |
+///
+/// Codes are append-only: new failure modes get a fresh number, never
+/// reuse a retired one.
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorBody {
+    /// Stable `BAR-CAS-NNN` identifier. See the table above.
+    pub code: &'static str,
+    /// Human-readable message. Safe to surface in CLI output; does not
+    /// embed secrets or filesystem paths.
+    pub message: String,
+    /// Digest the caller claimed (for `BAR-CAS-001`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
+    /// Digest the bytes actually hashed to (for `BAR-CAS-001`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<String>,
+}
+
+impl ErrorBody {
+    /// Construct an `ErrorBody` with just a code + message; no
+    /// `expected` / `actual` fields. Most call sites use this.
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            expected: None,
+            actual: None,
+        }
+    }
+
+    /// Construct an `ErrorBody` for a digest-mismatch (`BAR-CAS-001`),
+    /// populated with the expected + actual hex digests.
+    pub fn digest_mismatch(expected: &str, actual: &str) -> Self {
+        Self {
+            code: "BAR-CAS-001",
+            message: "digest mismatch".to_string(),
+            expected: Some(expected.to_string()),
+            actual: Some(actual.to_string()),
+        }
+    }
+}
+
+impl StorageError {
+    /// Map a storage failure to the `(status, body)` pair the HTTP
+    /// handlers return. Kept as an inherent method so callers that
+    /// want to attach extra headers (e.g. echoing `X-Barista-Digest`
+    /// on a successful put) can compose without going through
+    /// `IntoResponse`.
+    pub fn to_http(&self) -> (StatusCode, ErrorBody) {
+        match self {
+            StorageError::DigestMismatch { expected, actual } => (
+                StatusCode::BAD_REQUEST,
+                ErrorBody::digest_mismatch(&expected.to_hex(), &actual.to_hex()),
+            ),
+            StorageError::InvalidDigest { reason } => (
+                StatusCode::BAD_REQUEST,
+                ErrorBody::new("BAR-CAS-002", format!("invalid digest: {reason}")),
+            ),
+            StorageError::NotImplemented { backend } => (
+                StatusCode::NOT_IMPLEMENTED,
+                ErrorBody::new(
+                    "BAR-CAS-003",
+                    format!("storage backend {backend} is not yet implemented"),
+                ),
+            ),
+            StorageError::Io(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorBody::new("BAR-CAS-099", format!("storage I/O error: {e}")),
+            ),
+            StorageError::Other { context } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorBody::new("BAR-CAS-099", format!("storage error: {context}")),
+            ),
+        }
+    }
+}
+
+impl IntoResponse for StorageError {
+    fn into_response(self) -> Response {
+        let (status, body) = self.to_http();
+        (status, Json(body)).into_response()
+    }
+}
+
+impl IntoResponse for RoasteryError {
+    fn into_response(self) -> Response {
+        match self {
+            RoasteryError::Storage(s) => s.into_response(),
+            other => {
+                let body =
+                    ErrorBody::new("BAR-CAS-099", format!("internal server error: {other}"));
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+            }
+        }
+    }
 }
