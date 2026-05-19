@@ -142,6 +142,25 @@ pub enum StorageError {
 /// | `BAR-CAS-005`| 400  | Request body did not match the documented JSON schema.    |
 /// | `BAR-CAS-099`| 500  | Unclassified internal/storage I/O failure.                |
 ///
+/// ## `BAR-AUTH-NNN` code reference
+///
+/// Auth-related codes share the same `ErrorBody` shape (no
+/// `expected` / `actual` fields). They never appear together with a
+/// `BAR-CAS-NNN` code on the same response.
+///
+/// | Code           | HTTP | Meaning                                                                  |
+/// |----------------|------|--------------------------------------------------------------------------|
+/// | `BAR-AUTH-001` | 401  | Request lacked valid bearer / mTLS credentials.                          |
+/// | `BAR-AUTH-002` | 403  | Credentials were valid but the principal isn't authorised (v0.2 RBAC).   |
+/// | `BAR-AUTH-005` | —    | Startup error: non-loopback bind requires `bearer` or `mtls` configured. |
+/// | `BAR-AUTH-099` | 500  | Internal auth-layer failure (verifier panic, extension extraction bug).  |
+///
+/// `BAR-AUTH-005` never travels over the wire — it's the startup
+/// error a misconfigured server surfaces from
+/// [`crate::config::ServerConfig::validate`]. Codes 003/004 are
+/// reserved for future use (`004` is the planned "token expired"
+/// once we add expiry).
+///
 /// Codes are append-only: new failure modes get a fresh number, never
 /// reuse a retired one.
 #[derive(Debug, Clone, Serialize)]

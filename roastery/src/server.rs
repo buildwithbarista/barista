@@ -37,12 +37,13 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
+use crate::auth::{AuthLayer, BearerVerifier, MtlsVerifier};
 use crate::config::{ServerConfig, StorageBackend};
 use crate::error::{Result, RoasteryError};
 use crate::storage::{Cas, FsCas, GcsCas, S3Cas};
 
 /// Crate version exposed in the placeholder root response.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Shared application state passed through the axum router.
 ///
@@ -104,32 +105,83 @@ fn build_cas(backend: &StorageBackend) -> Result<Arc<dyn Cas>> {
     }
 }
 
-/// Build the top-level axum router.
+/// Build the top-level axum router with an auth layer on the
+/// protected routes.
 ///
-/// Takes the shared [`AppState`] so subsequent tasks can mount
-/// handlers that consume it (`axum::extract::State<AppState>`). The
-/// scaffold itself still serves only the placeholder root.
-fn build_router(state: AppState) -> Router {
-    // The barista-protocol surface (mounted under `/v1/…`) lives in
-    // its own sub-router so the wire-protocol concerns stay isolated
-    // from this assembly. `Router::merge` composes both sub-routers
-    // into one — they share the listener, the `TraceLayer`, and the
-    // graceful-shutdown path. The merged router applies the shared
-    // `AppState` exactly once at the bottom of the chain.
+/// Topology:
+///
+/// ```text
+/// Router::new()
+///     ├── /                          (public — scaffold root)
+///     ├── ops::router()              (/healthz, /metrics, /version — always public)
+///     ├── proto::barista::public_router()      (/v1/health, /v1/capabilities)
+///     └── proto::barista::protected_router()   (/v1/cas/...) ← AuthLayer
+/// ```
+///
+/// The auth layer wraps only the protected sub-router. Ops + the
+/// protocol-level public surface bypass it so k8s probes,
+/// Prometheus scrapes, and version-negotiation clients can talk to
+/// the server without credentials.
+///
+/// `AppState` is applied once to each sub-router with
+/// `with_state` and the result is merged into the top-level
+/// router. axum's router-merge composition preserves the layers
+/// applied to each branch.
+pub(crate) fn build_router(state: AppState, auth_layer: AuthLayer) -> Router {
+    let protected = crate::proto::barista::protected_router()
+        .with_state(state.clone())
+        .layer(auth_layer);
+
     Router::new()
         .route("/", get(placeholder_root))
-        // T2: the CAS backend lives on `state.cas`, ready for T3 and
-        // T4 to mount handlers that call it.
-        // T3: barista-protocol routes (`/v1/…`).
-        // T4: REAPI gRPC services merge in via `Router::merge`.
-        // T7: `/healthz`, `/metrics`, `/version` — the ops surface
-        // distinct from the protocol-level `/v1/health`.
-        .merge(crate::proto::barista::router())
-        .merge(crate::ops::router())
+        .merge(crate::proto::barista::public_router().with_state(state.clone()))
+        .merge(crate::ops::router().with_state(state))
+        .merge(protected)
         .layer(TraceLayer::new_for_http())
-        .with_state(state)
-    // T5: wrap with auth `Layer` once auth lands.
     // T6: wrap with upstream-on-miss `Layer` once storage lands.
+}
+
+/// Resolve the configured auth verifiers from disk + assemble the
+/// [`AuthLayer`].
+///
+/// Returns the layer plus owned `Arc` handles to the verifiers (so
+/// the caller can stash them on `AppState` if a future task wants
+/// runtime introspection — today they live only inside the layer).
+/// Surfaces a `RoasteryError::Config` on a file-read or parse
+/// failure, attributed to the operator-supplied path.
+fn build_auth(config: &ServerConfig) -> Result<AuthLayer> {
+    let bearer = match &config.auth.bearer {
+        Some(b) => {
+            let v = BearerVerifier::load(&b.tokens_file)?;
+            info!(
+                source = %b.tokens_file.display(),
+                count = v.entry_count(),
+                "auth: loaded bearer tokens"
+            );
+            Some(Arc::new(v))
+        }
+        None => None,
+    };
+    let mtls = match &config.auth.mtls {
+        Some(m) => {
+            let v = MtlsVerifier::load_ca(&m.ca_cert)?;
+            info!(
+                source = %m.ca_cert.display(),
+                roots = v.root_count(),
+                "auth: loaded mTLS CA"
+            );
+            Some(Arc::new(v))
+        }
+        None => None,
+    };
+    let layer = AuthLayer::new(bearer, mtls);
+    if layer.allows_anonymous() {
+        // Loopback-bound dev workflow; the validate() check above
+        // already verified this state is only possible with a
+        // loopback bind.
+        info!("auth: no mechanism configured — accepting anonymous requests (loopback only)");
+    }
+    Ok(layer)
 }
 
 /// Placeholder handler for `GET /`.
@@ -146,6 +198,11 @@ async fn placeholder_root() -> String {
 /// On Unix the server shuts down gracefully on either `SIGINT`
 /// (Ctrl-C) or `SIGTERM`. On other platforms only Ctrl-C is wired;
 /// SIGTERM is a Unix-only concept.
+///
+/// Picks between plain TCP and TLS based on `config.tls`:
+/// `None` → `axum::serve` over a `TcpListener`; `Some` →
+/// [`crate::server::tls::run_tls`] (a `rustls`-terminated listener
+/// that captures the client cert chain for the mTLS auth path).
 pub async fn run(config: ServerConfig) -> Result<()> {
     config.validate()?;
 
@@ -164,7 +221,19 @@ pub async fn run(config: ServerConfig) -> Result<()> {
         cas,
         config: Arc::new(config.clone()),
     };
+    let auth_layer = build_auth(&config)?;
 
+    if config.tls.is_some() {
+        tls::run_tls(config, state, auth_layer).await
+    } else {
+        run_plain(config, state, auth_layer).await
+    }
+}
+
+/// Plain-TCP (no TLS) listener loop. Used when `config.tls` is
+/// `None`. mTLS is rejected at `validate()` time when TLS is off, so
+/// this path never sees a client cert.
+async fn run_plain(config: ServerConfig, state: AppState, auth_layer: AuthLayer) -> Result<()> {
     let listener = TcpListener::bind(config.bind)
         .await
         .map_err(|source| RoasteryError::Bind {
@@ -178,10 +247,11 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     info!(
         addr = %local_addr,
         version = VERSION,
-        "roastery listening (scaffold; HTTP/1.1 + HTTP/2 via hyper-util auto)"
+        tls = false,
+        "roastery listening (HTTP/1.1 + HTTP/2 via hyper-util auto)"
     );
 
-    let app = build_router(state);
+    let app = build_router(state, auth_layer);
 
     // `axum::serve` wraps `hyper_util::server::conn::auto::Builder`
     // under the hood; passing the `Router` directly preserves the
@@ -232,6 +302,277 @@ async fn shutdown_signal() {
     }
 }
 
+/// TLS listener path: terminates HTTPS with `rustls` and (when
+/// mTLS is configured) captures the client certificate chain for
+/// the auth layer.
+///
+/// Lives in a submodule to keep the rustls + axum-server surface
+/// out of the plain-TCP path's import set. The plain path doesn't
+/// need any of these types.
+pub mod tls {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+
+    use axum::http::Request;
+    use axum_server::accept::Accept;
+    use axum_server::tls_rustls::{RustlsAcceptor, RustlsConfig};
+    use rustls::pki_types::CertificateDer;
+    use tokio::io::{AsyncRead, AsyncWrite};
+    use tower::Service;
+    use tracing::{debug, info};
+
+    use crate::auth::{AuthLayer, ClientCertChain};
+    use crate::config::ServerConfig;
+    use crate::error::{Result, RoasteryError};
+    use crate::server::{AppState, VERSION, build_router};
+
+    /// Build + run a TLS-terminated server.
+    ///
+    /// Installs the `ring` rustls crypto provider as the process
+    /// default before constructing the server config. The install
+    /// is idempotent across calls — `set_default` on an already-
+    /// set provider returns `Err`, which we swallow so the test
+    /// suite (which may call `run_tls` more than once across
+    /// processes-with-shared-state edge cases) doesn't trip on it.
+    pub async fn run_tls(
+        config: ServerConfig,
+        state: AppState,
+        auth_layer: AuthLayer,
+    ) -> Result<()> {
+        // Install the crypto provider once. The `axum-server`
+        // feature `tls-rustls-no-provider` deliberately leaves this
+        // up to us so we can pick the implementation.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // We expect `config.tls` to be `Some` because the caller
+        // checked. Defensive `ok_or` so a future refactor that
+        // bypasses the check surfaces a clean error.
+        let _tls = config.tls.as_ref().ok_or_else(|| {
+            RoasteryError::Config("run_tls called without a TLS config".to_string())
+        })?;
+
+        // Build a `rustls::ServerConfig` by hand so we can plug in
+        // the optional mTLS client verifier when configured.
+        // `axum_server::tls_rustls::RustlsConfig::from_pem_file`
+        // would do the cert/key part but doesn't expose the
+        // client-verifier slot.
+        let server_config = build_rustls_server_config(&config, auth_layer.clone()).await?;
+        let rustls_cfg = RustlsConfig::from_config(Arc::new(server_config));
+
+        let app = build_router(state, auth_layer);
+
+        // Custom acceptor: wraps the `RustlsAcceptor` so we can
+        // pluck peer certs off the completed handshake and inject
+        // them into every request through that connection.
+        let acceptor = CertCapturingAcceptor::new(RustlsAcceptor::new(rustls_cfg));
+
+        info!(
+            addr = %config.bind,
+            version = VERSION,
+            tls = true,
+            "roastery listening (HTTPS via rustls)"
+        );
+
+        axum_server::bind(config.bind)
+            .acceptor(acceptor)
+            .serve(app.into_make_service())
+            .await
+            .map_err(|source| RoasteryError::Io { source })?;
+
+        info!("roastery shutdown complete");
+        Ok(())
+    }
+
+    /// Build a `rustls::ServerConfig` for `axum-server`.
+    ///
+    /// Reads the PEM cert chain + private key supplied by the
+    /// operator. If [`crate::auth::layer::AuthLayer`] carries an
+    /// mTLS verifier (we re-read it from the layer for
+    /// configurational coherence), the rustls config requires a
+    /// client cert chained to that CA on every handshake.
+    async fn build_rustls_server_config(
+        config: &ServerConfig,
+        auth_layer: AuthLayer,
+    ) -> Result<rustls::ServerConfig> {
+        let tls = config
+            .tls
+            .as_ref()
+            .ok_or_else(|| RoasteryError::Config("missing TLS config".to_string()))?;
+
+        // Load cert chain.
+        let cert_pem = tokio::fs::read(&tls.cert_path).await.map_err(|e| {
+            RoasteryError::Config(format!(
+                "cannot read TLS cert {}: {e}",
+                tls.cert_path.display()
+            ))
+        })?;
+        let key_pem = tokio::fs::read(&tls.key_path).await.map_err(|e| {
+            RoasteryError::Config(format!(
+                "cannot read TLS key {}: {e}",
+                tls.key_path.display()
+            ))
+        })?;
+
+        let cert_chain: Vec<CertificateDer<'static>> =
+            rustls_pemfile::certs(&mut std::io::Cursor::new(&cert_pem))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| {
+                    RoasteryError::Config(format!(
+                        "failed to parse TLS cert {}: {e}",
+                        tls.cert_path.display()
+                    ))
+                })?;
+        if cert_chain.is_empty() {
+            return Err(RoasteryError::Config(format!(
+                "TLS cert file {} contained no certificates",
+                tls.cert_path.display()
+            )));
+        }
+        let key = rustls_pemfile::private_key(&mut std::io::Cursor::new(&key_pem))
+            .map_err(|e| {
+                RoasteryError::Config(format!(
+                    "failed to parse TLS key {}: {e}",
+                    tls.key_path.display()
+                ))
+            })?
+            .ok_or_else(|| {
+                RoasteryError::Config(format!(
+                    "TLS key file {} contained no usable private key",
+                    tls.key_path.display()
+                ))
+            })?;
+
+        // Pick between vanilla TLS and mTLS by inspecting the
+        // mTLS portion of the resolved config (the auth layer
+        // already loaded it).
+        let builder = rustls::ServerConfig::builder();
+        let mut server_config = if let Some(m) = &config.auth.mtls {
+            // Re-load the CA — we want the rustls
+            // `WebPkiClientVerifier` here, not the layer's wrapper
+            // around it.  The path was already validated by
+            // ServerConfig::validate.
+            let mtls_verifier = crate::auth::MtlsVerifier::load_ca(&m.ca_cert)?;
+            builder
+                .with_client_cert_verifier(mtls_verifier.verifier())
+                .with_single_cert(cert_chain, key)
+                .map_err(|e| {
+                    RoasteryError::Config(format!("failed to build TLS server config: {e}"))
+                })?
+        } else {
+            builder
+                .with_no_client_auth()
+                .with_single_cert(cert_chain, key)
+                .map_err(|e| {
+                    RoasteryError::Config(format!("failed to build TLS server config: {e}"))
+                })?
+        };
+
+        // ALPN: advertise h2 + http/1.1 so HTTP/2 negotiation works
+        // over TLS.
+        server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+
+        // `auth_layer` is captured here only so the function
+        // signature documents the dependency; rustls itself doesn't
+        // consume it.  Avoid an unused-variable warning by binding
+        // explicitly.
+        let _ = auth_layer;
+
+        Ok(server_config)
+    }
+
+    // -----------------------------------------------------------------
+    // Cert-capturing Accept wrapper
+    // -----------------------------------------------------------------
+
+    /// `axum-server` `Accept` impl that wraps `RustlsAcceptor` and
+    /// snapshots the peer cert chain from the completed TLS
+    /// handshake into a [`ClientCertChain`] request extension.
+    ///
+    /// The chain is captured once per connection (TLS handshakes
+    /// don't re-key the peer cert) and injected into every request
+    /// served through that connection via [`InjectCertChain`].
+    #[derive(Clone)]
+    pub struct CertCapturingAcceptor {
+        inner: RustlsAcceptor,
+    }
+
+    impl CertCapturingAcceptor {
+        /// Wrap a `RustlsAcceptor`.
+        pub fn new(inner: RustlsAcceptor) -> Self {
+            Self { inner }
+        }
+    }
+
+    impl<I, S> Accept<I, S> for CertCapturingAcceptor
+    where
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        S: Send + 'static,
+    {
+        type Stream = tokio_rustls::server::TlsStream<I>;
+        type Service = InjectCertChain<S>;
+        type Future = Pin<
+            Box<
+                dyn Future<Output = std::io::Result<(Self::Stream, Self::Service)>>
+                    + Send
+                    + 'static,
+            >,
+        >;
+
+        fn accept(&self, stream: I, service: S) -> Self::Future {
+            let fut = self.inner.accept(stream, service);
+            Box::pin(async move {
+                let (tls_stream, service) = fut.await?;
+                // Pull the peer-cert chain off the completed
+                // handshake.  When the rustls server config was
+                // built without `with_client_cert_verifier` (vanilla
+                // TLS, no mTLS) this is `None` and we attach an
+                // empty chain — the auth layer treats that as
+                // "mTLS not satisfied" but bearer can still
+                // succeed.
+                let chain: Vec<CertificateDer<'static>> = tls_stream
+                    .get_ref()
+                    .1
+                    .peer_certificates()
+                    .map(|certs| certs.iter().map(|c| c.clone().into_owned()).collect())
+                    .unwrap_or_default();
+                debug!(certs = chain.len(), "tls: captured peer cert chain");
+                let chain = ClientCertChain(Arc::new(chain));
+                Ok((tls_stream, InjectCertChain { inner: service, chain }))
+            })
+        }
+    }
+
+    /// Service wrapper that attaches a [`ClientCertChain`] extension
+    /// to every request passing through. Created once per
+    /// connection by [`CertCapturingAcceptor::accept`].
+    #[derive(Clone)]
+    pub struct InjectCertChain<S> {
+        inner: S,
+        chain: ClientCertChain,
+    }
+
+    impl<S, B> Service<Request<B>> for InjectCertChain<S>
+    where
+        S: Service<Request<B>> + Clone + Send + 'static,
+        S::Future: Send + 'static,
+    {
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = S::Future;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<std::result::Result<(), S::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, mut req: Request<B>) -> Self::Future {
+            req.extensions_mut().insert(self.chain.clone());
+            self.inner.call(req)
+        }
+    }
+}
+
 /// Initialise the global `tracing` subscriber.
 ///
 /// Honours `RUST_LOG` via `tracing_subscriber::EnvFilter`; defaults
@@ -272,7 +613,7 @@ mod tests {
     #[test]
     fn build_router_compiles() {
         let (_tmp, state) = fixture_state();
-        let _: Router = build_router(state);
+        let _: Router = build_router(state, AuthLayer::new(None, None));
     }
 
     #[tokio::test]

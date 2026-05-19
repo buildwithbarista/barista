@@ -20,10 +20,10 @@ the integration tests and downstream embedders consume.
 ## Status
 
 The current code carries the v0.1 surface for storage, the
-barista-protocol HTTP handler, and the ops endpoints (`/healthz`,
-`/metrics`, `/version`). Auth, the REAPI gRPC handler, and
-upstream-on-miss are wired in by subsequent milestones — see
-**Extending the scaffold** below.
+barista-protocol HTTP handler, the ops endpoints (`/healthz`,
+`/metrics`, `/version`), and the authentication surface (bearer
+tokens + mTLS). The REAPI gRPC handler and upstream-on-miss are
+wired in by subsequent tasks — see **Extending the scaffold** below.
 
 ## Running locally
 
@@ -129,6 +129,14 @@ generic shape is `{ "code", "message" }`.
 | `BAR-CAS-099` | 500  | Unclassified internal/storage I/O failure.                |
 | `BAR-CAS-404` | 404  | Blob not present in the store.                            |
 
+Auth failures share the same JSON shape under a separate code
+namespace:
+
+| Code           | HTTP | Meaning                                                  |
+|----------------|------|----------------------------------------------------------|
+| `BAR-AUTH-001` | 401  | Request lacked valid bearer/mTLS credentials.            |
+| `BAR-AUTH-002` | 403  | Credentials valid but the principal isn't authorised.    |
+
 ### Curl recipes
 
 ```bash
@@ -224,28 +232,123 @@ A 5 s scrape interval is comfortable: the storage-bytes gauge is
 cached at the same TTL, so a tight loop won't make `/metrics` walk
 the CAS tree on every poll.
 
+## Authentication
+
+The server supports two authentication mechanisms — bearer tokens
+and mTLS — and either, both, or neither can be configured. When
+**both** are configured, **either** mechanism suffices on a
+per-request basis (bearer is checked first; mTLS is the
+fall-through).
+
+### Public vs protected routes
+
+The auth layer wraps only the CAS endpoints. The following routes
+are **always public**, regardless of which auth mechanisms are
+configured:
+
+- `/healthz` — k8s liveness probe.
+- `/metrics` — Prometheus scrape target. Operators that need to
+  restrict access should do it at the network layer (NetworkPolicy,
+  firewall, sidecar).
+- `/version` — build identity. Used by deploy tooling and human
+  operators; no sensitive data.
+- `/v1/health` — barista-protocol liveness. Clients use this before
+  authenticating to confirm the protocol stack is up.
+- `/v1/capabilities` — version negotiation. Clients consult this
+  before they know what credentials the server expects.
+
+These five routes accept anonymous requests on every deployment.
+The CAS endpoints (`/v1/cas/sha256/{digest}` for GET / HEAD / PUT
+and `/v1/cas/missing`) require valid credentials when any auth
+mechanism is configured.
+
+### Bearer tokens
+
+Set `ROASTERY_BEARER_TOKENS_FILE=/etc/roastery/tokens.txt`. The
+file format is UTF-8, one entry per line:
+
+```text
+# comments start with '#'
+ci-runner-1:s3cret-token-value
+ci-runner-2:another-secret
+```
+
+Each entry is `<label>:<secret>`. The label is a short non-secret
+identifier (it shows up in logs); the secret is what clients send
+in the `Authorization` header:
+
+```bash
+curl -i https://roastery.example.com/v1/cas/sha256/$DIGEST \
+    -H 'Authorization: Bearer s3cret-token-value'
+```
+
+Lines without a `:` are also accepted: the entire line is the
+secret, and a short SHA-256 prefix stands in for the label.
+
+Tokens are loaded once at startup, hashed with SHA-256, and
+compared in constant time. Plaintext bytes never leave the loader;
+the in-memory state stores only the hashes. v0.2 will add a
+`SIGHUP`-driven reload.
+
+### mTLS
+
+Set `ROASTERY_MTLS_CA_CERT=/etc/roastery/ca.pem` to a PEM bundle of
+one or more trust anchors. The server then requires every client
+to present a certificate chained to one of those CAs during the
+TLS handshake. Clients that don't present a cert, or present one
+signed by a different CA, are rejected at the TLS layer — the HTTP
+request never starts.
+
+mTLS requires server-side TLS — set `ROASTERY_TLS_CERT` and
+`ROASTERY_TLS_KEY` alongside `ROASTERY_MTLS_CA_CERT`. The server
+refuses to start if mTLS is configured without TLS termination.
+
+Successful handshakes attach a `Principal::Mtls { subject }` to
+the request. The subject is the leaf cert's first URI SAN
+(preferred — SPIFFE IDs land here) or the Subject Common Name, in
+that order. v0.1 handlers don't read the subject; v0.2 RBAC will
+key per-route ACLs off it.
+
+### Fail-closed default
+
+A roastery bound to a **non-loopback** address (anything other
+than `127.0.0.1` / `::1` / `localhost`) with **neither** bearer
+**nor** mTLS configured refuses to start. The error is
+`BAR-AUTH-005`:
+
+```text
+roastery: invalid server configuration: BAR-AUTH-005:
+  non-loopback bind 0.0.0.0:7878 requires auth configuration
+  (set ROASTERY_BEARER_TOKENS_FILE and/or ROASTERY_MTLS_CA_CERT)
+```
+
+Loopback binds without auth are explicitly allowed so the
+`cargo run -p roastery` dev workflow stays one-command.
+
 ## Configuration
 
 All configuration is environment-driven. Defaults are documented in
 the table; `ServerConfig::from_env` applies them when the variable is
 unset.
 
-| Variable                   | Default            | Notes                                                                      |
-|----------------------------|--------------------|----------------------------------------------------------------------------|
-| `ROASTERY_BIND`            | `127.0.0.1:7878`   | `host:port` for the TCP listener.                                          |
-| `ROASTERY_STORAGE_DIR`     | `./.roastery-data` | Filesystem CAS root; created on startup if missing.                        |
-| `ROASTERY_STORAGE_BACKEND` | `fs`               | `fs` (default), `s3`, or `gcs`. See **Storage backend** below.             |
-| `ROASTERY_STORAGE_BUCKET`  | _(unset)_          | Required when backend is `s3` or `gcs`.                                    |
-| `ROASTERY_STORAGE_REGION`  | _(unset)_          | Required when backend is `s3`.                                             |
-| `ROASTERY_STORAGE_PROJECT` | _(unset)_          | Required when backend is `gcs`.                                            |
-| `ROASTERY_TLS_CERT`        | _(unset)_          | PEM cert chain. Must be set together with `ROASTERY_TLS_KEY`.              |
-| `ROASTERY_TLS_KEY`         | _(unset)_          | PEM private key.                                                           |
-| `ROASTERY_UPSTREAM`        | _(unset)_          | Upstream registry consulted on cache miss; reserved for a later milestone. |
-| `RUST_LOG`                 | `info`             | Standard `tracing_subscriber::EnvFilter` syntax.                           |
+| Variable                       | Default            | Notes                                                                      |
+|--------------------------------|--------------------|----------------------------------------------------------------------------|
+| `ROASTERY_BIND`                | `127.0.0.1:7878`   | `host:port` for the TCP listener.                                          |
+| `ROASTERY_STORAGE_DIR`         | `./.roastery-data` | Filesystem CAS root; created on startup if missing.                        |
+| `ROASTERY_STORAGE_BACKEND`     | `fs`               | `fs` (default), `s3`, or `gcs`. See **Storage backend** below.             |
+| `ROASTERY_STORAGE_BUCKET`      | _(unset)_          | Required when backend is `s3` or `gcs`.                                    |
+| `ROASTERY_STORAGE_REGION`      | _(unset)_          | Required when backend is `s3`.                                             |
+| `ROASTERY_STORAGE_PROJECT`     | _(unset)_          | Required when backend is `gcs`.                                            |
+| `ROASTERY_TLS_CERT`            | _(unset)_          | PEM cert chain. Must be set together with `ROASTERY_TLS_KEY`.              |
+| `ROASTERY_TLS_KEY`             | _(unset)_          | PEM private key.                                                           |
+| `ROASTERY_BEARER_TOKENS_FILE`  | _(unset)_          | Bearer token file (`<label>:<secret>` per line). See **Authentication**.   |
+| `ROASTERY_MTLS_CA_CERT`        | _(unset)_          | PEM CA bundle for mTLS client-cert verification. Requires TLS to be on.    |
+| `ROASTERY_UPSTREAM`            | _(unset)_          | Upstream registry consulted on cache miss; reserved for a later milestone. |
+| `RUST_LOG`                     | `info`             | Standard `tracing_subscriber::EnvFilter` syntax.                           |
 
-The TLS and upstream-on-miss fields are accepted today but **not
-exercised** — they exist so subsequent tasks can plug in without
-churning the public config surface.
+The upstream-on-miss field is accepted today but **not exercised**
+— it exists so a subsequent task can plug in without churning the
+public config surface.
 
 ## Module layout
 
@@ -268,6 +371,11 @@ roastery/
 │   │   ├── health.rs     /healthz handler
 │   │   ├── metrics.rs    /metrics handler + Prometheus registry + CAS instrumentation
 │   │   └── version.rs    /version handler (reads build.rs constants)
+│   ├── auth/             bearer + mTLS authentication
+│   │   ├── mod.rs        module root; Principal enum
+│   │   ├── bearer.rs     BearerVerifier — loads tokens file, hashes, constant-time compare
+│   │   ├── mtls.rs       MtlsVerifier — wraps WebPkiClientVerifier, subject extraction
+│   │   └── layer.rs      AuthLayer — tower middleware that enforces auth on the protected sub-router
 │   └── storage/          content-addressed storage
 │       ├── mod.rs        Digest, Stat, Cas trait
 │       ├── fs.rs         filesystem-backed Cas (production default)
@@ -277,7 +385,9 @@ roastery/
 └── tests/
     ├── smoke.rs          scaffold smoke tests
     ├── proto_barista.rs  barista-protocol HTTP integration tests
-    └── ops.rs            /healthz, /metrics, /version integration tests
+    ├── ops.rs            /healthz, /metrics, /version integration tests
+    ├── auth.rs           bearer + mTLS integration tests
+    └── common/           shared test helpers (e.g. ephemeral cert generation)
 ```
 
 ## Storage backend
@@ -352,9 +462,10 @@ source for `// T<N>:` comments to find the exact extension points:
 - **T4 — REAPI gRPC**: the `bazel-remote`-compatible gRPC surface,
   served via `tonic` and merged into the axum router with
   `Router::merge` (both stacks share `hyper` + `tower`).
-- **T5 — auth**: a `tower::Layer` wrapping the router, plus
-  switching the connection builder to `rustls` when
-  `ServerConfig::tls` is `Some`.
+- **T5 — auth**: a `tower::Layer` wrapping the protected sub-
+  router, plus switching the connection builder to `rustls` when
+  `ServerConfig::tls` is `Some`. See **Authentication** above for
+  the full surface.
 - **T6 — upstream-on-miss**: a fallback `Layer` that consults
   `ServerConfig::upstream` when storage returns 404.
 
@@ -371,7 +482,11 @@ surface end-to-end against a live server instance backed by a
 `TempDir` filesystem CAS. The tests in `tests/ops.rs` cover the
 `/healthz`, `/metrics`, and `/version` ops endpoints — including a
 PUT + GET round-trip that asserts the Prometheus counter actually
-increments. None of these sets require any environment setup.
+increments. `tests/auth.rs` exercises bearer + mTLS end-to-end:
+the bearer side drives a plain-HTTP listener with a tokens file;
+the mTLS side mints an ephemeral CA + server + client cert with
+`rcgen` at test time and drives a real TLS handshake. None of
+these sets require any environment setup.
 
 ## License
 

@@ -79,23 +79,50 @@ pub const MAX_BATCH_MISSING: usize = 1000;
 /// non-backward-compatible way (separate from the crate version).
 const PROTOCOL_VERSION: &str = "v1";
 
-/// Build the barista-protocol sub-router.
+/// Build the barista-protocol sub-router (public + protected,
+/// merged).
 ///
-/// Returns a state-generic `Router<AppState>` with all six endpoints
-/// mounted under their canonical paths. The caller (typically
-/// [`crate::server::build_router`]) merges this into the top-level
-/// router with `Router::merge`; the merged router applies the shared
-/// [`AppState`] exactly once at assembly time so state propagation is
-/// unambiguous.
+/// Equivalent to `public_router().merge(protected_router())`. Used
+/// by callers that don't care about per-route auth — primarily the
+/// integration tests that exercise the wire surface end-to-end.
+/// Production assembly wires the two sub-routers separately and
+/// applies the auth layer to only the protected one.
 pub fn router() -> Router<AppState> {
+    public_router().merge(protected_router())
+}
+
+/// Public sub-router: routes that MUST remain accessible without
+/// credentials.
+///
+/// - `/v1/health` — protocol-level liveness; clients hit it before
+///   they authenticate to confirm the protocol stack is up.
+/// - `/v1/capabilities` — version negotiation; clients consult it
+///   before they know what auth mechanism the server expects.
+///
+/// Mounting them on a separate sub-router (rather than punching
+/// per-path exceptions inside the auth layer) keeps the auth layer
+/// simple and the public-vs-protected split unambiguous from the
+/// router topology alone.
+pub fn public_router() -> Router<AppState> {
+    Router::new()
+        .route("/v1/health", get(health))
+        .route("/v1/capabilities", get(capabilities))
+}
+
+/// Protected sub-router: routes that require authentication when
+/// any auth mechanism is configured.
+///
+/// All CAS endpoints live here. The caller wraps this router with
+/// the configured `AuthLayer` before merging into the top-level
+/// router; on a loopback dev server with no auth configured the
+/// layer accepts anonymous requests so the wrapping is transparent.
+pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route(
             "/v1/cas/sha256/{digest}",
             get(cas_get).head(cas_head).put(cas_put),
         )
         .route("/v1/cas/missing", post(cas_missing))
-        .route("/v1/health", get(health))
-        .route("/v1/capabilities", get(capabilities))
 }
 
 // -------------------------------------------------------------------

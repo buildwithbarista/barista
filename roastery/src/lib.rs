@@ -28,7 +28,13 @@
 //! - [`error`] — the crate-local `RoasteryError` enum, the
 //!   `StorageError` enum surfaced by the storage layer, and the
 //!   crate-wide `Result` alias.
+//! - [`auth`] — bearer-token + mTLS authentication. Exposes the
+//!   `AuthLayer` (a `tower::Layer` applied to the protected routes),
+//!   the loader/verifier helpers (`BearerVerifier`, `MtlsVerifier`),
+//!   and the `Principal` enum attached to every authenticated
+//!   request.
 
+pub mod auth;
 pub mod config;
 pub mod error;
 pub mod ops;
@@ -36,7 +42,8 @@ pub mod proto;
 pub mod server;
 pub mod storage;
 
-pub use config::{ServerConfig, StorageBackend, TlsConfig};
+pub use auth::{AuthLayer, BearerVerifier, ClientCertChain, MtlsVerifier, Principal};
+pub use config::{AuthConfig, BearerAuthConfig, MtlsAuthConfig, ServerConfig, StorageBackend, TlsConfig};
 pub use error::{ErrorBody, Result, RoasteryError, StorageError};
 pub use server::{AppState, init_tracing, run};
 pub use storage::{Cas, Digest, FsCas, GcsCas, S3Cas, Stat};

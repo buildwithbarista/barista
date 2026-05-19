@@ -67,6 +67,7 @@ fn fixture_config(addr: SocketAddr) -> (TempDir, ServerConfig) {
         storage: StorageBackend::Filesystem(storage_dir.clone()),
         storage_dir,
         tls: None,
+        auth: roastery::AuthConfig::default(),
         upstream: None,
     };
     (tmp, cfg)
