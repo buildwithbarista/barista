@@ -1,0 +1,7 @@
+# Out-of-the-box default deploy: filesystem backend with a PVC, no
+# auth (loopback-only bind so the BAR-AUTH-005 fail-closed check
+# doesn't trip). This fixture mirrors `helm install` with no `--set`
+# overrides except the bind-to-loopback workaround needed to satisfy
+# the validation helper in templates/_helpers.tpl.
+server:
+  bind: "127.0.0.1:7878"

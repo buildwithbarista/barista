@@ -513,6 +513,93 @@ For a full container smoke-test (build + boot + `/healthz` +
 `/version` probe + graceful shutdown), run
 `scripts/test-dockerfile.sh` from the workspace root.
 
+## Deployment
+
+A Helm chart for Kubernetes lives at `deploy/helm/roastery/`. It
+wraps the container image with all of the on-cluster pieces a
+production deploy needs (Deployment / Service / PVC / Secrets /
+optional Ingress / optional NetworkPolicy / optional Prometheus
+Operator `ServiceMonitor`) and surfaces the full env-var
+configuration table above as typed `values.yaml` keys.
+
+### Quickstart
+
+The chart is in-tree only at v0.1 — it is not yet published to a Helm
+repository. Install it directly from the source tree:
+
+```bash
+# Single-replica, filesystem-backed deploy with a 100 GiB PVC.
+# Bind to loopback so the BAR-AUTH-005 fail-closed check doesn't
+# fire when no auth is configured; flip to 0.0.0.0:7878 once you've
+# enabled bearer-token or mTLS auth.
+helm install roastery deploy/helm/roastery \
+    --namespace roastery --create-namespace \
+    --set server.bind=127.0.0.1:7878
+```
+
+The bundled Helm test hook runs a short-lived pod that probes
+`/healthz`, `/version`, and `/metrics` against the in-cluster
+Service:
+
+```bash
+helm test roastery --namespace roastery
+```
+
+### Configuration
+
+Every roastery env-var documented in the **Configuration** table
+above maps to a typed value in
+`deploy/helm/roastery/values.yaml`. The file is heavily commented;
+read it top-to-bottom for the full surface and the rationale behind
+each default.
+
+Common knobs:
+
+- `replicaCount` — pod count. With `storage.backend=filesystem`
+  the chart enforces `replicaCount: 1` (the PVC is
+  `ReadWriteOnce`); for multi-replica deploys use
+  `storage.backend=s3` (or `gcs`) and set
+  `persistence.enabled=false`.
+- `image.tag` — overrides the chart-default of `:edge`. Pin to a
+  released semver tag (e.g. `0.1.0`) when one ships.
+- `storage.backend` — `filesystem` (default, PVC), `s3`, or `gcs`.
+  Bucket / region / project keys live under `storage.s3` and
+  `storage.gcs`.
+- `tls.enabled` + `tls.create=true` / `tls.existingSecret` — server-
+  side TLS. Use `--set-file tls.certPem=cert.pem
+  --set-file tls.keyPem=key.pem` to load real PEM material without
+  embedding it in `values.yaml`.
+- `auth.bearer.enabled` and `auth.mtls.enabled` — independent;
+  enable either, both, or neither. mTLS requires `tls.enabled=true`.
+- `upstream.fetchMissing` + `upstream.repos` — the upstream-on-miss
+  feature described above.
+- `metrics.serviceMonitor.enabled` — opt-in Prometheus Operator
+  `ServiceMonitor` CR. `/metrics` is always exposed by the binary
+  regardless.
+
+### Validation
+
+The chart ships a JSON Schema (`values.schema.json`) Helm consults
+on every `helm install` / `helm upgrade`; bad backend names, bad
+types, or missing required keys fail before a render is attempted.
+Cross-field consistency (mTLS-without-TLS, multi-replica + PVC,
+`upstream.fetchMissing` without `upstream.repos`) is enforced by a
+chart-level `fail` validator in `_helpers.tpl` and surfaces with an
+actionable error string at `helm template` time.
+
+### CI
+
+`.github/workflows/helm.yml` runs `helm lint`, schema validation,
+and a golden-fixture diff against the rendered output. The
+golden files under `deploy/helm/fixtures/*.golden.yaml` are the
+chart's regression net — any template change that perturbs the
+rendered manifest set surfaces as a reviewable diff. Regenerate
+intentional changes with:
+
+```bash
+bash deploy/helm/scripts/helm-render-fixtures.sh update
+```
+
 ## Configuration
 
 All configuration is environment-driven. Defaults are documented in

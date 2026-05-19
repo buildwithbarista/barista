@@ -263,17 +263,16 @@ jobs:
         # the matching baseline") is mechanically gated on every PR.
         run: bash scripts/test-parity-check.sh
 
-      - name: Install actionlint + zizmor (for container-workflow validation)
+      - name: Install actionlint + zizmor (for container + helm workflow validation)
         shell: bash
-        # The container-workflow validator below runs `actionlint`
-        # and `zizmor` against `.github/workflows/container-roastery.yml`.
-        # Both tools are already invoked by the `actionlint` and
-        # `zizmor` jobs above, but those jobs cover the whole
+        # The container-workflow and helm-chart validators below run
+        # `actionlint` and `zizmor` against the M5.1 T8 / T9 workflow
+        # files. Both tools are already invoked by the `actionlint`
+        # and `zizmor` jobs above, but those jobs cover the whole
         # workflow directory via the upstream actions. Wiring the
-        # focused validator into this `security-agent-config` job
-        # keeps the validator close to the other `test-*.sh`
-        # gates and lets the validator's exit code participate in
-        # the same job summary.
+        # focused validators into this `security-agent-config` job
+        # keeps them close to the other `test-*.sh` gates and lets
+        # their exit codes participate in the same job summary.
         run: |
           set -euo pipefail
           mkdir -p "${HOME}/.local/bin"
@@ -299,3 +298,23 @@ jobs:
         # container-build workflow file. The script asserts both
         # linters exit 0 with no medium-or-higher findings.
         run: bash scripts/test-container-workflow.sh
+
+      - name: Install Helm (for chart validation)
+        # The helm-chart validator invoked below renders the chart and
+        # diffs each fixture against its committed golden file. helm
+        # is required for that render path; the version pin matches
+        # the one in `.github/workflows/helm.yml` so the goldens
+        # render identically here.
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+
+      - name: Validate roastery Helm chart + workflow file
+        shell: bash
+        # Exercises `scripts/test-helm-chart.sh` — the focused
+        # `helm lint` + golden-fixture-diff + actionlint + zizmor
+        # gate for the M5.1 T9 Helm chart. The script asserts
+        # `helm lint` is clean, no fixture has drifted from its
+        # committed golden, and `.github/workflows/helm.yml` itself
+        # passes actionlint + zizmor (offline, medium-or-higher).
+        run: bash scripts/test-helm-chart.sh

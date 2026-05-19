@@ -1,0 +1,142 @@
+# Helm-chart lint + render-validation pipeline for the `roastery`
+# remote artifact-cache server's Helm chart.
+#
+# Jobs:
+#
+#   lint              Runs `helm lint` against the chart with default
+#                     values and each fixture in
+#                     roastery/deploy/helm/fixtures/. Also runs the
+#                     golden-fixture diff via
+#                     `roastery/deploy/helm/scripts/helm-render-fixtures.sh check`,
+#                     which fails CI on any drift between the rendered
+#                     templates and the committed *.golden.yaml files.
+#
+#   render-validate   Re-runs `helm template` for each fixture and
+#                     pipes the output through `kubeconform -strict`
+#                     to catch type-level mistakes (bad field names,
+#                     wrong enum values) the chart's own
+#                     values.schema.json doesn't cover.
+#
+# Forward-references:
+#
+#   - The kind-cluster end-to-end install (M5.1 T10) lands in a
+#     follow-up PR and adds a `e2e` job here that runs `helm install`
+#     against a real cluster.
+#   - Chart publishing (signed OCI artefact pushed to GHCR) is a v0.2
+#     concern, not wired here.
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers can
+# audit drift without external tools. When bumping, update both the
+# SHA and the comment.
+
+name: Helm chart
+
+on:
+  pull_request:
+    paths:
+      - 'roastery/deploy/helm/**'
+      - '.github/workflows/helm.yml'
+      - 'scripts/test-helm-chart.sh'
+  push:
+    branches: [main]
+    paths:
+      - 'roastery/deploy/helm/**'
+      - '.github/workflows/helm.yml'
+      - 'scripts/test-helm-chart.sh'
+  workflow_dispatch:
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+# Cancel superseded runs on PR branches to keep CI focused on the
+# latest commit; main runs to completion so the gate never lags a
+# merged change.
+concurrency:
+  group: helm-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # lint — helm lint + values-schema validation + golden-fixture diff
+  # ---------------------------------------------------------------------------
+  lint:
+    name: helm lint + golden fixtures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        # `azure/setup-helm` is the canonical action; pinning to a
+        # specific helm version keeps the render deterministic across
+        # CI invocations. Bump alongside the goldens when the
+        # renderer's output changes (rare but it has happened across
+        # helm 3 → 4).
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+
+      - name: helm version
+        run: helm version --short
+
+      - name: helm lint (default + fixtures)
+        run: bash roastery/deploy/helm/scripts/helm-lint.sh
+
+      - name: Golden-fixture diff
+        run: bash roastery/deploy/helm/scripts/helm-render-fixtures.sh check
+
+  # ---------------------------------------------------------------------------
+  # render-validate — kubeconform over the rendered output
+  # ---------------------------------------------------------------------------
+  render-validate:
+    name: kubeconform (rendered output)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+
+      - name: Install kubeconform
+        # Pinned binary release. kubeconform validates rendered
+        # Kubernetes YAML against the upstream OpenAPI schemas; it
+        # complements the chart's own values.schema.json (which
+        # validates input) by validating the output against the API
+        # the cluster will actually receive.
+        env:
+          KUBECONFORM_VERSION: "0.7.0"
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /tmp kubeconform
+          install -m 0755 /tmp/kubeconform "${HOME}/.local/bin/kubeconform"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Render + validate fixtures
+        run: |
+          set -euo pipefail
+          CHART=roastery/deploy/helm/roastery
+          for fixture in roastery/deploy/helm/fixtures/*.values.yaml; do
+            name=$(basename "$fixture" .values.yaml)
+            echo "::group::render+validate ${name}"
+            helm template roastery "$CHART" \
+              --namespace roastery \
+              --values "$fixture" \
+              --no-hooks \
+              | kubeconform -strict -ignore-missing-schemas -summary
+            echo "::endgroup::"
+          done

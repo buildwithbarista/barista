@@ -1,0 +1,342 @@
+# Default values for the `roastery` Helm chart.
+#
+# Every key below is documented inline. Each key is either:
+#   - a tunable an operator routinely flips (replicas, resources,
+#     storage backend) — surface-level UX,
+#   - a security knob (auth, TLS, mTLS, network policy) — fail-closed
+#     defaults (off, but easy to opt in),
+#   - or an escape hatch (`extraEnv`, `extraVolumes`) for advanced
+#     deployments the chart authors haven't anticipated.
+#
+# When in doubt, prefer adding a typed key over expecting operators to
+# reach for the escape hatch.
+
+# ---------------------------------------------------------------------------
+# Replicas + image
+# ---------------------------------------------------------------------------
+# The filesystem storage backend is single-replica only (PVCs are
+# ReadWriteOnce). For multi-replica deployments set
+# `storage.backend: s3` (or `gcs`) and `persistence.enabled: false`.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/buildwithbarista/roastery
+  # When `tag` is empty the chart uses `.Chart.AppVersion` from
+  # Chart.yaml (currently `edge`, the rolling tag rebuilt on every
+  # commit to `main`). Override to pin to a specific release, e.g.
+  # `tag: "0.1.0"`.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# References to imagePullSecrets the cluster admin has pre-created.
+# Required only when pulling from a private mirror.
+imagePullSecrets: []
+
+# Override the generated resource names (default `<release>-<chart>`
+# or `<release>` when `release == chart`).
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# Server bind + storage root inside the pod
+# ---------------------------------------------------------------------------
+# `server.bind` is the in-pod listener address; expose it externally
+# via the Service / Ingress sections. `0.0.0.0` lets the kubelet probe
+# reach the container regardless of the cluster CNI plugin.
+#
+# `server.storageDir` is the on-disk CAS root. When
+# `persistence.enabled` and `storage.backend == "filesystem"`, a PVC
+# is mounted here; otherwise the chart mounts an emptyDir so the
+# server still has a writable directory at the expected path.
+server:
+  bind: "0.0.0.0:7878"
+  storageDir: "/var/lib/roastery"
+
+# ---------------------------------------------------------------------------
+# Storage backend
+# ---------------------------------------------------------------------------
+# `filesystem`  → local disk under `server.storageDir`. v0.1 production
+#                 default. Single-replica only.
+# `s3`          → AWS S3 (or S3-compatible). v0.2; the binary today
+#                 accepts the config but returns NotImplemented from
+#                 the storage layer.
+# `gcs`         → Google Cloud Storage. v0.2; same caveat as `s3`.
+#
+# When you flip to `s3` or `gcs`, set `persistence.enabled: false` and
+# fill in the matching sub-block below.
+storage:
+  backend: filesystem
+
+  s3:
+    bucket: ""
+    region: ""
+
+  gcs:
+    bucket: ""
+    project: ""
+
+# ---------------------------------------------------------------------------
+# Persistence (filesystem backend only)
+# ---------------------------------------------------------------------------
+# When `enabled: true` AND `storage.backend == "filesystem"` the chart
+# provisions a PersistentVolumeClaim and mounts it at
+# `server.storageDir`. The cache survives pod restarts; eviction is
+# the operator's responsibility (v0.1 has no built-in GC — see the
+# roastery README's "Storage backend" section).
+persistence:
+  enabled: true
+  size: 100Gi
+  # Empty string means "use the cluster's default StorageClass".
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Server-side TLS
+# ---------------------------------------------------------------------------
+# When `enabled: true`:
+#   - `create: true`   → the chart materialises a Secret from
+#                        `certPem` / `keyPem` (supply via
+#                        `--set-file tls.certPem=cert.pem
+#                        --set-file tls.keyPem=key.pem`).
+#   - `create: false`  → the chart expects a pre-existing Secret named
+#                        `existingSecret` with keys `tls.crt` /
+#                        `tls.key`.
+#
+# The chart-managed Secret is mounted read-only at
+# `/etc/roastery/cert.pem` and `/etc/roastery/key.pem`.
+tls:
+  enabled: false
+  create: false
+  existingSecret: ""
+  certPem: ""
+  keyPem: ""
+
+# ---------------------------------------------------------------------------
+# Authentication
+# ---------------------------------------------------------------------------
+# Bearer and mTLS are independent — enable either, both, or neither.
+# When both are enabled the server accepts either per-request.
+#
+# A non-loopback bind without any auth mechanism is a fail-closed
+# startup error (`BAR-AUTH-005` — see roastery/README.md
+# "Authentication"). `server.bind` defaults to `0.0.0.0:7878`, so a
+# production deploy must enable at least one auth mechanism.
+auth:
+  bearer:
+    enabled: false
+    # `create: true`   → render a Secret from `tokens` (supply via
+    #                    `--set-file auth.bearer.tokens=tokens.txt`).
+    #                    File format: one `<label>:<secret>` per line,
+    #                    comments start with `#`.
+    # `create: false`  → mount an existing Secret named
+    #                    `existingSecret` with the key `tokens`.
+    create: false
+    existingSecret: ""
+    tokens: ""
+
+  mtls:
+    enabled: false
+    # `create: true`   → render a Secret from `caCertPem`. Supply via
+    #                    `--set-file auth.mtls.caCertPem=ca.pem`.
+    # `create: false`  → mount an existing Secret named
+    #                    `existingSecret` with the key `ca.pem`.
+    #
+    # mTLS requires server-side TLS — `tls.enabled` must also be true.
+    create: false
+    existingSecret: ""
+    caCertPem: ""
+
+# ---------------------------------------------------------------------------
+# Upstream-on-miss
+# ---------------------------------------------------------------------------
+# When a CAS GET misses locally, optionally fall through to an
+# upstream Maven repository. See the roastery README's
+# "Upstream-on-miss" section for the full contract (per-request
+# `X-Barista-Coords` header required, integrity verified in flight).
+#
+# `fetchMissing: true` with an empty `repos` list is a startup error
+# (`BAR-CACHE-007`).
+upstream:
+  fetchMissing: false
+  repos: []
+  # - https://repo.maven.apache.org/maven2/
+  # - https://nexus.example.com/repository/public/
+  timeoutSecs: 30
+
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+# ClusterIP is the right default — the typical deployment fronts the
+# Service with an Ingress (see the `ingress:` section). Flip to
+# `LoadBalancer` only when no Ingress controller is available.
+service:
+  type: ClusterIP
+  port: 7878
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+# v0.1 defaults are modest. Tune based on:
+#   - p95 storage walk time (the `roastery_storage_bytes_total`
+#     metric's refresh interval),
+#   - peak concurrent CAS requests * average blob size,
+#   - upstream-on-miss fan-out (each in-flight upstream fetch holds
+#     one request slot).
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Pod + container security contexts
+# ---------------------------------------------------------------------------
+# Matches `roastery/Dockerfile` (USER nonroot:nonroot, uid/gid 65532).
+# `fsGroup` lets the kubelet chown the PVC mountpoint to a group the
+# container can write through.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ---------------------------------------------------------------------------
+# Probes
+# ---------------------------------------------------------------------------
+# All three probes hit `/healthz` (the always-public ops endpoint).
+# The startup probe's long `failureThreshold` covers cold-start
+# storage walks on large PVCs (the storage-bytes gauge is computed by
+# walking the CAS tree once on startup).
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+
+startupProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  failureThreshold: 30
+  periodSeconds: 1
+
+# ---------------------------------------------------------------------------
+# Service Account
+# ---------------------------------------------------------------------------
+# Roastery does not talk to the kube API — `automountServiceAccountToken`
+# is off by default to shrink the credential blast radius. Enable only
+# if you wrap the pod with a sidecar that needs the projected token.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# ---------------------------------------------------------------------------
+# Ingress (optional)
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: roastery.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ---------------------------------------------------------------------------
+# Network policy (optional, opt-in)
+# ---------------------------------------------------------------------------
+# Off by default because many clusters run a CNI that doesn't
+# implement NetworkPolicy — turning this on with a non-enforcing CNI
+# gives operators a false sense of isolation. Enable only when the
+# cluster's CNI is known to enforce policy (Calico, Cilium, Antrea).
+networkPolicy:
+  enabled: false
+  policyTypes:
+    - Ingress
+  # When empty the NetworkPolicy allows ingress from all sources
+  # within the namespace boundary; populate with `from:` rules
+  # (`namespaceSelector` / `podSelector`) to lock it down further.
+  ingressFrom: []
+
+# ---------------------------------------------------------------------------
+# Metrics (Prometheus Operator)
+# ---------------------------------------------------------------------------
+# `/metrics` is always exposed by the binary (see roastery/README.md
+# "Operations endpoints"). `metrics.serviceMonitor.enabled` only
+# gates the ServiceMonitor CR; flip on when the Prometheus Operator
+# CRDs are installed in the cluster.
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+# ---------------------------------------------------------------------------
+# PodDisruptionBudget (rendered only when replicaCount > 1)
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # `maxUnavailable` is mutually exclusive with `minAvailable`; set
+  # one or the other, not both.
+  maxUnavailable: ""
+
+# ---------------------------------------------------------------------------
+# Scheduling tweaks
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# Sets `RUST_LOG`. Standard `tracing_subscriber::EnvFilter` syntax —
+# e.g. `info`, `roastery=debug,info`, `warn,roastery::auth=info`.
+logging:
+  level: info
+
+# ---------------------------------------------------------------------------
+# Lifecycle hooks (advanced)
+# ---------------------------------------------------------------------------
+preStop: null
+
+# ---------------------------------------------------------------------------
+# Escape hatches
+# ---------------------------------------------------------------------------
+# Appended after the chart-managed env / volumes. Use when the chart
+# doesn't yet surface a tunable you need.
+extraEnv: []
+extraEnvFrom: []
+extraVolumes: []
+extraVolumeMounts: []

@@ -1,0 +1,326 @@
+---
+# Source: roastery/templates/networkpolicy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: roastery
+      app.kubernetes.io/instance: roastery
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 7878
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              name: build-workers
+---
+# Source: roastery/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+automountServiceAccountToken: false
+---
+# Source: roastery/templates/secret-mtls-ca.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: roastery-mtls-ca
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+type: Opaque
+stringData:
+  # PEM bundle of one-or-more trust anchors. Mounted at
+  # /etc/roastery/ca.pem; `ROASTERY_MTLS_CA_CERT` points the binary at
+  # that path.
+  ca.pem: |
+    -----BEGIN CERTIFICATE-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA-fixture-ca-do-not-use
+    -----END CERTIFICATE-----
+---
+# Source: roastery/templates/secret-tls.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: roastery-tls
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+# `kubernetes.io/tls` is the canonical type for a cert/key pair
+# (Ingress controllers and cert-manager both consume it). The keys are
+# fixed: `tls.crt` and `tls.key`.
+type: kubernetes.io/tls
+stringData:
+  # Canonical TLS Secret keys — also what kubernetes.io/tls Secrets
+  # mounted via `existingSecret` are expected to carry. The deployment
+  # template projects these keys to /etc/roastery/cert.pem and
+  # /etc/roastery/key.pem inside the pod.
+  tls.crt: |
+    -----BEGIN CERTIFICATE-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA-fixture-cert-do-not-use
+    -----END CERTIFICATE-----
+    
+  tls.key: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ-fixture-key
+    -----END PRIVATE KEY-----
+---
+# Source: roastery/templates/persistentvolumeclaim.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: roastery-data
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "50Gi"
+---
+# Source: roastery/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 7878
+      # The pod always listens on 7878 (the EXPOSE in the Dockerfile);
+      # `service.port` only controls the Service's external port.
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+---
+# Source: roastery/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  replicas: 1
+  # filesystem + PVC implies single-replica → Recreate avoids the
+  # "two pods racing for the same RWO volume" failure mode during an
+  # upgrade. RollingUpdate is fine for the stateless backends.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: roastery
+      app.kubernetes.io/instance: roastery
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: roastery
+        app.kubernetes.io/instance: roastery
+      annotations:
+        # Roll the deployment when secret payloads change. The chart
+        # tracks tls / bearer / mtls secret bodies via this checksum
+        # so a `helm upgrade` that rotates a credential triggers a
+        # rollout without an operator having to bounce the pods.
+        checksum/secret-tls: 81bb6a7ebb01cfbed26837ce7772d33c2aaa6a094485e0a152b3c1604bd0249e
+        checksum/secret-mtls: 1725bee494a93c0ef4b8d37d778bf94fcb98364a3d507c562803ca9514a1ec91
+    spec:
+      serviceAccountName: roastery
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: roastery
+          image: "ghcr.io/buildwithbarista/roastery:edge"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7878
+              protocol: TCP
+          env:
+            - name: ROASTERY_BIND
+              value: "0.0.0.0:7878"
+            - name: ROASTERY_STORAGE_DIR
+              value: "/var/lib/roastery"
+            - name: ROASTERY_STORAGE_BACKEND
+              value: "fs"
+            - name: ROASTERY_TLS_CERT
+              value: /etc/roastery/cert.pem
+            - name: ROASTERY_TLS_KEY
+              value: /etc/roastery/key.pem
+            - name: ROASTERY_MTLS_CA_CERT
+              value: /etc/roastery/ca.pem
+            - name: ROASTERY_UPSTREAM_FETCH_MISSING
+              value: "false"
+            - name: ROASTERY_UPSTREAM_TIMEOUT_SECS
+              value: "30"
+            - name: RUST_LOG
+              value: "info"
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 1
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            # The distroless image runs with readOnlyRootFilesystem: true;
+            # the binary writes to its storage dir (PVC or emptyDir) and
+            # uses /tmp for ephemera. Mount /tmp as an emptyDir so the
+            # rest of the rootfs stays read-only.
+            - name: tmp
+              mountPath: /tmp
+            - name: storage
+              mountPath: "/var/lib/roastery"
+            - name: tls
+              mountPath: /etc/roastery/cert.pem
+              subPath: cert.pem
+              readOnly: true
+            - name: tls
+              mountPath: /etc/roastery/key.pem
+              subPath: key.pem
+              readOnly: true
+            - name: mtls-ca
+              mountPath: /etc/roastery/ca.pem
+              subPath: ca.pem
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: storage
+          persistentVolumeClaim:
+            claimName: roastery-data
+        - name: tls
+          secret:
+            secretName: roastery-tls
+            items:
+              # Project the canonical Secret keys (`tls.crt`/`tls.key`,
+              # used by kubernetes.io/tls Secrets and cert-manager) to
+              # the filenames the binary's env vars point at.
+              - key: tls.crt
+                path: cert.pem
+              - key: tls.key
+                path: key.pem
+        - name: mtls-ca
+          secret:
+            secretName: roastery-mtls-ca
+            items:
+              - key: ca.pem
+                path: ca.pem
+---
+# Source: roastery/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+      - roastery.example.com
+      secretName: roastery-ingress-tls
+  rules:
+    - host: "roastery.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: roastery
+                port:
+                  number: 7878

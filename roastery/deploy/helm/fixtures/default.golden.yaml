@@ -1,0 +1,169 @@
+---
+# Source: roastery/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+automountServiceAccountToken: false
+---
+# Source: roastery/templates/persistentvolumeclaim.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: roastery-data
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: "100Gi"
+---
+# Source: roastery/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 7878
+      # The pod always listens on 7878 (the EXPOSE in the Dockerfile);
+      # `service.port` only controls the Service's external port.
+      targetPort: http
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+---
+# Source: roastery/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: roastery
+  namespace: roastery
+  labels:
+    helm.sh/chart: roastery-0.1.0
+    app.kubernetes.io/name: roastery
+    app.kubernetes.io/instance: roastery
+    app.kubernetes.io/version: "edge"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/part-of: barista
+spec:
+  replicas: 1
+  # filesystem + PVC implies single-replica → Recreate avoids the
+  # "two pods racing for the same RWO volume" failure mode during an
+  # upgrade. RollingUpdate is fine for the stateless backends.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: roastery
+      app.kubernetes.io/instance: roastery
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: roastery
+        app.kubernetes.io/instance: roastery
+    spec:
+      serviceAccountName: roastery
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65532
+        runAsGroup: 65532
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: roastery
+          image: "ghcr.io/buildwithbarista/roastery:edge"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7878
+              protocol: TCP
+          env:
+            - name: ROASTERY_BIND
+              value: "127.0.0.1:7878"
+            - name: ROASTERY_STORAGE_DIR
+              value: "/var/lib/roastery"
+            - name: ROASTERY_STORAGE_BACKEND
+              value: "fs"
+            - name: ROASTERY_UPSTREAM_FETCH_MISSING
+              value: "false"
+            - name: ROASTERY_UPSTREAM_TIMEOUT_SECS
+              value: "30"
+            - name: RUST_LOG
+              value: "info"
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          startupProbe:
+            failureThreshold: 30
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 1
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            # The distroless image runs with readOnlyRootFilesystem: true;
+            # the binary writes to its storage dir (PVC or emptyDir) and
+            # uses /tmp for ephemera. Mount /tmp as an emptyDir so the
+            # rest of the rootfs stays read-only.
+            - name: tmp
+              mountPath: /tmp
+            - name: storage
+              mountPath: "/var/lib/roastery"
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: storage
+          persistentVolumeClaim:
+            claimName: roastery-data

@@ -1,0 +1,226 @@
+{{- include "roastery.validate" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "roastery.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "roastery.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # filesystem + PVC implies single-replica → Recreate avoids the
+  # "two pods racing for the same RWO volume" failure mode during an
+  # upgrade. RollingUpdate is fine for the stateless backends.
+  strategy:
+    {{- if eq (include "roastery.useChartPvc" .) "true" }}
+    type: Recreate
+    {{- else }}
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    {{- end }}
+  selector:
+    matchLabels:
+      {{- include "roastery.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "roastery.selectorLabels" . | nindent 8 }}
+      {{- if or .Values.tls.enabled .Values.auth.bearer.enabled .Values.auth.mtls.enabled }}
+      annotations:
+        # Roll the deployment when secret payloads change. The chart
+        # tracks tls / bearer / mtls secret bodies via this checksum
+        # so a `helm upgrade` that rotates a credential triggers a
+        # rollout without an operator having to bounce the pods.
+        {{- if .Values.tls.enabled }}
+        checksum/secret-tls: {{ include (print $.Template.BasePath "/secret-tls.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.auth.bearer.enabled }}
+        checksum/secret-bearer: {{ include (print $.Template.BasePath "/secret-tokens.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.auth.mtls.enabled }}
+        checksum/secret-mtls: {{ include (print $.Template.BasePath "/secret-mtls-ca.yaml") . | sha256sum }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "roastery.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: roastery
+          image: {{ include "roastery.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 7878
+              protocol: TCP
+          env:
+            - name: ROASTERY_BIND
+              value: {{ .Values.server.bind | quote }}
+            - name: ROASTERY_STORAGE_DIR
+              value: {{ .Values.server.storageDir | quote }}
+            - name: ROASTERY_STORAGE_BACKEND
+              value: {{ include "roastery.storageBackendEnv" . | quote }}
+            {{- if eq .Values.storage.backend "s3" }}
+            - name: ROASTERY_STORAGE_BUCKET
+              value: {{ .Values.storage.s3.bucket | quote }}
+            - name: ROASTERY_STORAGE_REGION
+              value: {{ .Values.storage.s3.region | quote }}
+            {{- else if eq .Values.storage.backend "gcs" }}
+            - name: ROASTERY_STORAGE_BUCKET
+              value: {{ .Values.storage.gcs.bucket | quote }}
+            - name: ROASTERY_STORAGE_PROJECT
+              value: {{ .Values.storage.gcs.project | quote }}
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: ROASTERY_TLS_CERT
+              value: /etc/roastery/cert.pem
+            - name: ROASTERY_TLS_KEY
+              value: /etc/roastery/key.pem
+            {{- end }}
+            {{- if .Values.auth.bearer.enabled }}
+            - name: ROASTERY_BEARER_TOKENS_FILE
+              value: /etc/roastery/tokens.txt
+            {{- end }}
+            {{- if .Values.auth.mtls.enabled }}
+            - name: ROASTERY_MTLS_CA_CERT
+              value: /etc/roastery/ca.pem
+            {{- end }}
+            - name: ROASTERY_UPSTREAM_FETCH_MISSING
+              value: {{ .Values.upstream.fetchMissing | quote }}
+            {{- if and .Values.upstream.fetchMissing .Values.upstream.repos }}
+            - name: ROASTERY_UPSTREAM_REPOS
+              value: {{ join "," .Values.upstream.repos | quote }}
+            {{- end }}
+            - name: ROASTERY_UPSTREAM_TIMEOUT_SECS
+              value: {{ .Values.upstream.timeoutSecs | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.logging.level | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.preStop }}
+          lifecycle:
+            preStop:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            # The distroless image runs with readOnlyRootFilesystem: true;
+            # the binary writes to its storage dir (PVC or emptyDir) and
+            # uses /tmp for ephemera. Mount /tmp as an emptyDir so the
+            # rest of the rootfs stays read-only.
+            - name: tmp
+              mountPath: /tmp
+            - name: storage
+              mountPath: {{ .Values.server.storageDir | quote }}
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/roastery/cert.pem
+              subPath: cert.pem
+              readOnly: true
+            - name: tls
+              mountPath: /etc/roastery/key.pem
+              subPath: key.pem
+              readOnly: true
+            {{- end }}
+            {{- if .Values.auth.bearer.enabled }}
+            - name: bearer-tokens
+              mountPath: /etc/roastery/tokens.txt
+              subPath: tokens.txt
+              readOnly: true
+            {{- end }}
+            {{- if .Values.auth.mtls.enabled }}
+            - name: mtls-ca
+              mountPath: /etc/roastery/ca.pem
+              subPath: ca.pem
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: storage
+          {{- if eq (include "roastery.useChartPvc" .) "true" }}
+          persistentVolumeClaim:
+            claimName: {{ include "roastery.pvcName" . }}
+          {{- else }}
+          # Non-filesystem backends keep no on-disk state worth
+          # preserving; emptyDir is enough to satisfy the WORKDIR.
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "roastery.tlsSecretName" . }}
+            items:
+              # Project the canonical Secret keys (`tls.crt`/`tls.key`,
+              # used by kubernetes.io/tls Secrets and cert-manager) to
+              # the filenames the binary's env vars point at.
+              - key: tls.crt
+                path: cert.pem
+              - key: tls.key
+                path: key.pem
+        {{- end }}
+        {{- if .Values.auth.bearer.enabled }}
+        - name: bearer-tokens
+          secret:
+            secretName: {{ include "roastery.bearerSecretName" . }}
+            items:
+              - key: tokens
+                path: tokens.txt
+        {{- end }}
+        {{- if .Values.auth.mtls.enabled }}
+        - name: mtls-ca
+          secret:
+            secretName: {{ include "roastery.mtlsSecretName" . }}
+            items:
+              - key: ca.pem
+                path: ca.pem
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,58 @@
+# mTLS + server TLS + ingress. Exercises:
+#   - chart-managed TLS Secret with the canonical tls.crt / tls.key keys
+#     projected to /etc/roastery/{cert,key}.pem,
+#   - mTLS CA Secret mounted at /etc/roastery/ca.pem,
+#   - ingress rendering,
+#   - NetworkPolicy enabled.
+
+storage:
+  backend: filesystem
+
+persistence:
+  enabled: true
+  size: 50Gi
+
+tls:
+  enabled: true
+  create: true
+  # Fixture-only placeholder PEM blocks. Real deploys use --set-file
+  # to load actual certs.
+  certPem: |
+    -----BEGIN CERTIFICATE-----
+    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA-fixture-cert-do-not-use
+    -----END CERTIFICATE-----
+  keyPem: |
+    -----BEGIN PRIVATE KEY-----
+    MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ-fixture-key
+    -----END PRIVATE KEY-----
+
+auth:
+  mtls:
+    enabled: true
+    create: true
+    caCertPem: |
+      -----BEGIN CERTIFICATE-----
+      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA-fixture-ca-do-not-use
+      -----END CERTIFICATE-----
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: roastery.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - roastery.example.com
+      secretName: roastery-ingress-tls
+
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          name: build-workers

@@ -1,0 +1,34 @@
+# Multi-replica s3-backed deploy with bearer-token auth in front of
+# a public bind. Exercises:
+#   - storage.backend=s3 + the bucket/region required fields,
+#   - persistence disabled (s3 doesn't need a PVC),
+#   - replicaCount > 1 + RollingUpdate strategy + PDB,
+#   - bearer auth via a chart-managed Secret (--set-file equivalent
+#     here uses an inline value).
+
+replicaCount: 3
+
+storage:
+  backend: s3
+  s3:
+    bucket: roastery-cache-prod
+    region: us-east-1
+
+persistence:
+  enabled: false
+
+auth:
+  bearer:
+    enabled: true
+    create: true
+    tokens: |
+      ci-runner:fixture-bearer-secret-do-not-use
+      dev-laptop:another-fixture-secret
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+metrics:
+  serviceMonitor:
+    enabled: true

@@ -1,0 +1,33 @@
+# Helm chart manifest for the `roastery` remote artifact-cache server.
+#
+# `version` is the chart version — bump on any chart change (templates,
+# values schema, defaults). `appVersion` is the version of the
+# `roastery` binary the chart ships by default; it matches the
+# container-image tag pulled when `image.tag` is left blank in
+# `values.yaml`. For v0.1 the binary has no published semver tag yet,
+# so `appVersion: edge` resolves to the `:edge` tag the
+# container-roastery workflow publishes on every push to `main`.
+#
+# When a semver release is cut, bump `appVersion` to the matching
+# `MAJOR.MINOR.PATCH` (no leading `v`) and bump `version` to record
+# that the chart now defaults to a different image.
+apiVersion: v2
+name: roastery
+description: Roastery — content-addressed remote artifact cache server (barista HTTP/2 native + Bazel REAPI gRPC).
+type: application
+version: 0.1.0
+appVersion: edge
+home: https://barista.build/
+sources:
+  - https://github.com/buildwithbarista/barista
+maintainers:
+  - name: barista maintainers
+    url: https://github.com/buildwithbarista
+keywords:
+  - cache
+  - artifact
+  - maven
+  - bazel
+  - reapi
+  - barista
+icon: https://barista.build/logo.svg

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "roastery.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "roastery.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      # The pod always listens on 7878 (the EXPOSE in the Dockerfile);
+      # `service.port` only controls the Service's external port.
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "roastery.selectorLabels" . | nindent 4 }}

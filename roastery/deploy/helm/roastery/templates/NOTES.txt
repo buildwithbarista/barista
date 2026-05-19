@@ -1,0 +1,57 @@
+roastery has been installed as release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+The server is reachable inside the cluster at:
+
+  http://{{ include "roastery.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+Quickstart probes (run from inside the cluster, or after a `kubectl port-forward`):
+
+  curl -fsS http://{{ include "roastery.fullname" . }}:{{ .Values.service.port }}/healthz
+  curl -fsS http://{{ include "roastery.fullname" . }}:{{ .Values.service.port }}/version
+  curl -fsS http://{{ include "roastery.fullname" . }}:{{ .Values.service.port }}/v1/capabilities
+
+To port-forward to your laptop:
+
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "roastery.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+----------------------------------------------------------------------
+Configured surface for this release
+----------------------------------------------------------------------
+  Replicas:           {{ .Values.replicaCount }}
+  Image:              {{ include "roastery.image" . }}
+  Storage backend:    {{ .Values.storage.backend }}
+{{- if eq .Values.storage.backend "filesystem" }}
+  Persistence:        {{ if .Values.persistence.enabled }}PVC ({{ .Values.persistence.size }}{{ if .Values.persistence.storageClass }}, storageClass={{ .Values.persistence.storageClass }}{{ end }}){{ else }}emptyDir (ephemeral){{ end }}
+{{- else if eq .Values.storage.backend "s3" }}
+  S3 bucket:          {{ .Values.storage.s3.bucket }} ({{ .Values.storage.s3.region }})
+{{- else if eq .Values.storage.backend "gcs" }}
+  GCS bucket:         {{ .Values.storage.gcs.bucket }} (project={{ .Values.storage.gcs.project }})
+{{- end }}
+  TLS:                {{ if .Values.tls.enabled }}enabled (secret={{ include "roastery.tlsSecretName" . }}){{ else }}disabled{{ end }}
+  Bearer auth:        {{ if .Values.auth.bearer.enabled }}enabled (secret={{ include "roastery.bearerSecretName" . }}){{ else }}disabled{{ end }}
+  mTLS auth:          {{ if .Values.auth.mtls.enabled }}enabled (secret={{ include "roastery.mtlsSecretName" . }}){{ else }}disabled{{ end }}
+  Upstream-on-miss:   {{ if .Values.upstream.fetchMissing }}enabled ({{ len .Values.upstream.repos }} repo(s)){{ else }}disabled{{ end }}
+  Ingress:            {{ if .Values.ingress.enabled }}enabled ({{ range .Values.ingress.hosts }}{{ .host }} {{ end }}){{ else }}disabled{{ end }}
+  ServiceMonitor:     {{ if .Values.metrics.serviceMonitor.enabled }}enabled (interval={{ .Values.metrics.serviceMonitor.interval }}){{ else }}disabled{{ end }}
+
+{{- if and (gt (int .Values.replicaCount) 1) (eq .Values.storage.backend "filesystem") }}
+
+WARNING: replicaCount > 1 with the filesystem backend is not
+         supported (the PVC is ReadWriteOnce). Use storage.backend=s3
+         or storage.backend=gcs for HA deployments.
+{{- end }}
+
+{{- if and .Values.upstream.fetchMissing (eq (len .Values.upstream.repos) 0) }}
+
+WARNING: upstream.fetchMissing=true but upstream.repos is empty —
+         the server will refuse to start (BAR-CACHE-007).
+{{- end }}
+
+----------------------------------------------------------------------
+Validate the install with the bundled Helm test hook:
+
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+
+This runs a short-lived pod that curls /healthz, /version, and
+/metrics against the in-cluster Service and exits 0 on full success.
+----------------------------------------------------------------------

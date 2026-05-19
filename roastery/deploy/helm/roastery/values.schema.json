@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barista.build/schemas/roastery-helm-values.json",
+  "title": "roastery Helm chart values",
+  "description": "Validates values.yaml for the roastery Helm chart. Helm runs this schema before install/upgrade so typos and structural mistakes surface before a render attempt.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "replicaCount",
+    "image",
+    "server",
+    "storage",
+    "persistence",
+    "tls",
+    "auth",
+    "upstream",
+    "service",
+    "resources",
+    "podSecurityContext",
+    "containerSecurityContext",
+    "serviceAccount"
+  ],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of roastery pods. For storage.backend=filesystem, must be 1 (PVC is RWO)."
+    },
+    "image": {
+      "type": "object",
+      "required": ["repository", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": { "name": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "server": {
+      "type": "object",
+      "required": ["bind", "storageDir"],
+      "properties": {
+        "bind": {
+          "type": "string",
+          "pattern": "^[^:]+:[0-9]+$",
+          "description": "host:port"
+        },
+        "storageDir": {
+          "type": "string",
+          "pattern": "^/.+",
+          "description": "Absolute in-pod path for the CAS root."
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "required": ["backend"],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["filesystem", "s3", "gcs"]
+        },
+        "s3": {
+          "type": "object",
+          "properties": {
+            "bucket": { "type": "string" },
+            "region": { "type": "string" }
+          }
+        },
+        "gcs": {
+          "type": "object",
+          "properties": {
+            "bucket": { "type": "string" },
+            "project": { "type": "string" }
+          }
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "size": { "type": "string", "pattern": "^[0-9]+(Ei|Pi|Ti|Gi|Mi|Ki|E|P|T|G|M|K)?$" },
+        "storageClass": { "type": "string" },
+        "accessModes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
+          }
+        },
+        "annotations": { "type": "object" }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "create": { "type": "boolean" },
+        "existingSecret": { "type": "string" },
+        "certPem": { "type": "string" },
+        "keyPem": { "type": "string" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "required": ["bearer", "mtls"],
+      "properties": {
+        "bearer": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "create": { "type": "boolean" },
+            "existingSecret": { "type": "string" },
+            "tokens": { "type": "string" }
+          }
+        },
+        "mtls": {
+          "type": "object",
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "create": { "type": "boolean" },
+            "existingSecret": { "type": "string" },
+            "caCertPem": { "type": "string" }
+          }
+        }
+      }
+    },
+    "upstream": {
+      "type": "object",
+      "required": ["fetchMissing"],
+      "properties": {
+        "fetchMissing": { "type": "boolean" },
+        "repos": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "timeoutSecs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "service": {
+      "type": "object",
+      "required": ["type", "port"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer", "ExternalName"]
+        },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "annotations": { "type": "object" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "limits": { "type": "object" },
+        "requests": { "type": "object" }
+      }
+    },
+    "podSecurityContext": { "type": "object" },
+    "containerSecurityContext": { "type": "object" },
+    "livenessProbe": { "type": "object" },
+    "readinessProbe": { "type": "object" },
+    "startupProbe": { "type": "object" },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["create"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object" },
+        "automountServiceAccountToken": { "type": "boolean" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": { "type": "array" },
+        "tls": { "type": "array" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "policyTypes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["Ingress", "Egress"] }
+        },
+        "ingressFrom": { "type": "array" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceMonitor": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "type": "string" },
+            "scrapeTimeout": { "type": "string" },
+            "labels": { "type": "object" }
+          }
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "type": ["integer", "string"] },
+        "maxUnavailable": { "type": ["integer", "string"] }
+      }
+    },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "topologySpreadConstraints": { "type": "array" },
+    "logging": {
+      "type": "object",
+      "properties": {
+        "level": { "type": "string", "minLength": 1 }
+      }
+    },
+    "preStop": { "type": ["object", "null"] },
+    "extraEnv": { "type": "array" },
+    "extraEnvFrom": { "type": "array" },
+    "extraVolumes": { "type": "array" },
+    "extraVolumeMounts": { "type": "array" }
+  }
+}
