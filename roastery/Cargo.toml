@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "The roastery remote artifact cache server."
 publish = false
+# `build.rs` records build-time identity (git short SHA, build date,
+# rustc version) for the `/version` ops endpoint. Each lookup degrades
+# gracefully to `null` if it fails — a clean tarball install with no
+# git, or a `rustc -V` that can't run, must never fail the build.
+build = "build.rs"
 
 [[bin]]
 name = "roastery"
@@ -108,6 +113,22 @@ bytes = "1"
 # to `tokio_util::io::StreamReader`. Already in the transitive graph
 # via axum/tower; declared here for the direct import.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# `prometheus` is the official Rust client library for the Prometheus
+# text-exposition format. We use it for the `/metrics` ops endpoint:
+# a global default registry plus a small set of typed metrics
+# (`IntCounterVec`, `HistogramVec`, `Gauge`, build-info gauge).
+#
+# Alternatives considered: the newer `metrics` + `metrics-exporter-
+# prometheus` pair is more idiomatic for greenfield Rust apps but ships
+# a wider surface than the v0.1 metric set justifies (a facade, an
+# exporter, recorder threads). The bare `prometheus` crate is
+# self-contained, well-established, and the global default registry
+# pattern is fine at the scope of one cache server. We can revisit if
+# we ever need per-request scoped metrics.
+#
+# `default-features = false` drops the optional `protobuf` exposition
+# feature — we only emit the text format `/metrics` serves.
+prometheus = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 # `reqwest` drives the integration tests. `rustls-tls` is the

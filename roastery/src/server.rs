@@ -120,10 +120,12 @@ fn build_router(state: AppState) -> Router {
         .route("/", get(placeholder_root))
         // T2: the CAS backend lives on `state.cas`, ready for T3 and
         // T4 to mount handlers that call it.
-        // T3 (this task): barista-protocol routes are merged in below.
+        // T3: barista-protocol routes (`/v1/…`).
         // T4: REAPI gRPC services merge in via `Router::merge`.
-        // T7: `/healthz`, `/metrics`, `/version` mount here.
+        // T7: `/healthz`, `/metrics`, `/version` — the ops surface
+        // distinct from the protocol-level `/v1/health`.
         .merge(crate::proto::barista::router())
+        .merge(crate::ops::router())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
     // T5: wrap with auth `Layer` once auth lands.
@@ -146,6 +148,14 @@ async fn placeholder_root() -> String {
 /// SIGTERM is a Unix-only concept.
 pub async fn run(config: ServerConfig) -> Result<()> {
     config.validate()?;
+
+    // Register the ops/metrics collectors against the Prometheus
+    // default registry before we accept a single connection. `init`
+    // is idempotent — calling it from a test that also drove `run`
+    // earlier is fine — so we don't need to gate the call on a
+    // "first time" flag here. Doing this up-front avoids the race
+    // where the first `/metrics` scrape hits an empty registry.
+    crate::ops::metrics::init();
 
     // Build the CAS backend up front so a misconfigured storage layer
     // is a startup error, not a first-request error.

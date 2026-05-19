@@ -56,6 +56,7 @@ use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::config::StorageBackend;
 use crate::error::{ErrorBody, StorageError};
+use crate::ops::metrics::{CasMethod, CasResult, record_cas_request};
 use crate::server::AppState;
 use crate::storage::{CasReader, Digest};
 
@@ -102,7 +103,23 @@ pub fn router() -> Router<AppState> {
 // -------------------------------------------------------------------
 
 /// `GET /v1/cas/sha256/{digest}` — stream a blob back to the caller.
-async fn cas_get(
+///
+/// Thin wrapper around [`cas_get_inner`] that classifies the outcome
+/// (`hit` / `miss` / `error`) and records it against the
+/// `roastery_cas_requests_total` counter + the latency histogram.
+/// Keeping the wrapper this slim means the inner function reads
+/// exactly like a plain handler — no metric scaffolding obscures the
+/// request flow.
+async fn cas_get(state: State<AppState>, path: Path<String>) -> Result<Response, StorageError> {
+    let started = std::time::Instant::now();
+    let result = cas_get_inner(state, path).await;
+    let outcome = classify_get_or_head(&result);
+    record_cas_request(CasMethod::Get, outcome, started.elapsed());
+    result
+}
+
+/// Inner GET handler — see [`cas_get`] for the metrics wrapper.
+async fn cas_get_inner(
     State(state): State<AppState>,
     Path(digest_hex): Path<String>,
 ) -> Result<Response, StorageError> {
@@ -133,7 +150,16 @@ async fn cas_get(
 /// Axum + hyper take care of suppressing the body for `HEAD` even if
 /// we returned one; we omit it explicitly anyway so the codepath is
 /// obvious.
-async fn cas_head(
+async fn cas_head(state: State<AppState>, path: Path<String>) -> Result<Response, StorageError> {
+    let started = std::time::Instant::now();
+    let result = cas_head_inner(state, path).await;
+    let outcome = classify_get_or_head(&result);
+    record_cas_request(CasMethod::Head, outcome, started.elapsed());
+    result
+}
+
+/// Inner HEAD handler — see [`cas_head`] for the metrics wrapper.
+async fn cas_head_inner(
     State(state): State<AppState>,
     Path(digest_hex): Path<String>,
 ) -> Result<Response, StorageError> {
@@ -215,6 +241,20 @@ fn not_found(digest: Digest) -> Response {
 /// the backend treats a digest collision as success (SHA-256 makes
 /// "same digest" definitionally "same bytes").
 async fn cas_put(
+    state: State<AppState>,
+    path: Path<String>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, StorageError> {
+    let started = std::time::Instant::now();
+    let result = cas_put_inner(state, path, headers, body).await;
+    let outcome = classify_put(&result);
+    record_cas_request(CasMethod::Put, outcome, started.elapsed());
+    result
+}
+
+/// Inner PUT handler — see [`cas_put`] for the metrics wrapper.
+async fn cas_put_inner(
     State(state): State<AppState>,
     Path(digest_hex): Path<String>,
     headers: HeaderMap,
@@ -487,6 +527,46 @@ fn parse_digest_loose(raw: &str) -> Result<Digest, StorageError> {
     let trimmed = raw.trim();
     let hex = trimmed.strip_prefix("sha256:").unwrap_or(trimmed);
     Digest::from_hex(hex)
+}
+
+/// Classify a `GET` / `HEAD` handler result for the
+/// `roastery_cas_requests_total` counter.
+///
+/// - `Err(_)` → `error` (bad digest, I/O failure, …).
+/// - `Ok(resp)` where status is 404 → `miss`.
+/// - any other `Ok(resp)` → `hit`.
+fn classify_get_or_head(result: &Result<Response, StorageError>) -> CasResult {
+    match result {
+        Err(_) => CasResult::Error,
+        Ok(resp) => {
+            if resp.status() == StatusCode::NOT_FOUND {
+                CasResult::Miss
+            } else {
+                CasResult::Hit
+            }
+        }
+    }
+}
+
+/// Classify a `PUT` handler result for the `roastery_cas_requests_total`
+/// counter.
+///
+/// - `Err(_)` → `error`.
+/// - `Ok(resp)` whose status is 2xx → `hit` (a successful store is the
+///   PUT analogue of a hit; the blob is in the cache afterwards).
+/// - any other `Ok(resp)` (4xx digest-mismatch responses we built
+///   in-band) → `error`.
+fn classify_put(result: &Result<Response, StorageError>) -> CasResult {
+    match result {
+        Err(_) => CasResult::Error,
+        Ok(resp) => {
+            if resp.status().is_success() {
+                CasResult::Hit
+            } else {
+                CasResult::Error
+            }
+        }
+    }
 }
 
 #[cfg(test)]

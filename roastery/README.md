@@ -19,10 +19,10 @@ the integration tests and downstream embedders consume.
 
 ## Status
 
-The current code is a **scaffold**. The server boots, listens on the
-configured address, and serves a single placeholder route. Storage,
-auth, protocol handlers, gRPC services, health and metrics endpoints,
-and upstream-on-miss are wired in by subsequent milestones — see
+The current code carries the v0.1 surface for storage, the
+barista-protocol HTTP handler, and the ops endpoints (`/healthz`,
+`/metrics`, `/version`). Auth, the REAPI gRPC handler, and
+upstream-on-miss are wired in by subsequent milestones — see
 **Extending the scaffold** below.
 
 ## Running locally
@@ -149,6 +149,81 @@ curl -i -X POST "http://127.0.0.1:7878/v1/cas/missing" \
     -d "{\"digests\":[\"sha256:$BLOB\",\"sha256:000…0\"]}"
 ```
 
+## Operations endpoints
+
+Alongside the `/v1/…` protocol surface, the server exposes a small set
+of operational endpoints at the root path. These follow the
+Kubernetes/SRE conventions a load-balancer health check or a
+`Prometheus` scrape config expects — they are **not** part of the
+barista protocol and are versioned independently:
+
+| Method | Path        | Body                                  | Content-Type                                  |
+|--------|-------------|---------------------------------------|-----------------------------------------------|
+| `GET`  | `/healthz`  | `ok\n` (plain text)                   | `text/plain; charset=utf-8`                   |
+| `GET`  | `/metrics`  | Prometheus text exposition (v0.0.4)   | `text/plain; version=0.0.4; charset=utf-8`    |
+| `GET`  | `/version`  | JSON build identity (see below)       | `application/json`                            |
+
+`/healthz` is intentionally distinct from the barista-protocol
+`/v1/health` endpoint documented in **HTTP API** above: `/healthz`
+answers "is this pod alive?" for kubelet and returns a plain-text 200
+unless the process is so broken it can't respond, while `/v1/health`
+answers "does the barista protocol stack work?" for clients and
+returns JSON describing the protocol version. Both coexist.
+
+### `/version` JSON shape
+
+```json
+{
+  "name": "roastery",
+  "version": "0.1.0-alpha.0",
+  "git_sha": "abc123def456",
+  "build_date": "2026-05-19T12:34:56Z",
+  "rustc": "rustc 1.84.0 (9fc6b4312 2024-12-30)"
+}
+```
+
+`git_sha`, `build_date`, and `rustc` may each be `null` if the build
+machine couldn't determine the value at compile time (e.g. a clean
+tarball install with no git on `PATH`). The `name` and `version`
+fields are always non-null.
+
+### `/metrics` inventory
+
+The v0.1 metric set is intentionally small. Each entry includes the
+Prometheus type and the labels it carries:
+
+- `roastery_build_info{version, rustc}` — info-style gauge, value
+  always `1`; the build identity is in the labels.
+- `roastery_uptime_seconds` — gauge; seconds since the registry was
+  initialised (≈ process start).
+- `roastery_cas_requests_total{method, result}` — counter per CAS
+  handler outcome. `method` ∈ `{get, head, put}`,
+  `result` ∈ `{hit, miss, error}`.
+- `roastery_cas_request_duration_seconds_bucket{method, le=…}`
+  plus `_sum` / `_count` — histogram of CAS handler latency
+  (default buckets `0.001 … 5.0 s`).
+- `roastery_storage_bytes_total{backend}` — gauge; total bytes
+  resident in the configured CAS backend (`filesystem`, `s3`,
+  `gcs`). For the filesystem backend the value is computed by
+  walking `<root>/cas/` and is cached for ~5 s.
+
+### Example Prometheus scrape config
+
+Drop into a `prometheus.yml`:
+
+```yaml
+scrape_configs:
+  - job_name: roastery
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['roastery.svc.cluster.local:7878']
+```
+
+A 5 s scrape interval is comfortable: the storage-bytes gauge is
+cached at the same TTL, so a tight loop won't make `/metrics` walk
+the CAS tree on every poll.
+
 ## Configuration
 
 All configuration is environment-driven. Defaults are documented in
@@ -188,14 +263,21 @@ roastery/
 │   │   ├── mod.rs        module root
 │   │   ├── barista.rs    barista-protocol REST/JSON (/v1/…)
 │   │   └── reapi.rs      REAPI gRPC placeholder (filled in later)
+│   ├── ops/              operational endpoints (/healthz, /metrics, /version)
+│   │   ├── mod.rs        module root + sub-router
+│   │   ├── health.rs     /healthz handler
+│   │   ├── metrics.rs    /metrics handler + Prometheus registry + CAS instrumentation
+│   │   └── version.rs    /version handler (reads build.rs constants)
 │   └── storage/          content-addressed storage
 │       ├── mod.rs        Digest, Stat, Cas trait
 │       ├── fs.rs         filesystem-backed Cas (production default)
 │       ├── s3.rs         S3 stub (v0.2)
 │       └── gcs.rs        GCS stub (v0.2)
+├── build.rs              build-time identity probe (git sha, rustc, build date)
 └── tests/
     ├── smoke.rs          scaffold smoke tests
-    └── proto_barista.rs  barista-protocol HTTP integration tests
+    ├── proto_barista.rs  barista-protocol HTTP integration tests
+    └── ops.rs            /healthz, /metrics, /version integration tests
 ```
 
 ## Storage backend
@@ -275,7 +357,6 @@ source for `// T<N>:` comments to find the exact extension points:
   `ServerConfig::tls` is `Some`.
 - **T6 — upstream-on-miss**: a fallback `Layer` that consults
   `ServerConfig::upstream` when storage returns 404.
-- **T7 — health + metrics**: `/healthz`, `/metrics`, `/version`.
 
 ## Testing
 
@@ -287,7 +368,10 @@ The integration tests in `tests/smoke.rs` spawn the server on an
 ephemeral port and issue a real `reqwest` call against `GET /`. The
 tests in `tests/proto_barista.rs` exercise the full barista-protocol
 surface end-to-end against a live server instance backed by a
-`TempDir` filesystem CAS. Neither set requires any environment setup.
+`TempDir` filesystem CAS. The tests in `tests/ops.rs` cover the
+`/healthz`, `/metrics`, and `/version` ops endpoints — including a
+PUT + GET round-trip that asserts the Prometheus counter actually
+increments. None of these sets require any environment setup.
 
 ## License
 

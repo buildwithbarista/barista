@@ -22,12 +22,16 @@
 //! - [`proto`] — wire-protocol handlers. Each submodule owns one
 //!   surface and exposes a `router(state)` constructor the `server`
 //!   assembly merges in.
+//! - [`ops`] — operational endpoints (`/healthz`, `/metrics`,
+//!   `/version`) plus the process-global Prometheus metric registry
+//!   the protocol handlers feed counter/histogram updates into.
 //! - [`error`] — the crate-local `RoasteryError` enum, the
 //!   `StorageError` enum surfaced by the storage layer, and the
 //!   crate-wide `Result` alias.
 
 pub mod config;
 pub mod error;
+pub mod ops;
 pub mod proto;
 pub mod server;
 pub mod storage;
