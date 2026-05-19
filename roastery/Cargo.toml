@@ -163,15 +163,37 @@ subtle = "2"
 # `default-features = false` drops the optional `protobuf` exposition
 # feature — we only emit the text format `/metrics` serves.
 prometheus = { version = "0.14", default-features = false }
+# `reqwest` is the HTTP client the upstream-on-miss fetcher uses to
+# pull missing artifacts from Maven Central (or any configured
+# upstream repository). Feature picks:
+#
+# - `rustls-tls-manual-roots`: matches the rustls crypto provider
+#   (`ring`) the auth/TLS surface already installs at startup — we
+#   don't want two crypto stacks linked into the same binary.
+#   `manual-roots` keeps the linked size down by deferring root cert
+#   loading to whichever provider we install; the auth layer is the
+#   one that wires the system roots in via rustls-native-certs (when
+#   we add that — for v0.1 we rely on what the platform provider
+#   already trusts).
+# - `stream`: required to access `Response::bytes_stream`, which the
+#   fetcher hands to `tokio_util::io::StreamReader` so the response
+#   body flows straight into `Cas::put` without buffering.
+# - `http2`: parity with the server-side ALPN advertisement; lets the
+#   client negotiate h2 with any upstream that offers it.
+# - `json`: dev-dep feature used by the integration tests; cheap to
+#   keep on the production build since serde + serde_json are already
+#   in the dep graph for the protocol handlers.
+#
+# `default-features = false` drops `native-tls` (which would pull
+# OpenSSL into the dep graph for no benefit on top of rustls).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "stream", "http2", "json"] }
 
 [dev-dependencies]
-# `reqwest` drives the integration tests. `rustls-tls` is the
-# future-proof TLS backend (matches a later TLS-enablement task);
-# `http2` makes the client willing to negotiate h2 once TLS is on. The
-# `json` feature unlocks `RequestBuilder::json` + `Response::json` for
-# the barista-protocol JSON payload tests; over plain TCP the
-# connection stays HTTP/1.1.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "http2", "json"] }
+# `reqwest` is re-declared in dev-dependencies as a no-op (the
+# runtime version above carries every feature the tests need). Listed
+# here for the convention that test-only deps appear in this section;
+# Cargo unifies the two declarations.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "stream", "http2", "json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 # `serde_json::json!` builds the JSON request bodies the
 # `proto_barista` integration tests send; same crate the library

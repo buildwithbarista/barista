@@ -72,6 +72,15 @@ const STORAGE_BYTES_TTL: Duration = Duration::from_secs(5);
 /// deployment.
 const CAS_LATENCY_BUCKETS: &[f64] = &[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0];
 
+/// Default histogram buckets for upstream-fetch duration, in seconds.
+///
+/// Upstreams are slow compared to the local CAS — a Maven Central
+/// round-trip plus a several-MiB jar download takes hundreds of
+/// milliseconds at minimum. Buckets cover the warm cache-miss range
+/// (a few hundred ms) through the worst-case "Central is being
+/// unhelpful today" timeout (~60 s).
+const UPSTREAM_LATENCY_BUCKETS: &[f64] = &[0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0];
+
 /// Initialised by [`init`]. Holds the typed metric handles + the
 /// storage-bytes cache + the process-start instant for uptime.
 struct Metrics {
@@ -91,6 +100,10 @@ struct Metrics {
     cas_latency: HistogramVec,
     /// `roastery_storage_bytes_total{backend}`.
     storage_bytes: IntGaugeVec,
+    /// `roastery_upstream_fetch_total{repo, result}`.
+    upstream_fetches: IntCounterVec,
+    /// `roastery_upstream_fetch_duration_seconds{repo}`.
+    upstream_latency: HistogramVec,
     /// Process start instant (for uptime). Captured once at [`init`].
     started: Instant,
     /// Cached value of the most recent filesystem-walk, with the time
@@ -187,6 +200,37 @@ pub fn init() {
             )
         });
 
+        let upstream_fetches = IntCounterVec::new(
+            Opts::new(
+                "roastery_upstream_fetch_total",
+                "Upstream-on-miss fetch attempts, partitioned by upstream host and outcome.",
+            ),
+            &["repo", "result"],
+        )
+        .unwrap_or_else(|err| {
+            warn!(error = %err, "failed to construct upstream_fetches counter");
+            placeholder_int_counter_vec(
+                "roastery_upstream_fetch_total_placeholder",
+                &["repo", "result"],
+            )
+        });
+
+        let upstream_latency = HistogramVec::new(
+            HistogramOpts::new(
+                "roastery_upstream_fetch_duration_seconds",
+                "Upstream-on-miss fetch duration in seconds, labelled by upstream host.",
+            )
+            .buckets(UPSTREAM_LATENCY_BUCKETS.to_vec()),
+            &["repo"],
+        )
+        .unwrap_or_else(|err| {
+            warn!(error = %err, "failed to construct upstream_latency histogram");
+            placeholder_histogram_vec(
+                "roastery_upstream_fetch_duration_seconds_placeholder",
+                &["repo"],
+            )
+        });
+
         // Best-effort registration. If a metric is already registered
         // (e.g. a test that called `init` from a parallel binary)
         // `register` returns `AlreadyReg` — we ignore it.
@@ -195,6 +239,8 @@ pub fn init() {
         let _ = default_registry().register(Box::new(cas_requests.clone()));
         let _ = default_registry().register(Box::new(cas_latency.clone()));
         let _ = default_registry().register(Box::new(storage_bytes.clone()));
+        let _ = default_registry().register(Box::new(upstream_fetches.clone()));
+        let _ = default_registry().register(Box::new(upstream_latency.clone()));
 
         // Stamp the info gauge with the build identity. The labels
         // are read by Prometheus consumers via the
@@ -209,6 +255,8 @@ pub fn init() {
             cas_requests,
             cas_latency,
             storage_bytes,
+            upstream_fetches,
+            upstream_latency,
             started: Instant::now(),
             storage_bytes_cache: Mutex::new(None),
         }
@@ -324,6 +372,59 @@ pub fn record_cas_request(method: CasMethod, result: CasResult, duration: Durati
         .inc();
     m.cas_latency
         .with_label_values(&[method_label])
+        .observe(duration.as_secs_f64());
+}
+
+/// Stable wire identifier for the outcome of one upstream-on-miss
+/// fetch attempt against a single repository.
+///
+/// - `Hit`: upstream returned 2xx + the bytes hashed to the requested
+///   digest. The blob is now in the local CAS.
+/// - `Miss`: upstream returned a non-2xx (typically 404). Caller
+///   moves on to the next repository in the list.
+/// - `DigestMismatch`: upstream returned 2xx but the bytes hashed to
+///   a different digest than the caller asked for. The bytes were
+///   discarded by `Cas::put`'s verifier. Counted separately from
+///   plain errors because it's the canary for an upstream serving
+///   stale or compromised content.
+/// - `Error`: network failure, timeout, or local CAS write blip.
+///   Caller moves on.
+#[derive(Debug, Clone, Copy)]
+pub enum UpstreamResult {
+    Hit,
+    Miss,
+    DigestMismatch,
+    Error,
+}
+
+impl UpstreamResult {
+    fn as_label(self) -> &'static str {
+        match self {
+            UpstreamResult::Hit => "hit",
+            UpstreamResult::Miss => "miss",
+            UpstreamResult::DigestMismatch => "digest_mismatch",
+            UpstreamResult::Error => "error",
+        }
+    }
+}
+
+/// Record one upstream-on-miss fetch attempt: bumps the per-`(repo,
+/// result)` counter and observes the per-`repo` latency histogram.
+///
+/// `repo` should be the bare host of the upstream URL (e.g.
+/// `repo.maven.apache.org`) — the cardinality is bounded by the
+/// operator's configured repo list, which is small.
+///
+/// No-op if [`init`] hasn't run.
+pub fn record_upstream_fetch(repo: &str, result: UpstreamResult, duration: Duration) {
+    let Some(m) = METRICS.get() else {
+        return;
+    };
+    m.upstream_fetches
+        .with_label_values(&[repo, result.as_label()])
+        .inc();
+    m.upstream_latency
+        .with_label_values(&[repo])
         .observe(duration.as_secs_f64());
 }
 

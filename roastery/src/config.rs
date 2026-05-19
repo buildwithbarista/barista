@@ -1,11 +1,10 @@
 //! Server configuration for the roastery binary.
 //!
-//! The scaffold ships a small set of fields covering the bootstrap
-//! path — bind address, storage directory, and two placeholder
-//! structs for TLS and upstream-on-miss that later milestones will
-//! populate. Values are loaded from environment variables with
-//! documented defaults so an operator can `cargo run -p roastery`
-//! and get a working scaffold with zero configuration.
+//! Configuration is loaded from environment variables with documented
+//! defaults so an operator can `cargo run -p roastery` and get a
+//! working scaffold with zero configuration. The struct covers bind
+//! address, storage backend, server-side TLS, bearer + mTLS auth,
+//! and upstream-on-miss.
 //!
 //! Environment variables:
 //!
@@ -21,7 +20,9 @@
 //! | `ROASTERY_TLS_KEY`             | unset              | PEM private key. Required with `ROASTERY_TLS_CERT`.  |
 //! | `ROASTERY_BEARER_TOKENS_FILE`  | unset              | Path to a `<label>:<secret>` tokens file.            |
 //! | `ROASTERY_MTLS_CA_CERT`        | unset              | PEM CA bundle the client cert must chain to.         |
-//! | `ROASTERY_UPSTREAM`            | unset              | Reserved for upstream-on-miss.                       |
+//! | `ROASTERY_UPSTREAM_FETCH_MISSING` | `false`          | Master switch for the upstream-on-miss codepath.     |
+//! | `ROASTERY_UPSTREAM_REPOS`      | unset              | Comma-separated upstream Maven repo URLs (ordered).  |
+//! | `ROASTERY_UPSTREAM_TIMEOUT_SECS` | `30`             | Per-request timeout to a single upstream.            |
 //!
 //! ## Fail-closed default
 //!
@@ -122,6 +123,69 @@ pub struct MtlsAuthConfig {
     pub ca_cert: PathBuf,
 }
 
+/// Default per-request timeout for an individual upstream-on-miss
+/// fetch attempt, in seconds. Applied as both `connect_timeout` and
+/// the overall request timeout on the `reqwest::Client` the
+/// [`crate::upstream::UpstreamFetcher`] holds.
+pub const DEFAULT_UPSTREAM_TIMEOUT_SECS: u32 = 30;
+
+/// Upstream-on-miss configuration.
+///
+/// When [`UpstreamConfig::fetch_missing`] is `true` and a
+/// `GET /v1/cas/sha256/{digest}` lands on a digest the local CAS
+/// doesn't have, the server attempts to fetch the artifact from one
+/// of the [`UpstreamConfig::repos`] in order. The first repository
+/// that returns a hash-matching blob wins; the bytes are persisted to
+/// the local CAS before the response streams back to the client, so
+/// subsequent requests for the same digest are local hits and
+/// concurrent requests for the same digest deduplicate via the local
+/// store.
+///
+/// The client must also send an `X-Barista-Coords: g:a[:t[:c]]:v`
+/// header on the GET to tell the fetcher where in the Maven layout
+/// to look. The digest alone is not enough — there is no reverse
+/// mapping from SHA-256 to Maven coordinates.
+///
+/// ## Default
+///
+/// `fetch_missing` defaults to `false`: operators must explicitly opt
+/// in. This keeps the v0.1 default behaviour pure (the server only
+/// serves what's been PUT into it).
+///
+/// ## Validation
+///
+/// `fetch_missing = true` with an empty `repos` list is rejected at
+/// [`ServerConfig::validate`] time with error code
+/// `BAR-CACHE-007`: enabling the feature without configuring at
+/// least one upstream is almost certainly a misconfiguration, and
+/// failing fast is friendlier than silently never serving an
+/// upstream-on-miss.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpstreamConfig {
+    /// Master switch. When `false` (default) the upstream-on-miss
+    /// codepath is disabled entirely — the GET handler returns 404
+    /// on a local miss without consulting any upstream.
+    pub fetch_missing: bool,
+    /// Ordered list of upstream Maven repository base URLs. Tried
+    /// sequentially; first repo to return the artifact wins. v0.1
+    /// has no parallel fan-out.
+    pub repos: Vec<Url>,
+    /// Per-request timeout to a single upstream (connect + overall
+    /// request). Applied via `reqwest::ClientBuilder::connect_timeout`
+    /// and `::timeout`.
+    pub timeout_secs: u32,
+}
+
+impl Default for UpstreamConfig {
+    fn default() -> Self {
+        Self {
+            fetch_missing: false,
+            repos: Vec::new(),
+            timeout_secs: DEFAULT_UPSTREAM_TIMEOUT_SECS,
+        }
+    }
+}
+
 /// Top-level authentication configuration.
 ///
 /// Either, both, or neither of `bearer` / `mtls` may be set. When
@@ -172,9 +236,13 @@ pub struct ServerConfig {
     /// neither may be set; non-loopback binds require at least one
     /// (enforced by [`ServerConfig::validate`]).
     pub auth: AuthConfig,
-    /// Upstream registry to consult on cache miss. Wired by a
-    /// subsequent task.
-    pub upstream: Option<Url>,
+    /// Upstream-on-miss configuration. Defaults to disabled.
+    ///
+    /// Replaces the prior `upstream: Option<Url>` placeholder field.
+    /// Callers that previously constructed a single-URL value should
+    /// now build an [`UpstreamConfig`] with one entry in `repos`,
+    /// `fetch_missing = true`, and the desired timeout.
+    pub upstream: UpstreamConfig,
 }
 
 impl ServerConfig {
@@ -189,7 +257,7 @@ impl ServerConfig {
             storage_dir,
             tls: None,
             auth: AuthConfig::default(),
-            upstream: None,
+            upstream: UpstreamConfig::default(),
         }
     }
 
@@ -213,7 +281,11 @@ impl ServerConfig {
             env::var_os("ROASTERY_BEARER_TOKENS_FILE"),
             env::var_os("ROASTERY_MTLS_CA_CERT"),
         );
-        let upstream = parse_upstream(env::var_os("ROASTERY_UPSTREAM"))?;
+        let upstream = parse_upstream(
+            env::var_os("ROASTERY_UPSTREAM_FETCH_MISSING"),
+            env::var_os("ROASTERY_UPSTREAM_REPOS"),
+            env::var_os("ROASTERY_UPSTREAM_TIMEOUT_SECS"),
+        )?;
 
         Ok(Self {
             bind,
@@ -302,6 +374,19 @@ impl ServerConfig {
                  (set ROASTERY_BEARER_TOKENS_FILE and/or ROASTERY_MTLS_CA_CERT)",
                 self.bind
             )));
+        }
+
+        // Upstream-on-miss precondition: if the feature is switched
+        // on, at least one upstream repository must be configured.
+        // Enabling the feature with an empty repo list is almost
+        // certainly a misconfiguration. Error code BAR-CACHE-007 (see
+        // the BAR-CACHE-NNN code table in `error.rs`).
+        if self.upstream.fetch_missing && self.upstream.repos.is_empty() {
+            return Err(RoasteryError::Config(
+                "BAR-CACHE-007: ROASTERY_UPSTREAM_FETCH_MISSING=true but \
+                 ROASTERY_UPSTREAM_REPOS is empty — set at least one upstream URL"
+                    .to_string(),
+            ));
         }
 
         Ok(())
@@ -430,16 +515,82 @@ fn parse_auth(bearer_tokens: Option<OsString>, mtls_ca: Option<OsString>) -> Aut
     AuthConfig { bearer, mtls }
 }
 
-fn parse_upstream(raw: Option<OsString>) -> Result<Option<Url>> {
-    let Some(raw) = raw else {
-        return Ok(None);
+/// Parse the three upstream-on-miss env vars into an
+/// [`UpstreamConfig`].
+///
+/// - `ROASTERY_UPSTREAM_FETCH_MISSING`: `true`/`false`/`1`/`0`,
+///   case-insensitive. Default `false`.
+/// - `ROASTERY_UPSTREAM_REPOS`: comma-separated base URLs. Each entry
+///   must be a parseable URL; trailing whitespace + empty entries are
+///   skipped. The order is preserved — the fetcher tries the first
+///   entry first.
+/// - `ROASTERY_UPSTREAM_TIMEOUT_SECS`: positive integer. Default
+///   `30`.
+///
+/// File-existence and cross-field consistency (`fetch_missing` →
+/// non-empty `repos`) are checked by
+/// [`ServerConfig::validate`].
+fn parse_upstream(
+    fetch_missing: Option<OsString>,
+    repos: Option<OsString>,
+    timeout: Option<OsString>,
+) -> Result<UpstreamConfig> {
+    let fetch_missing = match fetch_missing.as_ref().and_then(|v| v.to_str()) {
+        None => false,
+        Some(s) => parse_bool_flag("ROASTERY_UPSTREAM_FETCH_MISSING", s)?,
     };
-    let s = raw
-        .to_str()
-        .ok_or_else(|| RoasteryError::Config("ROASTERY_UPSTREAM is not valid UTF-8".to_string()))?;
-    Url::parse(s)
-        .map(Some)
-        .map_err(|e| RoasteryError::Config(format!("invalid ROASTERY_UPSTREAM {s:?}: {e}")))
+
+    let repos = match repos.as_ref().and_then(|v| v.to_str()) {
+        None => Vec::new(),
+        Some(s) => {
+            let mut out = Vec::new();
+            for entry in s.split(',') {
+                let trimmed = entry.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let url = Url::parse(trimmed).map_err(|e| {
+                    RoasteryError::Config(format!(
+                        "invalid ROASTERY_UPSTREAM_REPOS entry {trimmed:?}: {e}"
+                    ))
+                })?;
+                out.push(url);
+            }
+            out
+        }
+    };
+
+    let timeout_secs = match timeout.as_ref().and_then(|v| v.to_str()) {
+        None => DEFAULT_UPSTREAM_TIMEOUT_SECS,
+        Some(s) => s.parse::<u32>().map_err(|e| {
+            RoasteryError::Config(format!(
+                "invalid ROASTERY_UPSTREAM_TIMEOUT_SECS {s:?}: {e}"
+            ))
+        })?,
+    };
+    if timeout_secs == 0 {
+        return Err(RoasteryError::Config(
+            "ROASTERY_UPSTREAM_TIMEOUT_SECS must be greater than 0".to_string(),
+        ));
+    }
+
+    Ok(UpstreamConfig {
+        fetch_missing,
+        repos,
+        timeout_secs,
+    })
+}
+
+/// Parse `true`/`false`/`1`/`0`/`yes`/`no` (case-insensitive). Used
+/// for boolean env vars.
+fn parse_bool_flag(name: &str, raw: &str) -> Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" | "" => Ok(false),
+        other => Err(RoasteryError::Config(format!(
+            "invalid {name} value {other:?} (expected true/false/1/0)"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -459,7 +610,8 @@ mod tests {
             StorageBackend::Filesystem(PathBuf::from(DEFAULT_STORAGE_DIR))
         );
         assert!(cfg.tls.is_none());
-        assert!(cfg.upstream.is_none());
+        assert!(!cfg.upstream.fetch_missing);
+        assert!(cfg.upstream.repos.is_empty());
         assert!(!cfg.auth.any_configured());
     }
 
@@ -559,17 +711,104 @@ mod tests {
     }
 
     #[test]
-    fn parse_upstream_accepts_url() {
-        let u = parse_upstream(Some("https://repo1.maven.org/maven2/".into()))
-            .unwrap()
-            .unwrap();
-        assert_eq!(u.scheme(), "https");
+    fn parse_upstream_defaults_when_unset() {
+        let u = parse_upstream(None, None, None).unwrap();
+        assert!(!u.fetch_missing);
+        assert!(u.repos.is_empty());
+        assert_eq!(u.timeout_secs, DEFAULT_UPSTREAM_TIMEOUT_SECS);
     }
 
     #[test]
-    fn parse_upstream_rejects_garbage() {
-        let err = parse_upstream(Some("not a url".into())).unwrap_err();
+    fn parse_upstream_accepts_repos_and_fetch_flag() {
+        let u = parse_upstream(
+            Some("true".into()),
+            Some(
+                "https://repo.maven.apache.org/maven2/,https://nexus.example.com/repository/public/"
+                    .into(),
+            ),
+            Some("45".into()),
+        )
+        .unwrap();
+        assert!(u.fetch_missing);
+        assert_eq!(u.repos.len(), 2);
+        assert_eq!(u.repos[0].host_str(), Some("repo.maven.apache.org"));
+        assert_eq!(u.repos[1].host_str(), Some("nexus.example.com"));
+        assert_eq!(u.timeout_secs, 45);
+    }
+
+    #[test]
+    fn parse_upstream_skips_empty_repo_entries() {
+        let u = parse_upstream(
+            Some("1".into()),
+            Some(",https://a.example/, ,https://b.example/,".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(u.repos.len(), 2);
+    }
+
+    #[test]
+    fn parse_upstream_rejects_garbage_url() {
+        let err = parse_upstream(None, Some("not a url".into()), None).unwrap_err();
         assert!(matches!(err, RoasteryError::Config(_)));
+    }
+
+    #[test]
+    fn parse_upstream_rejects_garbage_bool() {
+        let err = parse_upstream(Some("maybe".into()), None, None).unwrap_err();
+        assert!(matches!(err, RoasteryError::Config(_)));
+    }
+
+    #[test]
+    fn parse_upstream_rejects_zero_timeout() {
+        let err = parse_upstream(None, None, Some("0".into())).unwrap_err();
+        assert!(matches!(err, RoasteryError::Config(_)));
+    }
+
+    /// `[T]` linkage: `upstream_repos_empty_with_fetch_missing_enabled_fails_validate`.
+    #[test]
+    fn validate_rejects_fetch_missing_with_empty_repos() {
+        let storage = fresh_storage_dir();
+        let cfg = ServerConfig {
+            bind: "127.0.0.1:8443".parse().unwrap(),
+            storage: StorageBackend::Filesystem(storage.clone()),
+            storage_dir: storage.clone(),
+            tls: None,
+            auth: AuthConfig::default(),
+            upstream: UpstreamConfig {
+                fetch_missing: true,
+                repos: Vec::new(),
+                timeout_secs: 30,
+            },
+        };
+        let err = cfg.validate().unwrap_err();
+        let RoasteryError::Config(msg) = &err else {
+            panic!("expected Config error, got {err:?}");
+        };
+        assert!(
+            msg.contains("BAR-CACHE-007"),
+            "expected BAR-CACHE-007 in error message, got: {msg}"
+        );
+        let _ = fs::remove_dir_all(&storage);
+    }
+
+    #[test]
+    fn validate_accepts_fetch_missing_with_repos() {
+        let storage = fresh_storage_dir();
+        let cfg = ServerConfig {
+            bind: "127.0.0.1:8443".parse().unwrap(),
+            storage: StorageBackend::Filesystem(storage.clone()),
+            storage_dir: storage.clone(),
+            tls: None,
+            auth: AuthConfig::default(),
+            upstream: UpstreamConfig {
+                fetch_missing: true,
+                repos: vec![Url::parse("https://repo.maven.apache.org/maven2/").unwrap()],
+                timeout_secs: 30,
+            },
+        };
+        cfg.validate().unwrap();
+        let _ = fs::remove_dir_all(&storage);
     }
 
     #[test]
@@ -591,7 +830,7 @@ mod tests {
             storage_dir: tmp.clone(),
             tls: None,
             auth: AuthConfig::default(),
-            upstream: None,
+            upstream: UpstreamConfig::default(),
         };
         cfg.validate().unwrap();
         assert!(tmp.exists());
@@ -649,7 +888,7 @@ mod tests {
             storage_dir: storage.clone(),
             tls: None,
             auth: AuthConfig::default(),
-            upstream: None,
+            upstream: UpstreamConfig::default(),
         };
         let err = cfg.validate().unwrap_err();
         let RoasteryError::Config(msg) = &err else {
@@ -671,7 +910,7 @@ mod tests {
             storage_dir: storage.clone(),
             tls: None,
             auth: AuthConfig::default(),
-            upstream: None,
+            upstream: UpstreamConfig::default(),
         };
         cfg.validate().unwrap();
         let _ = fs::remove_dir_all(&storage);
@@ -694,7 +933,7 @@ mod tests {
                 }),
                 mtls: None,
             },
-            upstream: None,
+            upstream: UpstreamConfig::default(),
         };
         cfg.validate().unwrap();
         let _ = fs::remove_dir_all(&storage);
@@ -715,7 +954,7 @@ mod tests {
                     ca_cert: ca.path().to_path_buf(),
                 }),
             },
-            upstream: None,
+            upstream: UpstreamConfig::default(),
         };
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, RoasteryError::Config(_)));

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use roastery::config::StorageBackend;
-use roastery::{ServerConfig, run};
+use roastery::{ServerConfig, UpstreamConfig, run};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio::net::TcpStream;
@@ -68,7 +68,7 @@ fn fixture_config(addr: SocketAddr) -> (TempDir, ServerConfig) {
         storage_dir,
         tls: None,
         auth: roastery::AuthConfig::default(),
-        upstream: None,
+        upstream: UpstreamConfig::default(),
     };
     (tmp, cfg)
 }

@@ -79,6 +79,7 @@ async fn spawn_server() -> Harness {
     let state = AppState {
         cas: Arc::new(cas),
         config: Arc::new(config),
+        upstream: None,
     };
 
     // Build the public router via the library — same code production

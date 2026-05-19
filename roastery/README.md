@@ -157,6 +157,115 @@ curl -i -X POST "http://127.0.0.1:7878/v1/cas/missing" \
     -d "{\"digests\":[\"sha256:$BLOB\",\"sha256:000…0\"]}"
 ```
 
+## Upstream-on-miss
+
+When a `GET /v1/cas/sha256/{digest}` lands on a digest the local store
+doesn't have, the server can transparently fetch the artifact from an
+upstream Maven repository (Maven Central, an internal Nexus, …),
+verify its SHA-256 in flight, and persist it to the local cache
+before streaming the response. Subsequent requests for the same
+digest are local hits.
+
+### Trigger
+
+The fallback path runs **only** when **all three** of these hold:
+
+1. The request method is `GET`. `HEAD` and `PUT` never trigger an
+   upstream fetch.
+2. The configured upstream is enabled (`fetch_missing = true` plus a
+   non-empty repo list — see "Configuration" below).
+3. The request includes an `X-Barista-Coords` header whose value
+   parses as Maven coordinates:
+
+   - `g:a:v` — 3 components; packaging defaults to `jar`.
+   - `g:a:t:v` — 4 components; explicit packaging type.
+   - `g:a:t:c:v` — 5 components; explicit type + classifier.
+
+   Each segment must match the Maven character class
+   `[A-Za-z0-9._-]+`. The hint is required because there is no
+   reverse mapping from a SHA-256 to a Maven layout path; the digest
+   alone is not enough to know what to fetch.
+
+A request that satisfies (1) + (2) but not (3) is a plain 404. A
+malformed coords header surfaces `400 BAR-CACHE-008`.
+
+### Repository fallthrough
+
+Repositories are tried sequentially in the order given. The first
+repository that returns a 2xx with bytes hashing to the requested
+digest wins. Failure modes that fall through to the next repository:
+
+- non-2xx response (404 is by far the most common case),
+- network / TLS / timeout error,
+- digest mismatch — the bytes hashed to a different value than the
+  requested digest. The discarded bytes never reach the local store
+  (the in-flight verifier in `Cas::put` discards them).
+
+If every configured repository fails, the response is a plain 404.
+
+### Wire-level integrity
+
+Bytes from the upstream stream straight through
+`tokio_util::io::StreamReader` into `Cas::put`, which hashes them as
+they go. There is no intermediate buffer in memory or on disk that
+ever contains unverified bytes — a digest mismatch is detected before
+the put commits, and the staging file is dropped. An upstream serving
+poisoned content can never poison the local cache.
+
+### Configuration
+
+| Variable                          | Default | Notes                                                                                  |
+|-----------------------------------|---------|----------------------------------------------------------------------------------------|
+| `ROASTERY_UPSTREAM_FETCH_MISSING` | `false` | Master switch. Accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` (case-insensitive). |
+| `ROASTERY_UPSTREAM_REPOS`         | unset   | Comma-separated base URLs. Order is preserved; first hit wins.                          |
+| `ROASTERY_UPSTREAM_TIMEOUT_SECS`  | `30`    | Connect + overall request timeout per upstream attempt.                                 |
+
+`fetch_missing = true` with an empty repo list is a startup error
+(`BAR-CACHE-007`) — enabling the feature without configuring an
+upstream is almost certainly a misconfiguration.
+
+Example:
+
+```bash
+ROASTERY_UPSTREAM_FETCH_MISSING=true \
+ROASTERY_UPSTREAM_REPOS="https://repo.maven.apache.org/maven2/,https://nexus.example.com/repository/public/" \
+ROASTERY_UPSTREAM_TIMEOUT_SECS=45 \
+    cargo run -p roastery
+```
+
+```bash
+curl -i \
+    -H 'X-Barista-Coords: org.slf4j:slf4j-api:2.0.13' \
+    "http://127.0.0.1:7878/v1/cas/sha256/$(echo -n 'slf4j-api-2.0.13.jar' | sha256sum | cut -d' ' -f1)"
+```
+
+### Metrics
+
+The upstream-on-miss path emits two Prometheus series alongside the
+existing CAS metrics:
+
+- `roastery_upstream_fetch_total{repo, result}` — counter. `repo` is
+  the bare host of the upstream URL (e.g.
+  `repo.maven.apache.org`); cardinality is bounded by the operator-
+  configured repo list. `result` ∈ {`hit`, `miss`, `error`,
+  `digest_mismatch`}. The `digest_mismatch` label is the canary for
+  an upstream serving stale or compromised content — alert on a
+  non-zero rate.
+- `roastery_upstream_fetch_duration_seconds_bucket{repo, le=…}`
+  plus the standard `_sum` / `_count` — histogram of per-attempt
+  latency, labelled by upstream host. Buckets cover the warm-miss
+  range (~100 ms) through worst-case slow upstream (~60 s).
+
+### Concurrency note
+
+Concurrent requests for the same missing digest deduplicate **via the
+local store**, not via in-process coordination: the first request to
+finish its `Cas::put` makes the blob present, and any later request
+hits the local fast path on its next `cas.stat` call. This is
+deliberately simple — the cost is at most one duplicate upstream
+fetch per concurrent miss, which is cheap relative to the wins from
+not needing a per-digest lock table in the server.
+
 ## Operations endpoints
 
 Alongside the `/v1/…` protocol surface, the server exposes a small set

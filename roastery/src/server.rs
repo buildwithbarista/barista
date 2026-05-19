@@ -41,6 +41,7 @@ use crate::auth::{AuthLayer, BearerVerifier, MtlsVerifier};
 use crate::config::{ServerConfig, StorageBackend};
 use crate::error::{Result, RoasteryError};
 use crate::storage::{Cas, FsCas, GcsCas, S3Cas};
+use crate::upstream::UpstreamFetcher;
 
 /// Crate version exposed in the placeholder root response.
 pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -62,6 +63,12 @@ pub struct AppState {
     /// Resolved server configuration. Shared by `Arc` so handlers can
     /// read fields without copying the whole struct on every request.
     pub config: Arc<ServerConfig>,
+    /// Optional upstream-on-miss fetcher. `Some` when
+    /// [`crate::config::UpstreamConfig::fetch_missing`] is true and
+    /// at least one upstream repository is configured; `None`
+    /// otherwise. Wrapped in `Arc` because the fetcher carries a
+    /// `reqwest::Client` we don't want to clone per request.
+    pub upstream: Option<Arc<UpstreamFetcher>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -72,6 +79,14 @@ impl std::fmt::Debug for AppState {
         f.debug_struct("AppState")
             .field("cas", &"<dyn Cas>")
             .field("config", &self.config)
+            .field(
+                "upstream",
+                &self
+                    .upstream
+                    .as_ref()
+                    .map(|_| "<UpstreamFetcher>")
+                    .unwrap_or("none"),
+            )
             .finish()
     }
 }
@@ -138,7 +153,44 @@ pub(crate) fn build_router(state: AppState, auth_layer: AuthLayer) -> Router {
         .merge(crate::ops::router().with_state(state))
         .merge(protected)
         .layer(TraceLayer::new_for_http())
-    // T6: wrap with upstream-on-miss `Layer` once storage lands.
+    // T6: upstream-on-miss layer.
+    //
+    // Implemented inline in the `cas_get` handler (see
+    // `proto/barista.rs`) rather than as a tower `Layer`, because the
+    // fetcher needs access to the parsed digest path parameter and
+    // the request's `X-Barista-Coords` header to know what to fetch
+    // — both of which the handler already has in scope. A `Layer`
+    // would have to re-parse the path or thread state through an
+    // extension, with no extra benefit. The fetcher itself lives in
+    // `crate::upstream` and is stashed on `AppState::upstream`.
+}
+
+/// Construct the upstream-on-miss fetcher from the resolved server
+/// configuration.
+///
+/// Returns `Ok(None)` when the operator has not opted into the
+/// feature (`fetch_missing = false` or empty `repos`). Returns
+/// `Ok(Some(_))` when the fetcher is enabled and the `reqwest::Client`
+/// builds cleanly. Surfaces a [`RoasteryError::Config`] only on a
+/// truly malformed configuration — the `validate()` precheck has
+/// already caught the obvious "fetch on, repos empty" case.
+fn build_upstream(
+    config: &ServerConfig,
+    cas: Arc<dyn Cas>,
+) -> Result<Option<Arc<UpstreamFetcher>>> {
+    if !config.upstream.fetch_missing || config.upstream.repos.is_empty() {
+        return Ok(None);
+    }
+    let timeout = std::time::Duration::from_secs(u64::from(config.upstream.timeout_secs));
+    let fetcher = UpstreamFetcher::new(config.upstream.repos.clone(), timeout, cas).map_err(
+        |e| RoasteryError::Config(format!("failed to build upstream HTTP client: {e}")),
+    )?;
+    info!(
+        repos = config.upstream.repos.len(),
+        timeout_secs = config.upstream.timeout_secs,
+        "upstream-on-miss enabled"
+    );
+    Ok(Some(Arc::new(fetcher)))
 }
 
 /// Resolve the configured auth verifiers from disk + assemble the
@@ -217,9 +269,18 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     // Build the CAS backend up front so a misconfigured storage layer
     // is a startup error, not a first-request error.
     let cas = build_cas(&config.storage)?;
+
+    // T6: upstream-on-miss layer. Build the fetcher (if enabled) at
+    // startup so a bad upstream URL or a broken rustls config is a
+    // startup error, not a per-request surprise. The fetcher shares
+    // the same `Arc<dyn Cas>` as the rest of the server: a successful
+    // upstream fetch persists into the same store the handlers read
+    // from.
+    let upstream = build_upstream(&config, cas.clone())?;
     let state = AppState {
         cas,
         config: Arc::new(config.clone()),
+        upstream,
     };
     let auth_layer = build_auth(&config)?;
 
@@ -606,6 +667,7 @@ mod tests {
         let state = AppState {
             cas,
             config: Arc::new(config),
+            upstream: None,
         };
         (tmp, state)
     }

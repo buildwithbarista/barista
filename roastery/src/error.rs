@@ -155,6 +155,19 @@ pub enum StorageError {
 /// | `BAR-AUTH-005` | —    | Startup error: non-loopback bind requires `bearer` or `mtls` configured. |
 /// | `BAR-AUTH-099` | 500  | Internal auth-layer failure (verifier panic, extension extraction bug).  |
 ///
+/// ## `BAR-CACHE-NNN` code reference
+///
+/// Cache-orchestration codes — used by the upstream-on-miss path and
+/// other roastery-side workflows that aren't a direct CAS protocol
+/// violation. Codes `001`–`006` are reserved for future use (e.g.
+/// "Roastery unreachable" at the client end). Codes `007` and `008`
+/// belong to the upstream-on-miss feature.
+///
+/// | Code            | HTTP | Meaning                                                                          |
+/// |-----------------|------|----------------------------------------------------------------------------------|
+/// | `BAR-CACHE-007` | —    | Startup error: `ROASTERY_UPSTREAM_FETCH_MISSING=true` with empty `REPOS` list.   |
+/// | `BAR-CACHE-008` | 400  | `X-Barista-Coords` header was malformed (invalid coords syntax).                 |
+///
 /// `BAR-AUTH-005` never travels over the wire — it's the startup
 /// error a misconfigured server surfaces from
 /// [`crate::config::ServerConfig::validate`]. Codes 003/004 are

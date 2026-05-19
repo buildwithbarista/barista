@@ -59,11 +59,18 @@ use crate::error::{ErrorBody, StorageError};
 use crate::ops::metrics::{CasMethod, CasResult, record_cas_request};
 use crate::server::AppState;
 use crate::storage::{CasReader, Digest};
+use crate::upstream::{Coords, UpstreamError};
 
 /// Header carrying the canonical `sha256:<hex>` identifier of the blob
 /// involved in the request — set on every CAS response (200 OK, 201
 /// Created, HEAD).
 const HDR_BARISTA_DIGEST: HeaderName = HeaderName::from_static("x-barista-digest");
+
+/// Request header carrying the Maven coordinates of the artifact the
+/// client expects this digest to identify. Format: `g:a[:t[:c]]:v`.
+/// Used only by `GET /v1/cas/sha256/{digest}` on a local cache miss
+/// when the upstream-on-miss path is enabled.
+const HDR_BARISTA_COORDS: HeaderName = HeaderName::from_static("x-barista-coords");
 
 /// Maximum number of digests accepted in a single `POST /v1/cas/missing`
 /// request. Documented in the `capabilities` payload as
@@ -137,38 +144,126 @@ pub fn protected_router() -> Router<AppState> {
 /// Keeping the wrapper this slim means the inner function reads
 /// exactly like a plain handler — no metric scaffolding obscures the
 /// request flow.
-async fn cas_get(state: State<AppState>, path: Path<String>) -> Result<Response, StorageError> {
+async fn cas_get(
+    state: State<AppState>,
+    path: Path<String>,
+    headers: HeaderMap,
+) -> Result<Response, StorageError> {
     let started = std::time::Instant::now();
-    let result = cas_get_inner(state, path).await;
+    let result = cas_get_inner(state, path, headers).await;
     let outcome = classify_get_or_head(&result);
     record_cas_request(CasMethod::Get, outcome, started.elapsed());
     result
 }
 
 /// Inner GET handler — see [`cas_get`] for the metrics wrapper.
+///
+/// On a local cache miss this handler consults the upstream-on-miss
+/// fetcher when:
+///
+/// 1. an `UpstreamFetcher` is configured (`AppState::upstream` is
+///    `Some`), and
+/// 2. the request carries an `X-Barista-Coords` header.
+///
+/// If the fetcher succeeds, the blob is now in the local CAS and the
+/// handler re-issues the standard `stat`+`get` path to stream it.
+/// Otherwise the handler returns 404.
 async fn cas_get_inner(
     State(state): State<AppState>,
     Path(digest_hex): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Response, StorageError> {
     let digest = parse_digest(&digest_hex)?;
 
-    // We do a `stat` first so we can populate `Content-Length`
-    // accurately before we start streaming. An alternative would be to
-    // extend the `Cas` trait to return `(Stat, Reader)` in one call,
-    // but two trait calls keeps the surface area tight and the
-    // filesystem backend turns each into a single syscall (`stat` +
-    // `open`).
-    let Some(stat) = state.cas.stat(digest).await? else {
-        return Ok(not_found(digest));
-    };
-    let Some(reader) = state.cas.get(digest).await? else {
+    // Fast path: blob is local.
+    if let Some(stat) = state.cas.stat(digest).await? {
+        return serve_from_local(state.cas.clone(), digest, stat).await;
+    }
+
+    // Slow path: try the upstream-on-miss fetcher when it's
+    // configured AND the caller supplied a coords hint.
+    if let Some(fetcher) = &state.upstream
+        && let Some(coords_header) = headers.get(&HDR_BARISTA_COORDS)
+    {
+        let coords_str = match coords_header.to_str() {
+            Ok(s) => s.trim(),
+            Err(_) => {
+                return Ok(invalid_coords_response(
+                    "X-Barista-Coords header is not valid ASCII",
+                ));
+            }
+        };
+        let coords = match Coords::parse(coords_str) {
+            Ok(c) => c,
+            Err(UpstreamError::InvalidCoords { reason }) => {
+                return Ok(invalid_coords_response(&reason));
+            }
+            Err(other) => {
+                // Other variants from Coords::parse aren't reachable
+                // (it only produces InvalidCoords), but cover for the
+                // future with a generic 400.
+                return Ok(invalid_coords_response(&format!(
+                    "coords parse failed: {other}"
+                )));
+            }
+        };
+
+        // try_fetch consumes per-attempt errors internally; the
+        // outer Result here only carries the "not configured" /
+        // genuine surprise paths, which we treat as a miss.
+        match fetcher.try_fetch(digest, &coords).await {
+            Ok(Some(_stat)) => {
+                // Re-issue the local fast path. We deliberately
+                // don't reuse the AsyncRead from inside the fetcher
+                // — going back through `cas.stat`+`cas.get` keeps
+                // the streaming codepath identical between "hot
+                // local" and "freshly populated" hits, and the
+                // second `stat` is a single syscall.
+                if let Some(stat) = state.cas.stat(digest).await? {
+                    return serve_from_local(state.cas.clone(), digest, stat).await;
+                }
+                // Vanishingly unlikely: the blob was evicted between
+                // the put and the re-stat. Fall through to 404.
+            }
+            Ok(None) => {
+                // All upstreams missed — fall through to 404.
+            }
+            Err(_) => {
+                // Programming-level error (NotConfigured); fall
+                // through to 404 rather than 500ing the client.
+            }
+        }
+    }
+
+    Ok(not_found(digest))
+}
+
+/// Serve a blob from the local CAS, building the standard streaming
+/// response. Shared by the fast path and the post-upstream-fetch path
+/// so the response shape is identical in both cases.
+async fn serve_from_local(
+    cas: std::sync::Arc<dyn crate::storage::Cas>,
+    digest: Digest,
+    stat: crate::storage::Stat,
+) -> Result<Response, StorageError> {
+    let Some(reader) = cas.get(digest).await? else {
         // Race: the blob existed at `stat` time but was removed before
         // `get` could open it. Surface as 404 — by the time the
         // response reaches the client, the blob really is gone.
         return Ok(not_found(digest));
     };
-
     Ok(streaming_response(stat.size, digest, reader))
+}
+
+/// Build a 400 response with `BAR-CACHE-008` for a malformed
+/// `X-Barista-Coords` header. The body shape matches every other
+/// error response on this surface.
+fn invalid_coords_response(reason: &str) -> Response {
+    let body = ErrorBody::new(
+        "BAR-CACHE-008",
+        format!("invalid X-Barista-Coords header: {reason}"),
+    );
+    (StatusCode::BAD_REQUEST, Json(body)).into_response()
 }
 
 /// `HEAD /v1/cas/sha256/{digest}` — existence check.

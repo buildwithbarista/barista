@@ -33,6 +33,12 @@
 //!   the loader/verifier helpers (`BearerVerifier`, `MtlsVerifier`),
 //!   and the `Principal` enum attached to every authenticated
 //!   request.
+//! - [`upstream`] — upstream-on-miss fetch. When a `GET` lands on a
+//!   digest the local CAS doesn't have and the client supplied an
+//!   `X-Barista-Coords` hint, the `UpstreamFetcher` tries each
+//!   configured Maven repository in order, verifies the served bytes
+//!   against the requested digest, and persists the blob locally
+//!   before the response streams to the client.
 
 pub mod auth;
 pub mod config;
@@ -41,9 +47,14 @@ pub mod ops;
 pub mod proto;
 pub mod server;
 pub mod storage;
+pub mod upstream;
 
 pub use auth::{AuthLayer, BearerVerifier, ClientCertChain, MtlsVerifier, Principal};
-pub use config::{AuthConfig, BearerAuthConfig, MtlsAuthConfig, ServerConfig, StorageBackend, TlsConfig};
+pub use config::{
+    AuthConfig, BearerAuthConfig, MtlsAuthConfig, ServerConfig, StorageBackend, TlsConfig,
+    UpstreamConfig,
+};
 pub use error::{ErrorBody, Result, RoasteryError, StorageError};
 pub use server::{AppState, init_tracing, run};
 pub use storage::{Cas, Digest, FsCas, GcsCas, S3Cas, Stat};
+pub use upstream::{Coords, UpstreamError, UpstreamFetcher};

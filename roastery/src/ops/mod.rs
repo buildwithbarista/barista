@@ -43,6 +43,17 @@
 //!   and summing file sizes; the result is cached for 5 seconds so a
 //!   tight scrape loop can't turn `/metrics` into an `fts_walk`
 //!   bottleneck. For the S3/GCS stubs the value is `0`.
+//! - `roastery_upstream_fetch_total{repo, result}` — counter; one
+//!   bump per upstream-on-miss attempt against a single configured
+//!   repository. `repo` is the bare host of the upstream URL;
+//!   `result` ∈ `{hit, miss, error, digest_mismatch}`. The
+//!   `digest_mismatch` label is the canary for an upstream serving
+//!   stale or compromised content.
+//! - `roastery_upstream_fetch_duration_seconds_bucket{repo, le=…}`
+//!   plus `_sum` / `_count` — histogram of per-attempt upstream
+//!   latency. Buckets (`0.1 … 60.0 s`) cover everything from a
+//!   warm hit on a nearby mirror to a slow timeout against
+//!   Maven Central.
 //!
 //! The choice of the bare `prometheus` crate over the
 //! `metrics`/`metrics-exporter-prometheus` pair is documented inline

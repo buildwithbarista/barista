@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use roastery::{
     AppState, AuthConfig, BearerAuthConfig, FsCas, MtlsAuthConfig, ServerConfig, TlsConfig,
+    UpstreamConfig,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use tempfile::{NamedTempFile, TempDir};
@@ -103,11 +104,12 @@ async fn spawn_bearer_server() -> BearerHarness {
             }),
             mtls: None,
         },
-        upstream: None,
+        upstream: UpstreamConfig::default(),
     };
     let state = AppState {
         cas: Arc::new(cas),
         config: Arc::new(cfg.clone()),
+        upstream: None,
     };
 
     // Build the same router topology production builds, by going
@@ -307,7 +309,7 @@ fn server_refuses_to_start_with_non_loopback_bind_and_no_auth() {
         storage_dir: storage,
         tls: None,
         auth: AuthConfig::default(),
-        upstream: None,
+        upstream: UpstreamConfig::default(),
     };
     let err = cfg.validate().expect_err("validate should reject non-loopback + no-auth");
     let msg = format!("{err}");
@@ -325,7 +327,7 @@ fn server_refuses_to_start_with_non_loopback_bind_and_no_auth() {
         storage_dir: storage,
         tls: None,
         auth: AuthConfig::default(),
-        upstream: None,
+        upstream: UpstreamConfig::default(),
     };
     cfg_ok.validate().expect("loopback + no-auth should validate");
 }
@@ -407,7 +409,7 @@ async fn spawn_mtls_server(with_bearer: bool) -> MtlsHarness {
                 ca_cert: pki.ca_pem_file.clone(),
             }),
         },
-        upstream: None,
+        upstream: UpstreamConfig::default(),
     };
 
     let server = tokio::spawn(async move { roastery::run(cfg).await });
