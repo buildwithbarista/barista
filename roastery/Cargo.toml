@@ -10,5 +10,62 @@ publish = false
 name = "roastery"
 path = "src/main.rs"
 
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# why axum: `axum` 0.8 is the de facto Rust HTTP framework; it sits on
+# `hyper` + `tower` and composes cleanly with the `tonic` gRPC stack
+# the resolver/REAPI handler will mount in M5.1 T4. Picking it over
+# raw `hyper` here lets later tasks add routes, layers, and a gRPC
+# `Service` without retrofitting an executor or a router.
+axum = "0.8"
+# Async runtime. `signal` is required for the graceful-shutdown path
+# (Ctrl-C + SIGTERM); `net` for the TCP listener; `fs` for future
+# storage-tier work in M5.1 T2; `macros` + `rt-multi-thread` for
+# `#[tokio::main]` and the worker pool.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "fs"] }
+# `tower` provides the `Service` / `Layer` traits axum middleware
+# slots into; pinning it here surfaces the version axum 0.8 expects
+# and lines up with the version already in the workspace lockfile.
+tower = "0.5"
+# `tower-http` carries the `TraceLayer` used to attach a `tracing`
+# span per request — the minimum observability hook the scaffold
+# needs before M5.1 T7 wires `/metrics` and a structured access log.
+tower-http = { version = "0.6", features = ["trace"] }
+# `hyper` 1.x is axum 0.8's underlying HTTP implementation. The
+# `http1` + `http2` features make the negotiation surface explicit;
+# `server` brings in the connection-builder types `hyper-util` wraps.
+hyper = { version = "1", features = ["http1", "http2", "server"] }
+# `hyper-util` ships the `server::conn::auto::Builder` we use to
+# accept both HTTP/1.1 and HTTP/2 on the same listener. Over plain
+# TCP this stays HTTP/1.1 in practice; HTTP/2 negotiation kicks in
+# once TLS + ALPN land in M5.1 T5. The codepath is reserved here so
+# that work is a layering change, not a rewrite.
+hyper-util = { version = "0.1", features = ["server-auto", "tokio"] }
+# Structured logging facade + subscriber. `env-filter` lets operators
+# tune verbosity with `RUST_LOG`; `fmt` is the default human-readable
+# formatter the scaffold uses until M5.1 T7 introduces a structured
+# JSON formatter for production deployments.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# Typed error enum for the server. `thiserror` 2 is the major already
+# in use elsewhere in the workspace; this keeps the dep graph narrow.
+thiserror = "2"
+# `url::Url` types the (currently unused) upstream-on-miss endpoint
+# in `ServerConfig` so M5.1 T6 has a parsed value to plug into.
+# `serde` is intentionally not pulled in by the scaffold — later
+# milestones can add it (with the `url/serde` feature) when they
+# need to serialize config or wire JSON request bodies.
+url = "2"
+
+[dev-dependencies]
+# `reqwest` drives the smoke tests. `rustls-tls` is the future-proof
+# TLS backend (matches the M5.1 T5 plan); `http2` makes the client
+# willing to negotiate h2 once TLS is enabled. For the plain-TCP
+# scaffold tests the connection stays HTTP/1.1.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+
 [lints]
 workspace = true

@@ -1,0 +1,127 @@
+# roastery
+
+`roastery` is the remote artifact-cache server for the Barista build
+tool. It speaks the **barista-protocol** (a small REST/JSON surface
+tailored to Barista clients) alongside the **Remote Execution API**
+(REAPI / `bazel-remote-style` gRPC), backed by a local content-
+addressed object store with an optional upstream registry for
+miss-fill.
+
+Conceptually, the roastery is the team-shared layer above each
+developer's local Barista cache: a CI worker, a build-farm node, or
+a contributor on a fast link can resolve a coordinate once, store
+the resulting jar + POM + metadata in the roastery, and every
+subsequent client in the same pool gets a hot read instead of
+re-fetching from Maven Central.
+
+This crate ships a single binary, `roastery`, plus a small library
+the integration tests and downstream embedders consume.
+
+## Status
+
+The current code is a **scaffold**. The server boots, listens on the
+configured address, and serves a single placeholder route. Storage,
+auth, protocol handlers, gRPC services, health and metrics endpoints,
+and upstream-on-miss are wired in by subsequent milestones — see
+**Extending the scaffold** below.
+
+## Running locally
+
+```bash
+cargo run -p roastery
+```
+
+By default the server binds `127.0.0.1:7878` and creates
+`./.roastery-data/` as its storage root. Override either with env
+vars (see next section).
+
+A quick check from another terminal:
+
+```bash
+curl -i http://127.0.0.1:7878/
+# HTTP/1.1 200 OK
+# roastery 0.1.0-alpha.0 scaffold
+```
+
+To shut the server down, send `SIGINT` (Ctrl-C) or — on Unix —
+`SIGTERM`. The graceful-shutdown path stops accepting new
+connections; in-flight requests complete on their own.
+
+## Configuration
+
+All configuration is environment-driven. Defaults are documented in
+the table; `ServerConfig::from_env` applies them when the variable is
+unset.
+
+| Variable               | Default            | Notes                                                                      |
+|------------------------|--------------------|----------------------------------------------------------------------------|
+| `ROASTERY_BIND`        | `127.0.0.1:7878`   | `host:port` for the TCP listener.                                          |
+| `ROASTERY_STORAGE_DIR` | `./.roastery-data` | Created on startup if missing.                                             |
+| `ROASTERY_TLS_CERT`    | _(unset)_          | PEM cert chain. Must be set together with `ROASTERY_TLS_KEY`.              |
+| `ROASTERY_TLS_KEY`     | _(unset)_          | PEM private key.                                                           |
+| `ROASTERY_UPSTREAM`    | _(unset)_          | Upstream registry consulted on cache miss; reserved for a later milestone. |
+| `RUST_LOG`             | `info`             | Standard `tracing_subscriber::EnvFilter` syntax.                           |
+
+The TLS and upstream-on-miss fields are accepted today but **not
+exercised** — they exist so subsequent tasks can plug in without
+churning the public config surface.
+
+## Module layout
+
+```
+roastery/
+├── Cargo.toml
+├── README.md             ← you are here
+├── src/
+│   ├── main.rs           binary entrypoint; tracing init + runtime
+│   ├── lib.rs            re-exports the public API
+│   ├── config.rs         ServerConfig + env-var loader
+│   ├── server.rs         Router assembly, graceful-shutdown loop
+│   └── error.rs          RoasteryError enum + Result alias
+└── tests/
+    └── smoke.rs          integration tests: start, serve, shut down
+```
+
+### HTTP/1.1 + HTTP/2
+
+The connection acceptor uses `hyper-util`'s `server::conn::auto`
+builder, which negotiates HTTP/1.1 or HTTP/2 per connection. Over
+plain TCP this stays HTTP/1.1 in practice; HTTP/2 negotiation kicks
+in once TLS + ALPN are added (clients won't speak `h2c` by default).
+The codepath is reserved here so adding TLS is a layering change,
+not a rewrite.
+
+## Extending the scaffold
+
+The server reserves slots for the work that follows. Search the
+source for `// T<N>:` comments to find the exact extension points:
+
+- **T2 — storage**: a content-addressed object store under
+  `ROASTERY_STORAGE_DIR`. Mount storage routes (`/cas/:hash`,
+  `/ac/:hash`, …) on the router in `server::build_router`.
+- **T3 — barista-protocol**: the small REST/JSON handler Barista
+  clients speak. Mounts in the same place as T2.
+- **T4 — REAPI gRPC**: the `bazel-remote`-compatible gRPC surface,
+  served via `tonic` and merged into the axum router with
+  `Router::merge` (both stacks share `hyper` + `tower`).
+- **T5 — auth**: a `tower::Layer` wrapping the router, plus
+  switching the connection builder to `rustls` when
+  `ServerConfig::tls` is `Some`.
+- **T6 — upstream-on-miss**: a fallback `Layer` that consults
+  `ServerConfig::upstream` when storage returns 404.
+- **T7 — health + metrics**: `/healthz`, `/metrics`, `/version`.
+
+## Testing
+
+```bash
+cargo test -p roastery
+```
+
+The integration tests in `tests/smoke.rs` spawn the server on an
+ephemeral port and issue a real `reqwest` call against `GET /`. They
+do not require any environment setup.
+
+## License
+
+Dual-licensed under MIT OR Apache-2.0, same as the rest of the
+Barista project.
