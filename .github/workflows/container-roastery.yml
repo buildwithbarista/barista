@@ -1,0 +1,188 @@
+# Container-image build + publish pipeline for the `roastery`
+# remote artifact-cache server.
+#
+# Jobs:
+#
+#   verify   Builds the `roastery` image on linux/amd64, loads it into
+#            the local Docker daemon, and runs the smoke-test script
+#            against it. Runs on every trigger (push, PR, dispatch).
+#            Proves the Dockerfile compiles and the binary boots.
+#
+#   build    Multi-arch (linux/amd64, linux/arm64) build via buildx.
+#            Computes tags via `docker/metadata-action`. Pushes to
+#            `ghcr.io/buildwithbarista/roastery` only when the
+#            trigger is a push to the canonical repository (not
+#            forks, not pull requests). Depends on `verify` so a
+#            broken Dockerfile cannot reach the registry.
+#
+# Tagging policy (computed by `docker/metadata-action`):
+#
+#   push to `main`           → `:edge`
+#   push to tag `v*`         → `:<semver>` (always) + `:latest` (only
+#                              when the tag is a stable release,
+#                              i.e. no `-alpha`/`-beta`/`-rc` suffix)
+#   pull_request             → tags computed but NOT pushed
+#   workflow_dispatch        → tags computed; pushed only when run
+#                              from the canonical repo
+#
+# Forward-references:
+#
+#   - SBOM generation (`sbom: true`) is intentionally OFF; lands via
+#     M6.1 T3 / M C.4 T5 alongside the workspace SBOM workflow.
+#   - SLSA provenance (`provenance: true`) is intentionally OFF;
+#     lands via M C.4 T4 (SLSA L3 attestation).
+#   - Image signing (cosign) is deferred to M C.4 T5.
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers
+# can audit drift. When bumping, update both the SHA and the
+# comment.
+
+name: Container — roastery
+
+on:
+  pull_request:
+    paths:
+      - 'roastery/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.dockerignore'
+      - '.github/workflows/container-roastery.yml'
+      - 'scripts/test-dockerfile.sh'
+      - 'scripts/test-container-workflow.sh'
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+# Cancel superseded runs on the same branch to keep CI throughput
+# focused on the latest commit. Production pushes (main, tags) run to
+# completion so the registry tag never lags a merged commit.
+concurrency:
+  group: container-roastery-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # verify — single-arch build + boot smoke test.
+  #
+  # Runs `scripts/test-dockerfile.sh` which:
+  #   - Builds the image via `docker buildx build --load`.
+  #   - Boots it, probes `/healthz` and `/version`, then graceful-stops.
+  # See the script for the per-step contract.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Build + smoke-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Dockerfile syntax check
+        run: docker buildx build --check --file roastery/Dockerfile .
+
+      - name: Build + boot smoke test
+        run: bash scripts/test-dockerfile.sh
+
+  # ---------------------------------------------------------------------------
+  # build — multi-arch publish.
+  #
+  # Pushes to `ghcr.io/buildwithbarista/roastery` only when:
+  #   - the event is NOT a pull request, AND
+  #   - the repository is the canonical buildwithbarista/barista
+  #     (forks build for local verification but cannot push).
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build + push (multi-arch)
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      # `contents: read` for the checkout.
+      contents: read
+      # `packages: write` to push to ghcr.io/buildwithbarista/*.
+      packages: write
+      # `id-token: write` is reserved for the SLSA-provenance work
+      # in M C.4 T4. Granted now so the future opt-in does not
+      # require a permissions-change PR.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      # QEMU is what lets a single x86 GitHub-hosted runner build the
+      # arm64 layer of a multi-arch image. Without this step, the
+      # arm64 leg of `--platform linux/amd64,linux/arm64` would fail
+      # with "exec format error" inside the builder stage.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      # Log in to GHCR. The push step below is gated separately so
+      # forks (which won't have write access to
+      # ghcr.io/buildwithbarista/*) silently skip the push instead
+      # of erroring.
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista'
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Compute the tag set:
+      #   - push to main           → :edge
+      #   - push to v* tag         → :<semver> + :<major>.<minor> +
+      #                              :latest (stable releases only)
+      #   - pull_request           → tags computed but not pushed
+      #
+      # `match=` patterns under `type=match` filter for stable
+      # semver tags (no pre-release suffix); the `:latest` tag is
+      # gated on that pattern via `enable=...`.
+      - name: Compute image metadata
+        id: metadata
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        with:
+          images: ghcr.io/buildwithbarista/roastery
+          tags: |
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+          labels: |
+            org.opencontainers.image.title=roastery
+            org.opencontainers.image.description=Remote artifact cache server for the Barista build tool.
+            org.opencontainers.image.source=https://github.com/buildwithbarista/barista
+            org.opencontainers.image.licenses=MIT OR Apache-2.0
+            org.opencontainers.image.vendor=buildwithbarista
+
+      - name: Build (and push if eligible)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: roastery/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista' }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          # SLSA provenance + SBOM are forward-referenced to M C.4 T4
+          # and M C.4 T5 respectively. Disabled here so this PR
+          # doesn't entangle the supply-chain attestation surface
+          # with the initial image-publish path.
+          provenance: false
+          sbom: false

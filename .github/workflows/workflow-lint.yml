@@ -262,3 +262,40 @@ jobs:
         # non-zero on a seeded byte-divergence fixture and zero on
         # the matching baseline") is mechanically gated on every PR.
         run: bash scripts/test-parity-check.sh
+
+      - name: Install actionlint + zizmor (for container-workflow validation)
+        shell: bash
+        # The container-workflow validator below runs `actionlint`
+        # and `zizmor` against `.github/workflows/container-roastery.yml`.
+        # Both tools are already invoked by the `actionlint` and
+        # `zizmor` jobs above, but those jobs cover the whole
+        # workflow directory via the upstream actions. Wiring the
+        # focused validator into this `security-agent-config` job
+        # keeps the validator close to the other `test-*.sh`
+        # gates and lets the validator's exit code participate in
+        # the same job summary.
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.local/bin"
+          # actionlint: prebuilt binary release.
+          ACTIONLINT_VERSION="1.7.7"
+          TMP="$(mktemp -d)"
+          curl -fsSL \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            -o "${TMP}/actionlint.tar.gz"
+          tar -xzf "${TMP}/actionlint.tar.gz" -C "${TMP}" actionlint
+          install -m 0755 "${TMP}/actionlint" "${HOME}/.local/bin/actionlint"
+          rm -rf "${TMP}"
+          # zizmor: PyPI wheel ships the binary.
+          python3 -m pip install --user "zizmor==1.24.1"
+          USER_BASE="$(python3 -m site --user-base)"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+          echo "${USER_BASE}/bin" >> "$GITHUB_PATH"
+
+      - name: Validate container-roastery workflow file
+        shell: bash
+        # Exercises `scripts/test-container-workflow.sh` — the
+        # focused actionlint + zizmor gate for the M5.1 T8
+        # container-build workflow file. The script asserts both
+        # linters exit 0 with no medium-or-higher findings.
+        run: bash scripts/test-container-workflow.sh

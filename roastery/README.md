@@ -434,6 +434,85 @@ roastery: invalid server configuration: BAR-AUTH-005:
 Loopback binds without auth are explicitly allowed so the
 `cargo run -p roastery` dev workflow stays one-command.
 
+## Container image
+
+Roastery ships as an OCI container image published to GitHub
+Container Registry under the canonical Barista organisation:
+
+```
+ghcr.io/buildwithbarista/roastery:<tag>
+```
+
+### Tags
+
+| Tag             | Source                                  | Stability                                                                  |
+|-----------------|-----------------------------------------|----------------------------------------------------------------------------|
+| `:edge`         | every commit pushed to `main`           | tracks `HEAD`; rebuilt on every merge                                      |
+| `:0.1.0`, `:0.2.0`, … | tagged semver releases            | immutable; once published the digest never changes                         |
+| `:0.1`, `:0.2`, …     | major-minor pin                   | rolls forward with each patch release in the series                        |
+| `:latest`       | most recent stable release              | **only stable releases** (no `-alpha`, `-beta`, `-rc` suffix) get `:latest`|
+
+### Running
+
+```bash
+docker run --rm -p 7878:7878 \
+    -v $(pwd)/roastery-data:/var/lib/roastery \
+    -e ROASTERY_BIND=0.0.0.0:7878 \
+    -e ROASTERY_STORAGE_DIR=/var/lib/roastery \
+    -e ROASTERY_BEARER_TOKENS_FILE=/etc/roastery/tokens \
+    -v $(pwd)/tokens:/etc/roastery/tokens:ro \
+    ghcr.io/buildwithbarista/roastery:edge
+```
+
+The container `WORKDIR` is `/var/lib/roastery` (the default value of
+`ROASTERY_STORAGE_DIR` in the config table below); the image
+`EXPOSE`s port `7878`. Any non-loopback bind requires at least one
+authentication mechanism — see the **Authentication** section above
+for token-file and mTLS configuration.
+
+### Image properties
+
+- **Base:** `gcr.io/distroless/cc-debian12:nonroot`. Distroless ships
+  glibc, ca-certificates, and the dynamic linker — nothing else. No
+  shell, no package manager, no `curl`, no `cat`. The image runs as
+  uid `65532` (the `nonroot` user); operator-side `securityContext`
+  declarations should mirror that.
+- **Size:** ~35 MB compressed for the runtime stage.
+- **Platforms:** `linux/amd64` and `linux/arm64`.
+- **Entrypoint:** `/usr/local/bin/roastery`. The binary accepts
+  `--version` and `--help` as diagnostic flags; all server
+  configuration is environment-variable driven (see the
+  **Configuration** table below).
+
+### What NOT to add
+
+The image is intentionally minimal. If you need a shell to debug a
+running container, base your local override on
+`gcr.io/distroless/cc-debian12:debug-nonroot` — that variant bundles
+busybox. Do not deploy the `debug-nonroot` variant to production:
+the extra surface is exactly the surface distroless exists to remove.
+
+Equally: do not add additional system packages, do not add a
+`HEALTHCHECK` directive (Kubernetes probes the HTTP `/healthz`
+endpoint directly via `livenessProbe`/`readinessProbe`; the
+distroless image has no shell to satisfy a `CMD`-form
+`HEALTHCHECK`), and do not switch the runtime user back to `root`.
+
+### Building locally
+
+```bash
+roastery/scripts/build-image.sh
+```
+
+Overrides via env: `TAG` (default `roastery:dev`), `PLATFORM`
+(default `linux/amd64`). The script wraps a single
+`docker buildx build --load …` invocation so the resulting image is
+available to the local Docker daemon immediately.
+
+For a full container smoke-test (build + boot + `/healthz` +
+`/version` probe + graceful shutdown), run
+`scripts/test-dockerfile.sh` from the workspace root.
+
 ## Configuration
 
 All configuration is environment-driven. Defaults are documented in

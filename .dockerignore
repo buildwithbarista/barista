@@ -1,0 +1,77 @@
+# .dockerignore — build-context filter for `roastery/Dockerfile`.
+#
+# Rationale: the roastery container build sets its context to the
+# workspace root so cargo can resolve every workspace member at
+# `cargo build -p roastery` time. That means the build context can be
+# large; this file trims it to the union of:
+#
+#   - Workspace manifests (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`)
+#   - The `.cargo/` config dir
+#   - The `crates/` source tree (every member's `Cargo.toml` is part
+#     of the workspace graph and must be present for resolution)
+#   - The `roastery/` source tree
+#   - The `xtask/` source tree (workspace member; manifest required
+#     even though we don't link it into the binary)
+#
+# Everything else is excluded — `target/`, the bench harness, the
+# `barback/` Java tree, the test corpus, docs, and the CI workflow
+# tree do not contribute to the binary and would only inflate the
+# context upload.
+#
+# Whitelist-style filtering: we exclude everything with `*`, then
+# re-include the paths the Dockerfile actually reads. This is safer
+# than enumerating excludes one-by-one because it fails closed —
+# a new top-level dir doesn't accidentally end up in the context.
+
+# Default-deny.
+*
+
+# Re-include workspace manifests + lockfile.
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+
+# Re-include `.cargo/` (cargo config; carries registry overrides and
+# rustflags the build needs to pick up).
+!.cargo/
+!.cargo/**
+
+# Re-include the crates the workspace declares as members. Every
+# crate's `Cargo.toml` must be present for `cargo metadata` to
+# resolve the workspace graph; the source must be present so the
+# dependency-only build in Stage 1 has something to compile against.
+!crates/
+!crates/**
+
+# Re-include the roastery binary's source.
+!roastery/
+!roastery/**
+
+# Re-include the xtask workspace member's manifest + source.
+!xtask/
+!xtask/**
+
+# Hard re-exclude anything we never want in the build context, even
+# if a recursive include pulls it in. `target/` is the big one —
+# host-side build artifacts would balloon the context by hundreds
+# of MB and are useless inside the container.
+target/
+**/target/
+.git/
+**/.git/
+.github/
+.claude/
+.tooling/
+.idea/
+.vscode/
+**/*.tmp
+**/*.swp
+
+# Test corpora and bench inputs aren't needed for the binary build.
+test-corpus/
+bench/
+barback/
+docs/
+schema/
+proto/
+tests/
