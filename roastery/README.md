@@ -600,6 +600,53 @@ intentional changes with:
 bash deploy/helm/scripts/helm-render-fixtures.sh update
 ```
 
+### End-to-end testing (kind)
+
+The static gates above prove the chart renders correctly. The
+`tests/e2e/kind.sh` harness proves the **whole** stack — Dockerfile,
+chart, binary — works against a real Kubernetes cluster.
+
+```bash
+bash roastery/tests/e2e/kind.sh
+```
+
+Pre-requisites on PATH: `docker`, `kind`, `helm`, `kubectl`, `curl`,
+`shasum`. The script never invokes `sudo` and never touches a remote
+cluster.
+
+What it exercises, end-to-end:
+
+- builds `roastery/Dockerfile` for `linux/amd64`,
+- creates a single-node kind cluster (image digest pinned in
+  `tests/e2e/kind-config.yaml`),
+- loads the locally-built image and `helm install`s the chart with
+  bearer-token auth enabled,
+- runs the chart's own `helm test` hook (in-cluster probes against
+  `/healthz`, `/version`, `/metrics`),
+- port-forwards to the rendered Service, PUTs a known blob, GETs it
+  back, asserts byte-equal,
+- asserts the five always-public endpoints (`/healthz`, `/metrics`,
+  `/version`, `/v1/health`, `/v1/capabilities`) all return `200`.
+
+Env-var knobs:
+
+- `CLUSTER_NAME` (default `roastery-e2e`) — reuse an existing kind
+  cluster instead of creating a new one.
+- `IMAGE_TAG` (default `e2e-<short-sha>`) — tag for the locally-built
+  image.
+- `RELEASE_NAME`, `NAMESPACE` — Helm release + namespace overrides.
+- `TIMEOUT` (default `5m`) — applied to `kind --wait` and `helm
+  --timeout`.
+- `KEEP_CLUSTER=true` — skip the teardown on exit. Handy when
+  iterating locally; `kubectl` against `kind-<cluster>` keeps working
+  until you `kind delete cluster --name <cluster>`.
+- `SKIP_BUILD=true` — assume `roastery:$IMAGE_TAG` already exists
+  (rebuild iteration shortcut).
+
+The same script runs on every PR that touches `roastery/**` via
+`.github/workflows/e2e-kind.yml`, plus a Monday 06:00 UTC canary that
+catches kindest-node and runner-image drift before it lands on a PR.
+
 ## Configuration
 
 All configuration is environment-driven. Defaults are documented in

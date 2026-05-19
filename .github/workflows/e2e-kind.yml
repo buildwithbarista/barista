@@ -1,0 +1,162 @@
+# End-to-end reference deployment test for roastery.
+#
+# Runs `roastery/tests/e2e/kind.sh` against a real kind cluster on a
+# GitHub-hosted runner. The script:
+#
+#   1. Builds the roastery container image from `roastery/Dockerfile`.
+#   2. Loads it into the kind node.
+#   3. `helm install`s `roastery/deploy/helm/roastery/` with bearer
+#      auth enabled.
+#   4. Runs the chart's own `helm test` hook (ops endpoints from
+#      in-cluster).
+#   5. Port-forwards to the rendered Service, PUTs a known blob, GETs
+#      it back, asserts byte-equal.
+#   6. Asserts all five always-public endpoints return 200.
+#
+# Triggers:
+#
+#   pull_request, push to main   — full e2e on every change to roastery/
+#                                  or this workflow file. The chart
+#                                  + image + binary all participate, so
+#                                  any roastery/** change is gated by
+#                                  this workflow.
+#   workflow_dispatch            — on-demand for debugging.
+#   schedule (Mon 06:00 UTC)     — weekly canary catches kindest/node
+#                                  drift, ubuntu-latest image refresh,
+#                                  and action-version drift before they
+#                                  bite a PR.
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers can
+# audit drift without external tools. When bumping, update both the
+# SHA and the comment.
+
+name: e2e — kind
+
+on:
+  pull_request:
+    paths:
+      - 'roastery/**'
+      - '.github/workflows/e2e-kind.yml'
+      - 'scripts/test-e2e-workflow.sh'
+  push:
+    branches: [main]
+    paths:
+      - 'roastery/**'
+      - '.github/workflows/e2e-kind.yml'
+      - 'scripts/test-e2e-workflow.sh'
+  workflow_dispatch:
+  schedule:
+    # Monday 06:00 UTC. The canary catches drift in the upstream
+    # kindest/node image, the ubuntu-latest runner snapshot, and the
+    # pinned action versions before a contributor's PR is the first to
+    # see the breakage.
+    - cron: '0 6 * * 1'
+
+# Default-deny at the workflow level; the single job opts in
+# explicitly.
+permissions: {}
+
+# Cancel superseded PR runs to keep CI focused on the latest commit.
+# `main` and the scheduled canary run to completion.
+concurrency:
+  group: e2e-kind-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # kind-e2e — single job, single host, single cluster.
+  #
+  # Cold-start budget breakdown (observed on ubuntu-latest):
+  #   ~3-5 min  buildx build (no layer cache)
+  #   ~1-2 min  kind cluster create + wait
+  #   ~1 min    helm install --wait
+  #   ~30 s     helm test + CAS round-trip + endpoint probes
+  # 20 min total leaves comfortable headroom for slow runner days.
+  # ---------------------------------------------------------------------------
+  kind-e2e:
+    name: kind reference deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      # `helm/kind-action` installs `kind` + `kubectl`, then creates a
+      # cluster named `kind` (its hard-coded default). We feed it the
+      # same kind-config used for local runs so the node image is
+      # digest-pinned here too — otherwise the action defaults to its
+      # own kindest/node pin, which would drift independently of the
+      # local `kind.sh` path.
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          config: roastery/tests/e2e/kind-config.yaml
+          # `helm/kind-action` defaults to a cluster named `chart-testing`;
+          # we override to `roastery-e2e` so the cluster name matches the
+          # one declared in `kind-config.yaml` and the `CLUSTER_NAME`
+          # default in `kind.sh`. This keeps the script reusing the
+          # cluster the action created instead of provisioning a second.
+          cluster_name: roastery-e2e
+
+      - name: Install Helm
+        # Match the version pinned by the chart's own helm.yml workflow
+        # so renders are bit-for-bit identical across the helm-lint
+        # gate and this e2e gate.
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4.3.0
+        with:
+          version: v3.16.4
+
+      - name: Run kind.sh
+        env:
+          # The cluster created by `helm/kind-action` above is named
+          # `roastery-e2e` (matches the `cluster_name:` input). Tell
+          # `kind.sh` to reuse it instead of creating a second cluster.
+          CLUSTER_NAME: roastery-e2e
+          # `helm/kind-action` already brought the cluster up via the
+          # same kind-config; we never want a stale `kind delete`
+          # racing the action's own teardown.
+          KEEP_CLUSTER: 'true'
+        run: bash roastery/tests/e2e/kind.sh
+
+      # On failure, surface the cluster state as a workflow artifact so
+      # contributors can diagnose without re-running locally. The
+      # collection step is `if: failure()` so successful runs don't
+      # spend artifact storage on log noise.
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set +e
+          mkdir -p _diagnostics
+          kubectl get nodes -o wide                  > _diagnostics/nodes.txt 2>&1
+          kubectl describe nodes                     > _diagnostics/nodes-describe.txt 2>&1
+          kubectl get pods -A -o wide                > _diagnostics/pods.txt 2>&1
+          kubectl get events -A --sort-by='.lastTimestamp' \
+                                                     > _diagnostics/events.txt 2>&1
+          # Best-effort: the namespace name matches kind.sh's default;
+          # if the script changed it via env, the describe call below
+          # is empty rather than an error.
+          kubectl describe pods -n roastery-e2e      > _diagnostics/pods-describe.txt 2>&1
+          kubectl logs -n roastery-e2e \
+              -l app.kubernetes.io/name=roastery \
+              --all-containers=true --tail=500       > _diagnostics/roastery-logs.txt 2>&1
+          kubectl logs -n roastery-e2e \
+              roastery-test-connection --tail=500    > _diagnostics/helm-test-logs.txt 2>&1
+          helm list -A                               > _diagnostics/helm-releases.txt 2>&1
+
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kind-e2e-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _diagnostics/
+          retention-days: 14
+          if-no-files-found: warn

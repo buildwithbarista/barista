@@ -1,0 +1,29 @@
+# kind cluster config for the roastery end-to-end test.
+#
+# Single control-plane node — the e2e proves the chart deploys and
+# serves real CAS traffic; multi-node topology adds nothing to the
+# assertion set and triples the cluster cold-start time.
+#
+# The node image is pinned by digest, not just tag. Floating
+# `kindest/node:v1.31.6` would let the upstream image owner swap the
+# bits behind us between runs; pinning the manifest digest keeps the
+# e2e deterministic across the weekly canary schedule and across
+# contributor laptops.
+#
+# When bumping the pin:
+#   1. Pick a current release from https://github.com/kubernetes-sigs/kind/releases
+#      (the release notes list the kindest/node tag + digest for that
+#      kind release).
+#   2. Pull the image locally and confirm the e2e still passes:
+#        bash roastery/tests/e2e/kind.sh
+#   3. Update the kindest/node line below + this comment block.
+#
+# v1.31.x is the current LTS-aligned Kubernetes minor; we deliberately
+# stay one minor behind kind's bleeding-edge default so the e2e
+# matches what most operators are actually running in production.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: roastery-e2e
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.6@sha256:28b7cbb993dfe093c76641a0c95807637213c9109b761f1d422c2400e22b8e87

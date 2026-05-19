@@ -318,3 +318,13 @@ jobs:
         # committed golden, and `.github/workflows/helm.yml` itself
         # passes actionlint + zizmor (offline, medium-or-higher).
         run: bash scripts/test-helm-chart.sh
+
+      - name: Validate kind-e2e workflow file + harness script
+        shell: bash
+        # Exercises `scripts/test-e2e-workflow.sh` — the focused
+        # actionlint + zizmor + shellcheck gate for the M5.1 T10
+        # kind reference-deployment workflow. The script asserts
+        # `.github/workflows/e2e-kind.yml` passes actionlint and
+        # zizmor (offline, medium-or-higher), and that
+        # `roastery/tests/e2e/kind.sh` passes shellcheck.
+        run: bash scripts/test-e2e-workflow.sh
