@@ -21,10 +21,12 @@ path = "src/lib.rs"
 # `Service` without retrofitting an executor or a router.
 axum = "0.8"
 # Async runtime. `signal` is required for the graceful-shutdown path
-# (Ctrl-C + SIGTERM); `net` for the TCP listener; `fs` for future
-# storage-tier work in M5.1 T2; `macros` + `rt-multi-thread` for
+# (Ctrl-C + SIGTERM); `net` for the TCP listener; `fs` + `io-util`
+# back the content-addressed storage layer (`tokio::fs` for atomic
+# rename + tempfile staging, `AsyncReadExt`/`AsyncWriteExt` for the
+# streaming put/get codepaths); `macros` + `rt-multi-thread` for
 # `#[tokio::main]` and the worker pool.
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "fs", "io-util"] }
 # `tower` provides the `Service` / `Layer` traits axum middleware
 # slots into; pinning it here surfaces the version axum 0.8 expects
 # and lines up with the version already in the workspace lockfile.
@@ -58,6 +60,31 @@ thiserror = "2"
 # milestones can add it (with the `url/serde` feature) when they
 # need to serialize config or wire JSON request bodies.
 url = "2"
+# `sha2` is the SHA-256 implementation backing every CAS digest. The
+# storage layer hashes blob bytes as they stream through `put` so the
+# server never has to buffer a full artifact in memory just to verify
+# the digest the caller claimed. SHA-256 is the digest function the
+# REAPI gRPC surface (M5.1 T4) negotiates by default and the one the
+# barista-protocol handler (M5.1 T3) commits to in its URL scheme.
+sha2 = "0.10"
+# `tempfile::NamedTempFile` powers the atomic-write path for the
+# filesystem CAS backend: write to `<root>/tmp/<random>.tmp`, hash as
+# bytes flow, then `persist` (rename) into the final
+# `<root>/cas/<2>/<62>` location. The crate's `Drop` impl deletes the
+# temp file if the put aborts (digest mismatch, I/O error, panic) so
+# we never leak partial blobs into the cache.
+tempfile = "3"
+# `hex` encodes/decodes SHA-256 digests as the 64-char lowercase hex
+# strings the CAS uses for both on-disk filenames and the public URL
+# component the protocol handlers will key off. Tiny crate, no
+# transitive deps; cheaper than reinventing the parse loop.
+hex = "0.4"
+# `async-trait` desugars `async fn` in the public `Cas` trait. Native
+# async-fn-in-trait is stable on `edition = "2024"`, but
+# `Box<dyn Cas>` (used by `AppState` and tests that want a heterogenous
+# backend) still requires `async-trait` because the trait must be
+# object-safe.
+async-trait = "0.1"
 
 [dev-dependencies]
 # `reqwest` drives the smoke tests. `rustls-tls` is the future-proof

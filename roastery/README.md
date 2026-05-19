@@ -53,14 +53,18 @@ All configuration is environment-driven. Defaults are documented in
 the table; `ServerConfig::from_env` applies them when the variable is
 unset.
 
-| Variable               | Default            | Notes                                                                      |
-|------------------------|--------------------|----------------------------------------------------------------------------|
-| `ROASTERY_BIND`        | `127.0.0.1:7878`   | `host:port` for the TCP listener.                                          |
-| `ROASTERY_STORAGE_DIR` | `./.roastery-data` | Created on startup if missing.                                             |
-| `ROASTERY_TLS_CERT`    | _(unset)_          | PEM cert chain. Must be set together with `ROASTERY_TLS_KEY`.              |
-| `ROASTERY_TLS_KEY`     | _(unset)_          | PEM private key.                                                           |
-| `ROASTERY_UPSTREAM`    | _(unset)_          | Upstream registry consulted on cache miss; reserved for a later milestone. |
-| `RUST_LOG`             | `info`             | Standard `tracing_subscriber::EnvFilter` syntax.                           |
+| Variable                   | Default            | Notes                                                                      |
+|----------------------------|--------------------|----------------------------------------------------------------------------|
+| `ROASTERY_BIND`            | `127.0.0.1:7878`   | `host:port` for the TCP listener.                                          |
+| `ROASTERY_STORAGE_DIR`     | `./.roastery-data` | Filesystem CAS root; created on startup if missing.                        |
+| `ROASTERY_STORAGE_BACKEND` | `fs`               | `fs` (default), `s3`, or `gcs`. See **Storage backend** below.             |
+| `ROASTERY_STORAGE_BUCKET`  | _(unset)_          | Required when backend is `s3` or `gcs`.                                    |
+| `ROASTERY_STORAGE_REGION`  | _(unset)_          | Required when backend is `s3`.                                             |
+| `ROASTERY_STORAGE_PROJECT` | _(unset)_          | Required when backend is `gcs`.                                            |
+| `ROASTERY_TLS_CERT`        | _(unset)_          | PEM cert chain. Must be set together with `ROASTERY_TLS_KEY`.              |
+| `ROASTERY_TLS_KEY`         | _(unset)_          | PEM private key.                                                           |
+| `ROASTERY_UPSTREAM`        | _(unset)_          | Upstream registry consulted on cache miss; reserved for a later milestone. |
+| `RUST_LOG`                 | `info`             | Standard `tracing_subscriber::EnvFilter` syntax.                           |
 
 The TLS and upstream-on-miss fields are accepted today but **not
 exercised** — they exist so subsequent tasks can plug in without
@@ -76,11 +80,63 @@ roastery/
 │   ├── main.rs           binary entrypoint; tracing init + runtime
 │   ├── lib.rs            re-exports the public API
 │   ├── config.rs         ServerConfig + env-var loader
-│   ├── server.rs         Router assembly, graceful-shutdown loop
-│   └── error.rs          RoasteryError enum + Result alias
+│   ├── server.rs         Router assembly, AppState, shutdown loop
+│   ├── error.rs          RoasteryError + StorageError + Result alias
+│   └── storage/          content-addressed storage
+│       ├── mod.rs        Digest, Stat, Cas trait
+│       ├── fs.rs         filesystem-backed Cas (production default)
+│       ├── s3.rs         S3 stub (v0.2)
+│       └── gcs.rs        GCS stub (v0.2)
 └── tests/
     └── smoke.rs          integration tests: start, serve, shut down
 ```
+
+## Storage backend
+
+Every blob in the roastery is identified by the SHA-256 digest of its
+bytes, rendered as 64 lowercase hex characters. The digest is the
+cache key — there is no separate metadata index. This matches the
+content-addressing model the REAPI gRPC handler (a later milestone)
+negotiates by default and the URL scheme the barista-protocol handler
+commits to.
+
+The `Cas` trait (`roastery::storage::Cas`) is the storage surface every
+protocol handler talks to:
+
+- `stat(digest)` — size + digest, or `None` if absent.
+- `get(digest)` — streaming reader, or `None` if absent.
+- `put(expected_digest, source)` — streams `source` into the store,
+  verifies its hash matches `expected_digest`, returns the resulting
+  `Stat`. Atomic: a concurrent `get` either sees the complete blob or
+  `None`.
+- `delete(digest)` — idempotent; returns `true` if the blob existed.
+- `list(prefix)` — iterates known digests, optionally filtered by hex
+  prefix. Intended for tests + admin tooling, capped at 10 000
+  entries per call in v0.1 (pagination is scheduled for v0.2).
+
+### Filesystem layout
+
+The default `fs` backend lays blobs out under
+`<ROASTERY_STORAGE_DIR>/cas/<2-hex>/<62-hex>`, with in-flight writes
+staged in `<ROASTERY_STORAGE_DIR>/tmp/<random>.tmp` and atomically
+renamed into place. The 2-character prefix directory keeps any single
+directory under ~65 000 entries even for a fully populated 16-bit
+fanout — comfortable territory for ext4, APFS, NTFS, and ZFS dirent
+listings, and the same convention git's loose-object store and
+bazel-remote use.
+
+### v0.1 limitations
+
+- **S3 and GCS are stubs.** The types exist so config files can name
+  them and the trait surface can be exercised in tests; every method
+  returns `StorageError::NotImplemented`. Real backends arrive in
+  v0.2.
+- **`list` is capped at 10 000 entries per call.** v0.2 will replace
+  this with a paginated cursor API once GC and admin endpoints need
+  it.
+- **No GC or eviction yet.** The store grows monotonically. Operators
+  who need eviction in v0.1 should run a cron job that calls `delete`
+  from outside the server.
 
 ### HTTP/1.1 + HTTP/2
 
@@ -96,11 +152,13 @@ not a rewrite.
 The server reserves slots for the work that follows. Search the
 source for `// T<N>:` comments to find the exact extension points:
 
-- **T2 — storage**: a content-addressed object store under
-  `ROASTERY_STORAGE_DIR`. Mount storage routes (`/cas/:hash`,
-  `/ac/:hash`, …) on the router in `server::build_router`.
+- **T2 — storage**: the content-addressed object store described in
+  the **Storage backend** section above. The `Cas` backend is
+  instantiated from `ServerConfig::storage` and carried on
+  `server::AppState`; storage HTTP routes (`/cas/:hash`, `/ac/:hash`,
+  …) are not mounted yet — that belongs to the protocol handlers.
 - **T3 — barista-protocol**: the small REST/JSON handler Barista
-  clients speak. Mounts in the same place as T2.
+  clients speak. Mounts on the router and reads `state.cas`.
 - **T4 — REAPI gRPC**: the `bazel-remote`-compatible gRPC surface,
   served via `tonic` and merged into the axum router with
   `Router::merge` (both stacks share `hyper` + `tower`).

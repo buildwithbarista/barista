@@ -9,17 +9,26 @@
 //!
 //! - [`config`] — `ServerConfig` plus its env-var loader and a
 //!   builder helper for tests.
-//! - [`server`] — the `axum::Router` assembly and the
-//!   graceful-shutdown loop. Subsequent milestones bolt their routes,
-//!   layers, and gRPC services onto the extension points reserved in
-//!   this module.
-//! - [`error`] — the crate-local `RoasteryError` enum and `Result`
-//!   alias.
+//! - [`storage`] — the content-addressed storage trait
+//!   ([`storage::Cas`]) and its filesystem implementation
+//!   ([`storage::FsCas`]), plus stub S3 / GCS backends scheduled for
+//!   v0.2. Subsequent milestones (the barista-protocol handler in
+//!   M5.1 T3, the REAPI gRPC handler in M5.1 T4) call this trait
+//!   instead of touching the filesystem directly.
+//! - [`server`] — the `axum::Router` assembly, the shared `AppState`
+//!   that carries the storage backend, and the graceful-shutdown
+//!   loop. Subsequent milestones bolt their routes, layers, and gRPC
+//!   services onto the extension points reserved in this module.
+//! - [`error`] — the crate-local `RoasteryError` enum, the
+//!   `StorageError` enum surfaced by the storage layer, and the
+//!   crate-wide `Result` alias.
 
 pub mod config;
 pub mod error;
 pub mod server;
+pub mod storage;
 
-pub use config::{ServerConfig, TlsConfig};
-pub use error::{Result, RoasteryError};
-pub use server::{init_tracing, run};
+pub use config::{ServerConfig, StorageBackend, TlsConfig};
+pub use error::{Result, RoasteryError, StorageError};
+pub use server::{AppState, init_tracing, run};
+pub use storage::{Cas, Digest, FsCas, GcsCas, S3Cas, Stat};

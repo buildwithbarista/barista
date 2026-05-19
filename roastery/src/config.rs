@@ -9,19 +9,23 @@
 //!
 //! Environment variables:
 //!
-//! | Variable                 | Default               | Notes                                |
-//! |--------------------------|-----------------------|--------------------------------------|
-//! | `ROASTERY_BIND`          | `127.0.0.1:7878`      | `host:port` for the TCP listener.    |
-//! | `ROASTERY_STORAGE_DIR`   | `./.roastery-data`    | Created if missing (used by T2).     |
-//! | `ROASTERY_TLS_CERT`      | unset                 | Reserved for T5; presence triggers   |
-//! | `ROASTERY_TLS_KEY`       | unset                 | TLS once both files are present.     |
-//! | `ROASTERY_UPSTREAM`      | unset                 | Reserved for T6 upstream-on-miss.    |
+//! | Variable                      | Default            | Notes                                                |
+//! |-------------------------------|--------------------|------------------------------------------------------|
+//! | `ROASTERY_BIND`               | `127.0.0.1:7878`   | `host:port` for the TCP listener.                    |
+//! | `ROASTERY_STORAGE_DIR`        | `./.roastery-data` | Filesystem CAS root; created if missing.             |
+//! | `ROASTERY_STORAGE_BACKEND`    | `fs`               | `fs` (default), `s3`, or `gcs`.                      |
+//! | `ROASTERY_STORAGE_BUCKET`     | unset              | Required for `s3` / `gcs` backends.                  |
+//! | `ROASTERY_STORAGE_REGION`     | unset              | Required for `s3`.                                   |
+//! | `ROASTERY_STORAGE_PROJECT`    | unset              | Required for `gcs`.                                  |
+//! | `ROASTERY_TLS_CERT`           | unset              | Reserved for T5; presence triggers                   |
+//! | `ROASTERY_TLS_KEY`            | unset              | TLS once both files are present.                     |
+//! | `ROASTERY_UPSTREAM`           | unset              | Reserved for T6 upstream-on-miss.                    |
 
 use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use url::Url;
@@ -33,6 +37,35 @@ pub const DEFAULT_BIND: &str = "127.0.0.1:7878";
 
 /// Default storage directory when `ROASTERY_STORAGE_DIR` is unset.
 pub const DEFAULT_STORAGE_DIR: &str = "./.roastery-data";
+
+/// Which content-addressed storage backend the server is configured
+/// against. The filesystem variant carries its own root so the
+/// backend can be initialised from a single `StorageBackend` value
+/// without re-reading `ServerConfig::storage_dir`.
+///
+/// Stub variants `S3` and `Gcs` parse cleanly today (so config files
+/// remain forward-compatible) but their [`crate::storage::Cas`]
+/// methods return [`crate::error::StorageError::NotImplemented`]
+/// until v0.2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StorageBackend {
+    /// Filesystem CAS rooted at the given path. Default.
+    Filesystem(PathBuf),
+    /// Stub Amazon S3 backend.
+    S3 {
+        /// Bucket name.
+        bucket: String,
+        /// AWS region (e.g. `us-east-1`).
+        region: String,
+    },
+    /// Stub Google Cloud Storage backend.
+    Gcs {
+        /// Bucket name.
+        bucket: String,
+        /// GCP project ID.
+        project: String,
+    },
+}
 
 /// Placeholder TLS configuration.
 ///
@@ -54,8 +87,17 @@ pub struct TlsConfig {
 pub struct ServerConfig {
     /// Socket address the listener binds to.
     pub bind: SocketAddr,
-    /// On-disk root for cached artifacts. Used by M5.1 T2.
+    /// On-disk root for cached artifacts.
+    ///
+    /// Kept as a dedicated field (in addition to the richer
+    /// [`StorageBackend::Filesystem`] variant carried by `storage`)
+    /// so callers that always want a local working directory — log
+    /// files, scratch space, future SQLite indexes — have a stable
+    /// path regardless of which CAS backend is configured.
     pub storage_dir: PathBuf,
+    /// Which CAS backend the server uses. Defaults to
+    /// [`StorageBackend::Filesystem`] anchored at `storage_dir`.
+    pub storage: StorageBackend,
     /// TLS material. M5.1 T5 will switch the connection builder to
     /// `rustls` when this is `Some`.
     pub tls: Option<TlsConfig>,
@@ -68,9 +110,11 @@ impl ServerConfig {
     /// `bind`, which is overridden to `addr`. Intended for tests that
     /// want to bind to an ephemeral port (`127.0.0.1:0`).
     pub fn with_bind(addr: SocketAddr) -> Self {
+        let storage_dir = PathBuf::from(DEFAULT_STORAGE_DIR);
         Self {
             bind: addr,
-            storage_dir: PathBuf::from(DEFAULT_STORAGE_DIR),
+            storage: StorageBackend::Filesystem(storage_dir.clone()),
+            storage_dir,
             tls: None,
             upstream: None,
         }
@@ -81,6 +125,13 @@ impl ServerConfig {
     pub fn from_env() -> Result<Self> {
         let bind = parse_bind(env::var_os("ROASTERY_BIND"))?;
         let storage_dir = parse_storage_dir(env::var_os("ROASTERY_STORAGE_DIR"))?;
+        let storage = parse_storage_backend(
+            env::var_os("ROASTERY_STORAGE_BACKEND"),
+            env::var_os("ROASTERY_STORAGE_BUCKET"),
+            env::var_os("ROASTERY_STORAGE_REGION"),
+            env::var_os("ROASTERY_STORAGE_PROJECT"),
+            &storage_dir,
+        )?;
         let tls = parse_tls(
             env::var_os("ROASTERY_TLS_CERT"),
             env::var_os("ROASTERY_TLS_KEY"),
@@ -90,6 +141,7 @@ impl ServerConfig {
         Ok(Self {
             bind,
             storage_dir,
+            storage,
             tls,
             upstream,
         })
@@ -156,6 +208,73 @@ fn parse_tls(cert: Option<OsString>, key: Option<OsString>) -> Result<Option<Tls
     }
 }
 
+fn parse_storage_backend(
+    backend: Option<OsString>,
+    bucket: Option<OsString>,
+    region: Option<OsString>,
+    project: Option<OsString>,
+    storage_dir: &Path,
+) -> Result<StorageBackend> {
+    let kind = backend
+        .as_ref()
+        .and_then(|v| v.to_str())
+        .unwrap_or("fs")
+        .to_ascii_lowercase();
+
+    match kind.as_str() {
+        "" | "fs" | "filesystem" => Ok(StorageBackend::Filesystem(storage_dir.to_path_buf())),
+        "s3" => {
+            let bucket = bucket
+                .as_ref()
+                .and_then(|v| v.to_str())
+                .ok_or_else(|| {
+                    RoasteryError::Config(
+                        "ROASTERY_STORAGE_BACKEND=s3 requires ROASTERY_STORAGE_BUCKET"
+                            .to_string(),
+                    )
+                })?
+                .to_string();
+            let region = region
+                .as_ref()
+                .and_then(|v| v.to_str())
+                .ok_or_else(|| {
+                    RoasteryError::Config(
+                        "ROASTERY_STORAGE_BACKEND=s3 requires ROASTERY_STORAGE_REGION"
+                            .to_string(),
+                    )
+                })?
+                .to_string();
+            Ok(StorageBackend::S3 { bucket, region })
+        }
+        "gcs" => {
+            let bucket = bucket
+                .as_ref()
+                .and_then(|v| v.to_str())
+                .ok_or_else(|| {
+                    RoasteryError::Config(
+                        "ROASTERY_STORAGE_BACKEND=gcs requires ROASTERY_STORAGE_BUCKET"
+                            .to_string(),
+                    )
+                })?
+                .to_string();
+            let project = project
+                .as_ref()
+                .and_then(|v| v.to_str())
+                .ok_or_else(|| {
+                    RoasteryError::Config(
+                        "ROASTERY_STORAGE_BACKEND=gcs requires ROASTERY_STORAGE_PROJECT"
+                            .to_string(),
+                    )
+                })?
+                .to_string();
+            Ok(StorageBackend::Gcs { bucket, project })
+        }
+        other => Err(RoasteryError::Config(format!(
+            "unknown ROASTERY_STORAGE_BACKEND {other:?} (expected fs, s3, or gcs)"
+        ))),
+    }
+}
+
 fn parse_upstream(raw: Option<OsString>) -> Result<Option<Url>> {
     let Some(raw) = raw else {
         return Ok(None);
@@ -180,8 +299,83 @@ mod tests {
         let cfg = ServerConfig::with_bind(addr);
         assert_eq!(cfg.bind, addr);
         assert_eq!(cfg.storage_dir, PathBuf::from(DEFAULT_STORAGE_DIR));
+        assert_eq!(
+            cfg.storage,
+            StorageBackend::Filesystem(PathBuf::from(DEFAULT_STORAGE_DIR))
+        );
         assert!(cfg.tls.is_none());
         assert!(cfg.upstream.is_none());
+    }
+
+    #[test]
+    fn parse_storage_backend_defaults_to_filesystem() {
+        let dir = PathBuf::from("/var/lib/roastery");
+        let backend = parse_storage_backend(None, None, None, None, &dir).unwrap();
+        assert_eq!(backend, StorageBackend::Filesystem(dir));
+    }
+
+    #[test]
+    fn parse_storage_backend_selects_s3_when_requested() {
+        let dir = PathBuf::from("/tmp/unused");
+        let backend = parse_storage_backend(
+            Some("s3".into()),
+            Some("artifacts".into()),
+            Some("us-west-2".into()),
+            None,
+            &dir,
+        )
+        .unwrap();
+        assert_eq!(
+            backend,
+            StorageBackend::S3 {
+                bucket: "artifacts".to_string(),
+                region: "us-west-2".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_storage_backend_s3_requires_bucket_and_region() {
+        let dir = PathBuf::from("/tmp/unused");
+        let err = parse_storage_backend(Some("s3".into()), None, None, None, &dir).unwrap_err();
+        assert!(matches!(err, RoasteryError::Config(_)));
+        let err = parse_storage_backend(
+            Some("s3".into()),
+            Some("b".into()),
+            None,
+            None,
+            &dir,
+        )
+        .unwrap_err();
+        assert!(matches!(err, RoasteryError::Config(_)));
+    }
+
+    #[test]
+    fn parse_storage_backend_selects_gcs_when_requested() {
+        let dir = PathBuf::from("/tmp/unused");
+        let backend = parse_storage_backend(
+            Some("gcs".into()),
+            Some("artifacts".into()),
+            None,
+            Some("barista-build".into()),
+            &dir,
+        )
+        .unwrap();
+        assert_eq!(
+            backend,
+            StorageBackend::Gcs {
+                bucket: "artifacts".to_string(),
+                project: "barista-build".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_storage_backend_rejects_unknown_kind() {
+        let dir = PathBuf::from("/tmp/unused");
+        let err = parse_storage_backend(Some("azure".into()), None, None, None, &dir)
+            .unwrap_err();
+        assert!(matches!(err, RoasteryError::Config(_)));
     }
 
     #[test]
@@ -237,6 +431,7 @@ mod tests {
 
         let cfg = ServerConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
+            storage: StorageBackend::Filesystem(tmp.clone()),
             storage_dir: tmp.clone(),
             tls: None,
             upstream: None,
