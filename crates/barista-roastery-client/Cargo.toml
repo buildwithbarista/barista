@@ -3,10 +3,106 @@ name = "barista-roastery-client"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Client library for talking to a roastery cache server."
+description = "Async HTTP/2 client for the roastery cache server's barista-protocol surface."
 publish = false
 
 [lib]
+
+[dependencies]
+# `reqwest` is the underlying HTTP client. Feature picks:
+#
+# - `rustls-tls-manual-roots`: matches the rustls crypto provider
+#   (`ring`) the roastery server's auth/TLS surface installs, so any
+#   process linking both halves has exactly one crypto stack. The
+#   `manual-roots` variant lets us supply the trust store explicitly
+#   (system roots via `rustls-native-certs`, or a caller-supplied CA
+#   bundle) instead of pulling in `webpki-roots` unconditionally.
+# - `stream`: needed for `Response::bytes_stream` so a GET can flow
+#   straight to the caller's `AsyncRead` without buffering.
+# - `http2`: lets the client negotiate h2 via ALPN once TLS is in
+#   play. Over plain HTTP it stays HTTP/1.1, which is fine — the
+#   wire shape is identical either way.
+# - `json`: serialises the `cas/missing` request and parses the
+#   `health` / `capabilities` JSON responses.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "stream", "http2", "json"] }
+# `rustls` 0.23 is the TLS implementation. We build the
+# `ClientConfig` directly (rather than going through reqwest's
+# higher-level cert-loading helpers) so the SystemRoots vs CustomCa
+# vs mTLS combinations all flow through one explicit path. Same
+# version + provider features the roastery server pins.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+# PEM parsing for caller-supplied CA bundles + client cert/key
+# material. Same parser the server uses; format quirks (BEGIN-line
+# variants, line wrapping, trailing whitespace) are handled
+# centrally rather than reinvented per consumer.
+rustls-pemfile = "2"
+# Pulls the operating-system trust store into a rustls `RootCertStore`.
+# Only loaded when the caller picks `TlsConfig::SystemRoots`; the
+# CustomCa path doesn't touch it.
+rustls-native-certs = "0.8"
+# Async runtime. `io-util` is needed because the client surfaces
+# `tokio::io::AsyncRead` for streaming uploads/downloads and we want
+# `AsyncReadExt` available to the integration tests; `fs` is dev-only
+# but it's cheaper to enable here than to special-case the feature
+# set per target. `macros` + `rt-multi-thread` for `#[tokio::test]`.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util"] }
+# `tokio-util`'s `io` module bridges `Stream<Bytes>` and `AsyncRead`
+# in both directions: `ReaderStream` for PUT (wrap an `AsyncRead`
+# into a stream `reqwest::Body::wrap_stream` accepts) and
+# `StreamReader` for GET (lift the response's `bytes_stream` back to
+# an `AsyncRead` the caller drives).
+tokio-util = { version = "0.7", features = ["io"] }
+# Parses + validates the base URL. Lets us refuse `TlsConfig::PlainHttp`
+# against an `https://` base at construction time, before any I/O.
+url = "2"
+# JSON request/response shapes for `/v1/cas/missing`, `/v1/health`,
+# `/v1/capabilities`, and the server's `ErrorBody` envelope.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Typed `ClientError` enum.
+thiserror = "2"
+# Structured logging — info-level for the request URL + status,
+# debug-level for the headers we set, trace-level for elapsed time.
+tracing = "0.1"
+# Hex codec for the `Digest` newtype's text form.
+hex = "0.4"
+# SHA-256 powering the optional defense-in-depth GET verify helper.
+# The wire-level integrity guarantee comes from auth + TLS + the
+# digest-in-URL convention, but a hash-as-you-read helper is cheap
+# to provide and matches what M5.2 T2 will want when it ingests
+# bytes into the local CAS.
+sha2 = "0.10"
+# `bytes::Bytes` is the chunk type both `ReaderStream` and the
+# response-side `bytes_stream` emit. Already in the transitive
+# graph; declared here so the streaming adapters can name the type.
+bytes = "1"
+# `futures-util` is needed for the `TryStream` ergonomics on the
+# `ReaderStream` side (mapping the body adapter's `io::Result<Bytes>`
+# items into the shape `reqwest::Body::wrap_stream` expects).
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# Pull the roastery server crate in as a path dep so the integration
+# tests can spin a live server in-process and drive it end-to-end.
+# Path dep (not a version) — same workspace, same revision, no
+# cross-repo coupling.
+roastery = { path = "../../roastery" }
+# Test rig deps: the same axum/tempfile/rcgen/rustls-pki-types stack
+# the roastery server's own tests use. Re-declaring here keeps this
+# crate's test surface self-contained.
+axum = "0.8"
+tempfile = "3"
+rcgen = "0.14"
+rustls-pki-types = "1"
+# `tokio` features needed at test time: the `net` feature gives us
+# `TcpListener` for the ephemeral-port probe; `test-util` enables the
+# slow-handler trick used in the timeout test. Cargo merges this with
+# the runtime declaration above.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "io-util", "net", "test-util"] }
+# `tokio-util` is also needed at test time for the
+# `tokio::io::copy`-into-`AsyncRead` paths that drive the large-blob
+# streaming test.
+tokio-util = { version = "0.7", features = ["io"] }
 
 [lints]
 workspace = true
