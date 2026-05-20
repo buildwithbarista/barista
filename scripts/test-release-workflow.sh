@@ -41,6 +41,8 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 WORKFLOW="${REPO_ROOT}/.github/workflows/release.yml"
 BUILD_SCRIPT="${REPO_ROOT}/scripts/build-release.sh"
+MAVEN_LIB="${REPO_ROOT}/scripts/lib/maven-bundle.sh"
+MAVEN_TEST="${REPO_ROOT}/scripts/test-maven-bundle.sh"
 SELF="${REPO_ROOT}/scripts/test-release-workflow.sh"
 
 fail() {
@@ -86,12 +88,29 @@ fi
 if ! command -v shellcheck >/dev/null 2>&1; then
     echo "::warning::shellcheck not on PATH; skipping (CI will run it)"
 else
+    # `-x` follows `# shellcheck source=` directives so the sourced
+    # `scripts/lib/maven-bundle.sh` is analyzed in context (otherwise
+    # build-release.sh's `. lib/maven-bundle.sh` trips SC1091).
     echo "=== (3) shellcheck ${BUILD_SCRIPT} ==="
-    shellcheck "${BUILD_SCRIPT}" \
+    shellcheck -x "${BUILD_SCRIPT}" \
         || fail "shellcheck reported violations in ${BUILD_SCRIPT}"
+    echo "=== (3b) shellcheck ${MAVEN_LIB} ==="
+    shellcheck "${MAVEN_LIB}" \
+        || fail "shellcheck reported violations in ${MAVEN_LIB}"
+    echo "=== (3c) shellcheck ${MAVEN_TEST} ==="
+    shellcheck -x "${MAVEN_TEST}" \
+        || fail "shellcheck reported violations in ${MAVEN_TEST}"
     echo "=== (4) shellcheck ${SELF} ==="
     shellcheck "${SELF}" \
         || fail "shellcheck reported violations in ${SELF}"
 fi
+
+# ---------------------------------------------------------------------
+# (5) The Maven-bundle hermetic unit test (sha-verify accept/reject +
+#     strip-component extraction + SKIP placeholder).
+# ---------------------------------------------------------------------
+echo "=== (5) ${MAVEN_TEST} ==="
+bash "${MAVEN_TEST}" \
+    || fail "Maven-bundle unit test failed"
 
 echo "=== PASS: ${WORKFLOW} + ${BUILD_SCRIPT} pass all checks ==="

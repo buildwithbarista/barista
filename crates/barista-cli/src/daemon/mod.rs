@@ -41,6 +41,12 @@
 
 pub mod workers;
 
+/// Maven-home resolution for the barback spawn (bundled / env / override).
+/// Cross-platform: the bundled-distribution probe and precedence logic have
+/// no OS coupling, even though the launcher that consumes them is Unix-only
+/// at v0.1.
+pub mod maven_home;
+
 #[cfg(unix)]
 pub mod launcher;
 
@@ -55,5 +61,10 @@ pub use launcher::{
 
 #[cfg(unix)]
 pub use respawn::{RespawnError, RespawnOutcome, submit_with_respawn};
+
+pub use maven_home::{
+    MavenHomeSource, ResolvedMavenHome, bundled_maven_home, resolve_maven_home,
+    resolve_maven_home_from_env,
+};
 
 pub use workers::{WorkersError, available_parallelism_or_one, resolve_workers};

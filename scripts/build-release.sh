@@ -30,6 +30,18 @@
 #                       binary (used by callers that build separately).
 #   -h | --help         Print this help and exit.
 #
+# Environment knobs:
+#   SKIP_MAVEN_BUNDLE=1 Skip fetching + staging the bundled Maven 4
+#                       distribution. The artifact then ships an empty
+#                       share/barista/maven-4/ (a `.keep` placeholder).
+#                       Intended for local dev runs that only exercise the
+#                       binary build and don't want the ~14 MiB fetch.
+#                       DEFAULT (unset): the Maven distribution IS bundled.
+#   MAVEN_BUNDLE_CACHE  Optional path to a pre-downloaded
+#                       `apache-maven-4.0.0-rc-3-bin.tar.gz`. When set and
+#                       the file's sha256 matches the pinned digest, the
+#                       fetch is skipped and the cached archive is used.
+#
 # Determinism contract (see README / the release workflow header for the
 # rationale of each knob):
 #
@@ -61,9 +73,11 @@
 #     artifact this script produces; the manifest's per-artifact sha256
 #     is the natural input to a detached signature. Search for
 #     "SIGNING HOOK" below for the exact seam.
-#   * Maven bundling drops the Maven 4 distribution into the reserved
-#     `share/barista/maven-4/` directory laid out below; search for
-#     "MAVEN BUNDLE HOOK".
+#   * Auto-download of the Maven distribution at first run (delivery shape
+#     "b") is intentionally NOT implemented: the default is to BUNDLE the
+#     distribution into the artifact (shape "a", staged below — search for
+#     "MAVEN BUNDLE"). A future config opt-in could add an on-demand
+#     download for size-constrained environments; that is out of scope here.
 #
 # Output:
 #   <out-dir>/barista-<version>-<target>.tar.gz   (unix targets)
@@ -111,6 +125,20 @@ done
 
 REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel)}"
 cd "$REPO_ROOT"
+
+# ---------------------------------------------------------------------
+# Bundled Maven 4 distribution (delivery shape "a": bundle).
+#
+# The pinned coordinates (version / url / sha256) and the
+# fetch/verify/extract helpers live in scripts/lib/maven-bundle.sh so the
+# pinned digest and the verification logic have exactly one home (shared
+# with scripts/test-maven-bundle.sh). The tarball has a single leading
+# `apache-maven-<ver>/` path component; the helper STRIPS it on extraction
+# so the launcher finds `share/barista/maven-4/bin/mvn` (+ `lib/`) directly.
+# `die` is defined above, before the source, as the library requires.
+# ---------------------------------------------------------------------
+# shellcheck source=scripts/lib/maven-bundle.sh
+. "${REPO_ROOT}/scripts/lib/maven-bundle.sh"
 
 # ---------------------------------------------------------------------
 # Resolve version + git SHA
@@ -252,18 +280,19 @@ ROASTERY_BIN="${BIN_OUT_DIR}/roastery${BIN_SUFFIX}"
 #     bin/roastery[.exe]             the cache server (shipped alongside
 #                                    so a single download stands up both
 #                                    the client and a local cache)
-#     share/barista/maven-4/.keep    reserved, empty placeholder
+#     share/barista/maven-4/         BUNDLED Maven 4 distribution
+#       bin/mvn, lib/, boot/, conf/  (default; .keep when SKIP_MAVEN_BUNDLE)
 #     LICENSE-APACHE
 #     LICENSE-MIT
 #     README.md
 #     CHANGELOG.md
 #
-# MAVEN BUNDLE HOOK: the Maven 4 bundling task (later milestone) drops
-# the embedded Maven distribution into share/barista/maven-4/. The
-# directory is created (with a `.keep`) here so that task is a pure
-# add — no layout churn — and so the tarball's directory structure is
-# already what a bundled release expects. This script does NOT fetch or
-# bundle Maven itself.
+# MAVEN BUNDLE: the pinned Maven 4 distribution is staged into
+# share/barista/maven-4/ so end-user installs (Homebrew, release tarball,
+# container image) have a working Maven without any host configuration.
+# The launcher's bundled-home fallback (maven_home.rs) derives this path
+# from its own executable location. SKIP_MAVEN_BUNDLE=1 stages an empty
+# share/barista/maven-4/ (a `.keep`) for fast local binary-only builds.
 # ---------------------------------------------------------------------
 STAGE_PARENT="$(mktemp -d)"
 trap 'rm -rf "$STAGE_PARENT"' EXIT
@@ -273,9 +302,20 @@ STAGE="${STAGE_PARENT}/${PKG_NAME}"
 mkdir -p "${STAGE}/bin" "${STAGE}/share/barista/maven-4"
 install -m 0755 "$BARISTA_BIN"  "${STAGE}/bin/barista${BIN_SUFFIX}"
 install -m 0755 "$ROASTERY_BIN" "${STAGE}/bin/roastery${BIN_SUFFIX}"
-# `.keep` keeps the reserved Maven directory present in the archive even
-# though it's empty in the unsigned/un-bundled v0.1 artifact.
-: > "${STAGE}/share/barista/maven-4/.keep"
+
+# Bundle the Maven 4 distribution (default), or leave a `.keep` placeholder
+# when the caller opts out for a fast local binary-only build.
+MAVEN_BUNDLE_VERSION=""
+MAVEN_BUNDLE_SHA256=""
+if [[ "${SKIP_MAVEN_BUNDLE:-0}" == "1" ]]; then
+    echo "build-release: SKIP_MAVEN_BUNDLE=1 — staging empty share/barista/maven-4/"
+    : > "${STAGE}/share/barista/maven-4/.keep"
+else
+    stage_maven_bundle "${STAGE}/share/barista/maven-4"
+    MAVEN_BUNDLE_VERSION="${MAVEN_VERSION}"
+    MAVEN_BUNDLE_SHA256="${MAVEN_ARCHIVE_SHA256}"
+fi
+
 for doc in LICENSE-APACHE LICENSE-MIT README.md CHANGELOG.md; do
     if [[ -f "$doc" ]]; then
         install -m 0644 "$doc" "${STAGE}/${doc}"
@@ -373,15 +413,9 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# Hashes
+# Hashes (sha256_of is defined once near the top, shared with the
+# Maven-bundle verification).
 # ---------------------------------------------------------------------
-sha256_of() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    else
-        shasum -a 256 "$1" | awk '{print $1}'
-    fi
-}
 BIN_SHA256="$(sha256_of "${STAGE}/bin/barista${BIN_SUFFIX}")"
 ARCHIVE_SHA256="$(sha256_of "$ARCHIVE_PATH")"
 
@@ -414,12 +448,21 @@ RUSTC_VERSION="$(rustc --version)"
 #     "build_timestamp": "<RFC3339>",
 #     "rustc_version":   "<rustc --version output>",
 #     "barista_version": "<ver>",
-#     "git_sha":         "<full sha>"
+#     "git_sha":         "<full sha>",
+#     "maven_bundle":    { "version": "<ver>", "sha256": "<archive sha256>" }
+#                        OR null when SKIP_MAVEN_BUNDLE was set.
 #   }
 # ---------------------------------------------------------------------
 FRAGMENT_PATH="${OUT_DIR_ABS}/manifest-${TARGET}.json"
 python3 - "$FRAGMENT_PATH" <<PYEOF
 import json, sys
+maven_version = "${MAVEN_BUNDLE_VERSION}"
+maven_sha256 = "${MAVEN_BUNDLE_SHA256}"
+maven_bundle = (
+    {"version": maven_version, "sha256": maven_sha256}
+    if maven_version
+    else None
+)
 fragment = {
     "target": "${TARGET}",
     "binary_sha256": "${BIN_SHA256}",
@@ -429,6 +472,7 @@ fragment = {
     "rustc_version": "${RUSTC_VERSION}",
     "barista_version": "${VERSION}",
     "git_sha": "${GIT_SHA}",
+    "maven_bundle": maven_bundle,
 }
 with open(sys.argv[1], "w") as f:
     json.dump(fragment, f, indent=2, sort_keys=True)

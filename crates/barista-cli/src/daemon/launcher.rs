@@ -55,6 +55,18 @@
 //! `guice`, `sisu`, protobuf-java); it does not need to mirror the
 //! full Maven distribution.
 //!
+//! End-user installs ship that distribution **bundled** inside the
+//! artifact at `<install-root>/share/barista/maven-4` (release tarball,
+//! Homebrew tap, container image). When neither the override nor
+//! `BARISTA_MAVEN_HOME` is set, [`spawn_daemon`] discovers the bundled
+//! distribution from its own executable's location (see the
+//! [`super::maven_home`] module for the precedence + the install-root
+//! derivation) and sets `BARISTA_MAVEN_HOME` on the barback child to point
+//! at it, so a fresh install runs `barista verify` with no environment
+//! configuration. A dev checkout (no bundled distribution) keeps the
+//! existing behavior: export `BARISTA_MAVEN_HOME` or barback surfaces its
+//! own actionable error.
+//!
 //! # PID-file convention
 //!
 //! After spawning, the launcher writes the JVM's process id to
@@ -346,6 +358,40 @@ pub fn spawn_daemon(plan: &LaunchPlan, entry: &JvmEntry) -> Result<Child, Launch
         .arg(plan.idle_shutdown_secs.to_string());
     if let Some(n) = plan.crash_after {
         cmd.arg("--crash-after").arg(n.to_string());
+    }
+
+    // Resolve the Maven 4 distribution home barback's `EmbeddedMavenFactory`
+    // loads from, and make it explicit on the child's environment. Precedence
+    // (see `super::maven_home`): explicit `-Dbarista.maven.home=` override >
+    // inherited `BARISTA_MAVEN_HOME` > the distribution bundled inside a
+    // release install at `<install-root>/share/barista/maven-4` > nothing.
+    //
+    // When the bundled fallback supplies the home, we set `BARISTA_MAVEN_HOME`
+    // on the child exactly as an explicit env var would, so barback's Java
+    // side is unchanged — it reads the same env var regardless of who set it.
+    // When the env-var tier already provides it, the var is inherited as-is,
+    // but we set it on the child explicitly anyway so the spawn is independent
+    // of subtle inheritance differences. When nothing resolves, we leave the
+    // env untouched: barback then surfaces its own actionable
+    // "set -Dbarista.maven.home / export BARISTA_MAVEN_HOME …" error rather
+    // than a bare spawn timeout.
+    let maven = super::maven_home::resolve_maven_home_from_env();
+    match (&maven.path, maven.source) {
+        (Some(home), source) => {
+            tracing::debug!(
+                source = source.label(),
+                maven_home = %home.display(),
+                "resolved barback Maven 4 home"
+            );
+            cmd.env(super::maven_home::MAVEN_HOME_ENV, home);
+        }
+        (None, _) => {
+            tracing::debug!(
+                source = maven.source.label(),
+                "no Maven 4 home resolved for barback; relying on the daemon's \
+                 own actionable error if it needs one"
+            );
+        }
     }
 
     argv_for_diag.push("--socket".to_string());
