@@ -84,6 +84,7 @@ pub async fn spawn_plain_server() -> Harness {
         cas: Arc::new(cas),
         config: Arc::new(cfg),
         upstream: None,
+        bearer: None,
     };
     let app = axum::Router::new()
         .merge(roastery::proto::barista::public_router().with_state(state.clone()))
@@ -140,6 +141,7 @@ pub async fn spawn_bearer_server() -> Harness {
         cas: Arc::new(cas),
         config: Arc::new(cfg),
         upstream: None,
+        bearer: None,
     };
 
     let bearer_verifier =
