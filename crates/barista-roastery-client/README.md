@@ -200,6 +200,62 @@ client.
   — internally `Arc`-shared) to hand it to multiple tasks; construct
   a fresh client per *server* to avoid mixing trust configurations.
 
+## Testing
+
+The crate ships three integration suites under `tests/`:
+
+- **`round_trip.rs`** — the core suite. Each test spins a roastery
+  server **in-process** on an ephemeral port and drives one endpoint or
+  auth/TLS path. Runs by default under `cargo test`.
+- **`coords_header.rs`** — pins that `get_blob_with_coords` puts the
+  `X-Barista-Coords` header on the wire. Runs by default.
+- **`container_roundtrip.rs`** — exercises the client against a **real
+  ephemeral roastery Docker container** built from `roastery/Dockerfile`,
+  over a real published TCP socket. This is `#[ignore]`d by default
+  **and** gated on the `BARISTA_ROASTERY_CONTAINER_TEST` env var, so a
+  plain `cargo test` / `cargo test --workspace` stays green on a host
+  without Docker. To run it where Docker is available:
+
+  ```sh
+  BARISTA_ROASTERY_CONTAINER_TEST=1 \
+    cargo test -p barista-roastery-client \
+    --test container_roundtrip -- --ignored --nocapture
+  ```
+
+  It builds the image itself (via `roastery/scripts/build-image.sh`,
+  tag `roastery:test`) unless `SKIP_BUILD=1` is set, in which case it
+  assumes a prebuilt image (`ROASTERY_TEST_IMAGE`, default
+  `roastery:test`) already exists. The container is torn down with
+  `docker rm -f` from a `Drop` guard, so a panic still cleans up.
+
+- **`roastery_speedup.rs`** — a **mechanism demonstration** of the
+  cold-cache speedup a roastery delivers. It drives a batch of synthetic
+  blobs down two paths and measures wall-clock time: cold cache → a
+  latency-injected mock "Central" (a `tokio::time::sleep`-delayed mock
+  upstream, modelling WAN RTT) versus cold cache → a warm local
+  in-process roastery. It asserts the roastery path is ≥5× faster and
+  logs the measured ratio. Runs by default (no Docker needed — all
+  in-process + mock).
+
+### What the speedup test proves — and what it does not
+
+`roastery_speedup.rs` proves the **mechanism**: under a controlled,
+simulated upstream latency (150 ms per request), a warm local roastery
+beats a far-away upstream by well over 5× — because the speedup is a
+latency-asymmetry effect (LAN/local roastery RTT vs WAN upstream RTT),
+multiplied across every artifact in the closure.
+
+It is **not** the milestone-level measurement *"cold cache + warm
+roastery beats cold cache + Central direct by ≥5× on the 100-project
+corpus median"*. That measurement is a property of a specific corpus on
+specific reference hardware against the real network; it requires the
+full project corpus to be materialised and the reference-hardware
+benchmark harness to be provisioned, and it is owned by the benchmark
+workstream. Nothing in this crate should be read as a claim that the
+corpus-median target has been met — only that the client and protocol
+deliver the targeted speedup whenever the latency asymmetry the
+milestone assumes is present.
+
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.

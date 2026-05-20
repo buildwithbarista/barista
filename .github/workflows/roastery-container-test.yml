@@ -1,0 +1,120 @@
+# Container round-trip integration test for `barista-roastery-client`.
+#
+# Runs the `#[ignore]`d `container_roundtrip` integration test from
+# `crates/barista-roastery-client/tests/container_roundtrip.rs` against
+# a real ephemeral `roastery` Docker container. The test is opt-in
+# (gated on the `BARISTA_ROASTERY_CONTAINER_TEST` env var + `--ignored`)
+# precisely so a plain `cargo test --workspace` stays green on machines
+# without Docker; this workflow is where it actually executes, since
+# `ubuntu-latest` ships a working Docker daemon.
+#
+# What it proves:
+#
+#   The shipped server binary (built from `roastery/Dockerfile`, the
+#   same image the `Container — roastery` and `e2e — kind` workflows
+#   build) speaks the protocol the `RoasteryClient` expects, over a
+#   real published TCP socket: health → capabilities → PUT → GET
+#   byte-equal → HEAD → missing.
+#
+# This complements:
+#   - `container-roastery.yml` — builds + smoke-tests the image
+#     (entrypoint boots, /healthz + /version answer).
+#   - `e2e-kind.yml` — full Helm-on-kind reference deployment.
+#   - the in-process `round_trip.rs` suite (runs in `ci.yml`).
+# This workflow is the missing "real client ↔ real container" leg.
+#
+# Triggers: any change to the client crate, the roastery server/image,
+# this workflow, or its lint script. Plus manual dispatch.
+#
+# Every action is pinned to a commit SHA (not a floating tag). The
+# human-readable tag is recorded next to the SHA so future readers can
+# audit drift without external tools. When bumping, update both the SHA
+# and the comment.
+
+name: Roastery container round-trip
+
+on:
+  pull_request:
+    paths:
+      - 'crates/barista-roastery-client/**'
+      - 'roastery/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/roastery-container-test.yml'
+      - 'scripts/test-roastery-container-workflow.sh'
+  push:
+    branches: [main]
+    paths:
+      - 'crates/barista-roastery-client/**'
+      - 'roastery/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/roastery-container-test.yml'
+      - 'scripts/test-roastery-container-workflow.sh'
+  workflow_dispatch:
+
+# Default-deny at the workflow level; the single job opts in explicitly.
+permissions: {}
+
+# Cancel superseded PR runs to keep CI focused on the latest commit.
+# `main` runs to completion.
+concurrency:
+  group: roastery-container-test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # container-roundtrip — build the image, then run the opt-in integration
+  # test against a container started from it.
+  #
+  # The test itself builds the image (via roastery/scripts/build-image.sh)
+  # when SKIP_BUILD is unset. We instead build the image in a dedicated
+  # step here and set SKIP_BUILD=1 so the build cost is visible as its own
+  # step in the run log (and so a build failure is attributed clearly,
+  # separate from a test failure).
+  # ---------------------------------------------------------------------------
+  container-roundtrip:
+    name: client ↔ real container
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        # SHA-pinned per the SHA-pinning policy; the "use the stable
+        # toolchain" intent is preserved via the `toolchain:` input.
+        # Matches the pin used by `ci.yml`.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-03-27
+        with:
+          toolchain: stable
+
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      # Build the roastery image (linux/amd64, the runner's arch),
+      # tagging it `roastery:test` so the integration test's
+      # ROASTERY_TEST_IMAGE default matches and SKIP_BUILD short-circuits
+      # the in-test build.
+      - name: Build roastery:test image
+        env:
+          TAG: roastery:test
+          PLATFORM: linux/amd64
+        run: bash roastery/scripts/build-image.sh
+
+      # Run only the opt-in container round-trip test. `--ignored`
+      # selects the `#[ignore]`d test; the env var is its second gate.
+      # SKIP_BUILD=1 reuses the image built above.
+      - name: Run container round-trip integration test
+        env:
+          BARISTA_ROASTERY_CONTAINER_TEST: '1'
+          ROASTERY_TEST_IMAGE: roastery:test
+          SKIP_BUILD: '1'
+        run: |
+          cargo test -p barista-roastery-client \
+            --test container_roundtrip -- --ignored --nocapture

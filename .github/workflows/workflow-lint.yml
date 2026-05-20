@@ -328,3 +328,12 @@ jobs:
         # zizmor (offline, medium-or-higher), and that
         # `roastery/tests/e2e/kind.sh` passes shellcheck.
         run: bash scripts/test-e2e-workflow.sh
+
+      - name: Validate roastery container round-trip workflow file
+        shell: bash
+        # Exercises `scripts/test-roastery-container-workflow.sh` — the
+        # focused actionlint + zizmor gate for the container round-trip
+        # integration-test workflow. The script asserts
+        # `.github/workflows/roastery-container-test.yml` passes
+        # actionlint and zizmor (offline, medium-or-higher).
+        run: bash scripts/test-roastery-container-workflow.sh
