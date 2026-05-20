@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Project-root resolution.
 //!
 //! Resolves the directory containing the top-level `pom.xml` from

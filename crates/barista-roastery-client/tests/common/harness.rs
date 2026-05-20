@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! In-process server fixtures for the client integration tests.
 //!
 //! Three shapes:

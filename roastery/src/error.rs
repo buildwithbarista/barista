@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Typed errors for the roastery server.
 //!
 //! The crate splits errors in two layers:

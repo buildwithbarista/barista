@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `xtask` — workspace task runner.
 //!
 //! Entry point dispatches to subcommand modules. The subcommands

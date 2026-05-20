@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! In-process roastery server fixtures for the cache integration
 //! tests, mirroring the M5.2 T1 client-test harness pattern.
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! The `tower::Layer` that enforces auth on the protected routes.
 //!
 //! `AuthLayer` is parameterised over the inner service. It captures

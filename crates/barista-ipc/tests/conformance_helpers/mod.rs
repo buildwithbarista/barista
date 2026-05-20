@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Test-support module hub for the cross-language Rust↔Java conformance
 // harness. Loaded via `mod conformance_helpers;` from
 // `tests/conformance.rs` (UDS variant) and `tests/conformance_pipe.rs`

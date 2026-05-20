@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Tap registration, inspection, and health probing.
 //!
 //! A **tap** is a named, registered remote endpoint — either a

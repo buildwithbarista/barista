@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Worker-protocol IPC transport between the CLI and the barback daemon.
 //!
 //! This crate hosts the Rust side of the IPC wire contract defined in

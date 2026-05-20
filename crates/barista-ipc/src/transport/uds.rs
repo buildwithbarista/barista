@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Unix-domain-socket transport (Linux + macOS).
 //!
 //! The CLI dials `~/.barista/run/barback-<id>.sock` via

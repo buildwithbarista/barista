@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Stubbed GCS-backed [`Cas`].
 //!
 //! Same rationale as [`crate::storage::s3`]: the type exists so the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Effective and partial configuration schemas.
 //!
 //! [`Config`] is the fully-merged result handed to callers. The

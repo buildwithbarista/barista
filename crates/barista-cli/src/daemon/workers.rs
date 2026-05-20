@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Worker-count expression resolver for `barback.default_workers`.
 //!
 //! The daemon's worker-pool concurrency budget (M4.2 T2 / PRD §11.2.2)

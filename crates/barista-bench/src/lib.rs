@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Benchmark harness and schemas for Barista.
 //!
 //! This crate is the source of truth for the two on-disk contracts that

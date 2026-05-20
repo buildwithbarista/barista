@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // CLI entry points wrap library calls in `?` propagation. Surface
 // any unwrap/expect/panic here as a documented panic-path so the
 // workspace lint policy stays meaningful.

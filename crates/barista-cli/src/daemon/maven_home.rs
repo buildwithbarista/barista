@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Resolve the Maven 4 distribution home the `barback` daemon loads its
 //! embedded core from.
 //!

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // This crate is a test-only helper library. The workspace security lints
 // (clippy::unwrap_used, clippy::expect_used, clippy::panic) are explicitly
 // allowed because panic-on-misuse is the documented contract for fixture

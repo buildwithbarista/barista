@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Public error type for the roastery client.
 //!
 //! Every public method returns `Result<T, ClientError>`. The variants

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Production [`MetadataSource`] impl backed by the local cache.
 //!
 //! This is the glue between the resolver and the cache subsystem.

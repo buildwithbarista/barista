@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista.toml` — project-local configuration schema.
 //!
 //! This module extends the base [`PartialConfig`](crate::schema::PartialConfig)

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Framed bidirectional transport for the worker IPC protocol.
 //!
 //! This module implements the byte-channel layer that sits between the

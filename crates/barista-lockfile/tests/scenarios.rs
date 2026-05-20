@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Spike scenarios for the semantic lockfile diff renderer.
 //!
 //! Each scenario exercises a "large change shape" that occurs in

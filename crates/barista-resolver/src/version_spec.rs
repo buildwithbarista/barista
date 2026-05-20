@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Maven version requirement parsing.
 //!
 //! A version *requirement* is what a `<dependency><version>` declaration

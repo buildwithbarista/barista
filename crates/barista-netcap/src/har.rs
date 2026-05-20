@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Minimal HAR (HTTP Archive) validator.
 //!
 //! Scope is **deliberately limited**: this module exists to answer a

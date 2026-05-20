@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Test-support submodule: UDS-flavoured Rust↔Java conformance helpers.
 // Loaded via `mod conformance_helpers;` from `tests/conformance.rs`.
 #![allow(

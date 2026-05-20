@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Progress-event sink — the seam between command runners and the
 //! NDJSON streaming API.
 //!

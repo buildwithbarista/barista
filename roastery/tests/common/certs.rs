@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Ephemeral cert generation for the mTLS integration tests.
 //!
 //! Each test run mints a fresh CA + server + client certificate

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Streaming, multiplexing, and cancellation on top of [`crate::Transport`].
 //!
 //! This module wraps a single bidirectional [`crate::Transport`] (UDS on

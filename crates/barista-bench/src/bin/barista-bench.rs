@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista-bench` — the benchmark-runner CLI.
 //!
 //! Reads one or more `Bench.toml` manifests, runs the cross-tool

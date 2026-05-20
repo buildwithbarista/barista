@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Semantic lockfile diff rendering.
 //!
 //! Renders the difference between two lockfile snapshots in a

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista pull` — resolve dependencies, fetch artifacts, write
 //! `barista.lock`.
 //!

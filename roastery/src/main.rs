@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! The `roastery` binary entry point.
 //!
 //! Keep this file slim: parse config, init tracing, hand off to

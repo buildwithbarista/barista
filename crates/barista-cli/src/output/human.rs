@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Human-readable renderer.
 //!
 //! Designed for a developer at a tty. Two writers:

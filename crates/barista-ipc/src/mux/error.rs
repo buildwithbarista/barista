@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Typed errors for the multiplex layer.
 //!
 //! [`MuxError`] is distinct from [`crate::TransportError`] so callers can

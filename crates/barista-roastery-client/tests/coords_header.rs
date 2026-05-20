@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Test that `RoasteryClient::get_blob_with_coords` actually puts an
 //! `X-Barista-Coords` header on the wire.
 //!

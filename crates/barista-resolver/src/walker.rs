@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! BFS frontier + nearest-wins dependency walker.
 //!
 //! Given a root [`ResolvedPom`] (parent-merged, interpolated, BOM-imported,

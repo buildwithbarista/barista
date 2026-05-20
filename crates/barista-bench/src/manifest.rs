@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `Bench.toml` — per-project benchmark manifest schema.
 //!
 //! Every benchmark target (a Tier-1 microbench fixture inside a crate's

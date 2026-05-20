@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `MetadataOverFetchAnalyzer` — repeated `maven-metadata.xml`
 //! fetches on the same `(host, groupId, artifactId)` triple within
 //! one session.

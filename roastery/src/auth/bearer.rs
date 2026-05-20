@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Bearer-token verification.
 //!
 //! Loads a tokens file at startup, hashes every entry with SHA-256,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Integration tests for the `results.json` schema. Validates fixtures
 // against the JSON-Schema using the `jsonschema` crate; also exercises
 // the Rust `ResultsDocument` type's serde round-trip so the two halves

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Strict-mode derivation formatter.
 //!
 //! Turns a [`StrictDerivation`] (built from PubGrub's conflict

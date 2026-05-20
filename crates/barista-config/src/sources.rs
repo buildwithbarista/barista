@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Layered configuration loader machinery.
 //!
 //! The entry point is [`load_effective_config`]. It walks the six

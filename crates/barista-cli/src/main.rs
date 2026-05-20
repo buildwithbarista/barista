@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // See `lib.rs` for the per-crate clippy security-lint allow rationale.
 #![allow(
     clippy::unwrap_used,

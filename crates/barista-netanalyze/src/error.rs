@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Public error type for `barista-netanalyze`.
 //!
 //! Mirrors the shape of `barista-netcap::NetcapError`: a single enum

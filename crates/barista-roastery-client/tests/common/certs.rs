@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Ephemeral PKI for mTLS integration tests.
 //!
 //! Per-run `rcgen` CA + server cert + client cert + an unrelated CA

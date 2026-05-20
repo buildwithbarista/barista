@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! PubGrub-based strict resolver.
 //!
 //! When the user passes `--strict`, the resolver runs PubGrub

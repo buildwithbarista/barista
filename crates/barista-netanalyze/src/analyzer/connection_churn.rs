@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `ConnectionChurnAnalyzer` — many fresh TCP/TLS handshakes to a
 //! single host where one HTTP/2 connection would suffice.
 //!

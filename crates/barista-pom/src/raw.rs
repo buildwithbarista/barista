@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Raw POM parser — XML → typed struct.
 //!
 //! This parser is intentionally syntactic: it deserializes the

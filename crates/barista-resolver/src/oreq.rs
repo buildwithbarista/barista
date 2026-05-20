@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! O-REQ-01 through O-REQ-05 — request-count optimizations.
 //!
 //! This module implements the in-session and across-invocation

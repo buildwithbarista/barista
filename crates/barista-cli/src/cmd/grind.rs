@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista grind` subcommands.
 //!
 //! For v0.1, only `grind tree` has a real implementation. `diff`,

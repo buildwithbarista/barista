@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Post-merge POM interpretation passes:
 //! - dependencyManagement application
 //! - BOM imports (`<scope>import</scope>` dependencies)

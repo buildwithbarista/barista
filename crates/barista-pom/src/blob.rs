@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! CBOR serialization for the effective POM blob.
 //!
 //! The CLI parses + resolves a project's POM, then ships the resulting

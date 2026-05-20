@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Validation tests for the on-disk `Bench.toml` manifests checked in
 // under `bench/projects/`. These are not bench-execution tests — they
 // only verify the manifests parse against the `Manifest` struct and

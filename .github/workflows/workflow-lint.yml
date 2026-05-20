@@ -368,3 +368,21 @@ jobs:
         # cyclonedx-cli download, which this config-validation job does
         # not provision.
         run: bash scripts/test-sbom-workflow.sh
+
+      - name: Validate SPDX-header gate workflow + scripts
+        shell: bash
+        # Exercises `scripts/test-spdx-workflow.sh` — the focused
+        # actionlint + zizmor gate for the CI workflow that hosts the
+        # `spdx-headers` job (`.github/workflows/ci.yml`), plus a
+        # shellcheck of the SPDX scripts (`scripts/check-spdx-headers.sh`,
+        # the include/exclude source of truth + stamper; and `scripts/
+        # test-spdx.sh`, the [T] self-test) and the validator itself. The
+        # script asserts `ci.yml` passes actionlint and zizmor (offline,
+        # medium-or-higher) and all SPDX shell scripts pass shellcheck.
+        #
+        # The [T] coverage self-test — that the gate accepts the stamped
+        # tree and rejects a synthetic header-less first-party file — runs
+        # via `scripts/test-spdx.sh`; the gate itself (`check-spdx-
+        # headers.sh`) runs as the `spdx-headers` job in `ci.yml` on every
+        # PR. Both are pure git + bash, so they need no toolchain here.
+        run: bash scripts/test-spdx-workflow.sh

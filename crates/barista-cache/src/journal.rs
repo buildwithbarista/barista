@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Append-only journal for the cache index.
 //!
 //! Every mutation of the in-memory cache index (put / remove / touch)

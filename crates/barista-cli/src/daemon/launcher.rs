@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Daemon launcher: find or spawn `barback`, connect to its UDS,
 //! return a ready [`barista_ipc::Multiplexer`]-backed client/server pair.
 //!

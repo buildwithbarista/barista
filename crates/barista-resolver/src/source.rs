@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `MetadataSource` — the sole resolver↔cache interface.
 //!
 //! The resolver crate does NOT depend on the cache crate. Instead,

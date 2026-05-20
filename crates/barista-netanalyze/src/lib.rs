@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Tests legitimately use `expect`/`unwrap`/`panic!` to keep failure
 // messages compact; scope the exemption to `#[cfg(test)]` so
 // production code in `src/` still has to justify each panic-path.

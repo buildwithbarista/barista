@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! mTLS verification — load the operator-supplied CA bundle and
 //! configure rustls to demand-and-validate a client certificate on
 //! every TLS handshake.

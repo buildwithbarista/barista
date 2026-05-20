@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Cross-platform buffer zeroization for credential-carrying wire bytes.
 //!
 //! The motivation lives in the parent module's doc-comment: prost's

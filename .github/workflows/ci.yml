@@ -12,6 +12,9 @@
 #                 Verifies the embedder works across every supported
 #                 toolchain combination — a v0.1 release-gate requirement.
 #   mvnd          Smoke test that `mvnd` 2.x can drive the barback build.
+#   spdx-headers  Source-hygiene lint: every first-party source file
+#                 carries the `MIT OR Apache-2.0` SPDX tag. No toolchain;
+#                 pure git + bash, so it gives near-instant feedback.
 #   actionlint    Self-check the workflow files in this directory.
 #
 # The toolchain matrix encoded here is the contract: any change to the
@@ -257,6 +260,23 @@ jobs:
         run: mvnd --version
       - name: mvnd test (parent)
         run: mvnd -f barback/pom.xml -B test
+
+  spdx-headers:
+    name: SPDX header lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      # No toolchain: the checker is pure `git ls-files` + `grep`, so this
+      # job finishes in seconds and gives the fastest feedback in the
+      # matrix. `check-spdx-headers.sh` is the single source of truth for
+      # the first-party include/exclude globs; `--fix` (run locally) is
+      # what authors use to stamp a new file.
+      - name: Enforce dual MIT OR Apache-2.0 SPDX headers (first-party)
+        run: bash scripts/check-spdx-headers.sh
 
   actionlint:
     name: actionlint

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Errors surfaced by the upstream-on-miss fetch path.
 //!
 //! `UpstreamError` is the dedicated error type for the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Orchestrator: load a HAR, run the analyzer registry, write
 //! per-finding markdown files.
 //!

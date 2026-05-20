@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Tests legitimately use `expect`/`unwrap`/`panic!` to keep failure
 // messages compact; the workspace lint policy elevates these to warn,
 // which `-D warnings` turns into a hard error. Scope the exemption to

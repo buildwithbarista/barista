@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Shared synthetic graph builders for resolver microbenchmarks and
 //! the skip-rate report example.
 //!

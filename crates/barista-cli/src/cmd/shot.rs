@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista shot <phase> [args...]` — ephemeral build invocation
 //! optimised for warm-path latency (M4.3 T3).
 //!

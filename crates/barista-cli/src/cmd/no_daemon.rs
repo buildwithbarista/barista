@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `--no-daemon` escape hatch: route lifecycle commands to a
 //! forked upstream `mvn` process.
 //!

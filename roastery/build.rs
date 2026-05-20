@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Build-time identity probe for the `/version` ops endpoint.
 //!
 //! Emits three `cargo:rustc-env=…` directives so the crate can read

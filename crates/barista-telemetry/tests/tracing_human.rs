@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for the human-friendly log format produced
 //! by [`barista_telemetry::tracing`].
 //!

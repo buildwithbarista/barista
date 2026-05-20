@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! JSON renderer — one document per CLI invocation.
 //!
 //! `pretty` controls indentation; the factory turns it on when stdout

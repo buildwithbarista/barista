@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Integration-test target — workspace security lints are allowed.
 // Panic-on-misuse is the documented contract for failing a test
 // loudly; `as` casts are the canonical form for libc constant

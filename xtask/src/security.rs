@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `cargo xtask security` — orchestrates the full locally-runnable
 //! security suite for the Barista workspace.
 //!

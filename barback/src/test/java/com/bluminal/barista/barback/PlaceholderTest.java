@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 package com.bluminal.barista.barback;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

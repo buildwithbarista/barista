@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Parent-chain merge + property interpolation.
 //!
 //! Given a [`RawPom`] and a [`ParentResolver`], produces an

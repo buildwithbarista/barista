@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Async HTTP/2 client for the roastery cache server's
 //! barista-protocol surface.
 //!

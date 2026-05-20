@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Wire-protocol handlers for the roastery server.
 //!
 //! Each submodule owns one protocol surface and exposes a single

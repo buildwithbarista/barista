@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for the auth surface: bearer-token validation,
 //! mTLS client-cert validation, the fail-closed startup check, and
 //! the public-route exceptions for ops + protocol-level

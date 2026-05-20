@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Bazel Remote Execution API (REAPI) gRPC handler.
 //!
 //! Roastery speaks two wire protocols against one shared

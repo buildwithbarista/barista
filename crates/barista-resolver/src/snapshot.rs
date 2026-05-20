@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! SNAPSHOT resolution + update policies.
 //!
 //! Maven snapshots are moving targets: the version

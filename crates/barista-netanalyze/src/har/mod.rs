@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Minimal HAR (HTTP Archive) 1.2 model for the analysis pipeline.
 //!
 //! The reference schema lives at

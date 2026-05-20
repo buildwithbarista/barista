@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `GET /metrics` — Prometheus text exposition + metric registry.
 //!
 //! ## Choice of client library

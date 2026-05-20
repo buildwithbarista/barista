@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista pour` — materialize resolved artifacts into a target
 //! environment.
 //!

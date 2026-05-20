@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Filesystem-permission authentication + transport-buffer zeroization.
 //!
 //! This module owns the *who's allowed to connect* half of the IPC

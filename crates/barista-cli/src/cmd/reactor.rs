@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Multi-module Maven reactor: topological sort + per-level parallelism.
 //!
 //! `barista verify` on a multi-module Maven project (a "reactor" in

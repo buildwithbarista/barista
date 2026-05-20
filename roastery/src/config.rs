@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Server configuration for the roastery binary.
 //!
 //! Configuration is loaded from environment variables with documented

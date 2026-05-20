@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `roastery` — the remote artifact cache server.
 //!
 //! This library crate hosts the server's internals so they can be

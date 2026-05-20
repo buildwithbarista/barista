@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 #![no_main]
 //! Fuzz target: `VersionSpec::parse` must never panic on arbitrary
 //! byte input. This is the strongest invariant we can assert without

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! [`RoasteryClient`] — the public client surface.
 //!
 //! Wraps a long-lived `reqwest::Client` (so connection pooling

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `results.json` — per-run benchmark results document.
 //!
 //! Emitted by the harness at the end of every benchmark run; consumed

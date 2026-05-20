@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! HTTP/2 multiplexed upstream fetcher.
 //!
 //! Fetches POMs, artifacts, and `maven-metadata.xml` from configured

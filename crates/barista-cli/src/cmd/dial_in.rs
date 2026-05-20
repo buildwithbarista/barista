@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista dial-in` — interactive configuration wizard.
 //!
 //! Walks the user through a small set of onboarding questions and

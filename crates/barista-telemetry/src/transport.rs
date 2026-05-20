@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! HTTP transport for telemetry — implemented but off by default.
 //!
 //! # Three independent guards

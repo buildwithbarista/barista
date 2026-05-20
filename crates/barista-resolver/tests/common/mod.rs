@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Shared test helpers for resolver integration tests.
 //!
 //! Integration test files (`tests/*.rs`) each compile to their own

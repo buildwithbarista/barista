@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! NDJSON renderer — newline-delimited JSON, one event per line.
 //!
 //! M3.2 T1 established the writer plumbing: every `render_*` call

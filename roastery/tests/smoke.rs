@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Smoke tests for the roastery HTTP scaffold.
 //!
 //! These exercise the binary's library entry point (`roastery::run`)

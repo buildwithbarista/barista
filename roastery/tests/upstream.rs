@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for the upstream-on-miss fetch path.
 //!
 //! The harness spawns a roastery server with a `TempDir`-backed

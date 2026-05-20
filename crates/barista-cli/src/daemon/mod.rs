@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Daemon-lifecycle plumbing for the CLI.
 //!
 //! `barista verify` (M4.3 T1) and every other Maven-vocabulary

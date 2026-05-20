@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Maven-compatible mirror via hardlinks.
 //!
 //! After the cache puts an artifact's bytes into CAS at

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Workspace security lints (clippy::unwrap_used, clippy::expect_used,
 // clippy::panic, clippy::as_conversions, unsafe_code) are warned on
 // workspace-wide via the root `Cargo.toml`. `unsafe_code` is allowed here

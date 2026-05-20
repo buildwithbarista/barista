@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! gRPC auth interceptor for the REAPI CAS data services.
 //!
 //! The barista-protocol CAS routes sit behind the axum/tower

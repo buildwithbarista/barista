@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista verify` — the headline end-to-end command (M4.3 T1).
 //!
 //! Wires the four major v0.1 subsystems together:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Maven coordinate parsing for the upstream-on-miss path.
 //!
 //! Clients hint the fetcher at the artifact they're trying to land

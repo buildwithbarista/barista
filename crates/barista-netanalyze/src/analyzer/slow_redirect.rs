@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `SlowRedirectAnalyzer` — chains of 30x responses where each hop
 //! adds non-trivial wall time.
 //!

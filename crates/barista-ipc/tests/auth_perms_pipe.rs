@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Integration-test target — workspace security lints are allowed.
 #![allow(
     clippy::unwrap_used,

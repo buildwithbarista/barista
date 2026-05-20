@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Upstream fetcher: streams a missing artifact in from one of the
 //! configured Maven repositories, verifies its SHA-256 against the
 //! requested digest, and parks it in the local CAS so subsequent

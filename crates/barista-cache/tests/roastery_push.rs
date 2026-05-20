@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for push-after-build (M5.2 T3).
 //!
 //! When `cache.roastery.push = true` and a roastery is configured,

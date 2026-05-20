@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Lockfile TOML schema.
 //!
 //! `barista.lock` is the project-level pinning file. It records the

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Per-action cancellation primitive.
 //!
 //! [`CancelToken`] is the server-side handle that an action body holds

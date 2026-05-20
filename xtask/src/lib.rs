@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `xtask` — workspace task runner, exposed both as a `[[bin]]` (so
 //! `cargo xtask <sub>` works) and as a `[lib]` (so integration tests
 //! under `tests/` can call the subcommand entry points without

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Skipper — BFS subtree pruning for the dependency walker.
 //!
 //! Maven's BFS collector becomes "BFS+Skipper" when this module

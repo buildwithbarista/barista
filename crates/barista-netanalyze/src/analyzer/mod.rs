@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `Analyzer` trait + the default analyzer registry.
 //!
 //! ## What "AI-assisted" means in v0.1

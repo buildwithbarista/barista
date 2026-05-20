@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Lockfile validation modes.
 //!
 //! On every resolve, barista recomputes the **project signature**

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for the roastery-first → upstream-fallback
 //! write path wired into `barista-cache` (M5.2 T2).
 //!

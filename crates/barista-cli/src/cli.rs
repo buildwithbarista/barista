@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Barista CLI surface.
 //!
 //! Defines every command, subcommand, global flag, and per-command flag

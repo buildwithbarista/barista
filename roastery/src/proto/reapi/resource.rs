@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! ByteStream resource-name grammar parsing for the REAPI surface.
 //!
 //! The REAPI overlays a path-like grammar on the otherwise opaque

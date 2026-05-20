@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for the barista-protocol HTTP/2 surface.
 //!
 //! Each test spawns a real `roastery::run` instance on an ephemeral

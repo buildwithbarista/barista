@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `GET /healthz` — Kubernetes-canonical liveness probe.
 //!
 //! This is intentionally **not** the same endpoint as `/v1/health`

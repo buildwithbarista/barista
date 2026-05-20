@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Stubbed S3-backed [`Cas`].
 //!
 //! The type exists at v0.1 so:

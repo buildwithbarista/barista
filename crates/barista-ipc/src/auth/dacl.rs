@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Windows DACL builder for owner-only named pipes.
 //!
 //! Builds a `SECURITY_ATTRIBUTES` whose `lpSecurityDescriptor`

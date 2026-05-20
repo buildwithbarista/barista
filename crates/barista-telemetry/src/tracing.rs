@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Local structured-logging setup for Barista.
 //!
 //! This module installs a process-local [`tracing_subscriber`] that

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for the Bazel REAPI gRPC surface.
 //!
 //! Each test spins an in-process roastery server (the barista-native

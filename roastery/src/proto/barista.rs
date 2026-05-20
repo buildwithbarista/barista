@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Barista-protocol HTTP/2 handler — the REST/JSON surface Barista
 //! clients use to talk to the roastery.
 //!

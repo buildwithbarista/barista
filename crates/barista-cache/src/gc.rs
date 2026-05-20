@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Cache garbage collection.
 //!
 //! GC triggers when the on-disk cache fills past a configured high

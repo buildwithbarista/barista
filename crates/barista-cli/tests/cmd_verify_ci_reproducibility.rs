@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Integration-test target — workspace security lints relaxed
 // (`unwrap`/`expect`/`panic!` are the documented failure contract
 // for assertions). Mirror of the allow block at the top of

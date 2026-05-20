@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Integration-test / example / benchmark target — workspace security
 // lints are allowed here. Panic-on-misuse (`unwrap()`/`expect()`/`panic!`)
 // is the documented contract for failing a test loudly. This allow block

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! SHA-256 content digest — client-side mirror of the type the
 //! roastery server uses internally.
 //!

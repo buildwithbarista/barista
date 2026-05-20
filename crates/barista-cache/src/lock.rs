@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Per-coordinate locking.
 //!
 //! Coordinates concurrent fetches of the same Maven coord. Two layers:

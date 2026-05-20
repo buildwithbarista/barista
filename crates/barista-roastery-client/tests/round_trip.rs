@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! End-to-end integration tests for the roastery client.
 //!
 //! Each test spins a live `roastery` server in-process on an

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 /*
  * Copyright (c) 2026 Bluminal and the Barista contributors.
  * Licensed under the MIT License or the Apache License, Version 2.0,

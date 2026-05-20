@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Integration tests for the `Bench.toml` manifest schema.
 //
 // Workspace security lints disable `unwrap`/`expect`/`panic` in

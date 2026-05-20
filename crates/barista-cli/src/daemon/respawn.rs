@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Auto-respawn driver on top of [`barista_ipc::Multiplexer`].
 //!
 //! Wraps a single `submit_action` + collect-result round-trip with the

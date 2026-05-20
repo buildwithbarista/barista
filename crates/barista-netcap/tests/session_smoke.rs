@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 //! `#[ignore]`-gated smoke test against a real mitmproxy installation.
 //!

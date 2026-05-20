@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Project signature.
 //!
 //! The lockfile's `project_signature` field is a SHA-256 hex digest

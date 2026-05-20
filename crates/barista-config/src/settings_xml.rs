@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Read-only parser for Maven's `settings.xml` (and `settings-security.xml`).
 //!
 //! Maven's user-level configuration file at `~/.m2/settings.xml` declares:

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Owner-only Unix-domain socket paths with policy enforcement.
 //!
 //! [`SocketPath`] is a newtype around an absolute path that has been

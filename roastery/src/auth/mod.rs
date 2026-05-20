@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Authentication for the roastery server.
 //!
 //! The auth surface supports two mutually-acceptable mechanisms:

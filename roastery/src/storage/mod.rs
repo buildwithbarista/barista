@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Content-addressed storage backend abstraction.
 //!
 //! Every artifact in the roastery is identified by the SHA-256 digest

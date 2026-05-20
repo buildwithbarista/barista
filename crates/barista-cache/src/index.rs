@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! In-memory cache index.
 //!
 //! Maps fully-qualified Maven coordinates → on-disk CAS blob. The

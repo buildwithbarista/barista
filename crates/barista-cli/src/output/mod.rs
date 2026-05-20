@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Multi-format output renderer.
 //!
 //! The CLI's `--output <FORMAT>` global flag (see [`crate::cli::OutputFormat`])

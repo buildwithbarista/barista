@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Maven-vocabulary command routing.
 //!
 //! `barista clean | compile | test | package | verify | install |

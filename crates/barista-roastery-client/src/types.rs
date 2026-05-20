@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Public response types returned by [`crate::RoasteryClient`].
 //!
 //! Kept in their own module so the `client` module's request flow

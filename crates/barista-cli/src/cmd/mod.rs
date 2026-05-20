@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Subcommand implementations.
 //!
 //! Each module corresponds to a top-level (or nested) command from

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 // Test-support submodule: cross-platform JVM-spawn ceremony for the
 // Rust↔Java conformance harness. Loaded via `mod conformance_helpers;`
 // from the integration-test targets in `tests/`.

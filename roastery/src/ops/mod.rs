@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Operational endpoints — the `/healthz`, `/metrics`, `/version`
 //! surface a Kubernetes/SRE deployment expects.
 //!

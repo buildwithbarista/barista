@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Lockfile-drift red-team suite.
 //!
 //! These are adversarial tests: each crafts a *tampered* committed

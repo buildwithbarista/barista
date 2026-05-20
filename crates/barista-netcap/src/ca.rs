@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! CA-certificate setup helpers for the mitmproxy-based capture harness.
 //!
 //! ## What this module does

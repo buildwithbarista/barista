@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Container round-trip integration test: [`RoasteryClient`] against a
 //! **real ephemeral roastery Docker container**, over a real TCP
 //! socket.

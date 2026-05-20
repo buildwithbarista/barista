@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Upstream-on-miss fetch path.
 //!
 //! When a `GET /v1/cas/sha256/{digest}` lands on a digest the local

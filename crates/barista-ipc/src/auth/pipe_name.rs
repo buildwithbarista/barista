@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Owner-restricted Windows named-pipe paths.
 //!
 //! [`PipeName`] is a newtype around the canonical

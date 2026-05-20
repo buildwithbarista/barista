@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! BFS+Skipper resolver spike — not production code.
 //!
 //! Demonstrates the BFS-with-skipper dependency-resolution algorithm

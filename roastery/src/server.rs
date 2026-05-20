@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Server assembly + graceful-shutdown loop.
 //!
 //! `run` instantiates the configured CAS backend, wraps it in

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Criterion microbenchmarks for `Version` parsing and comparison.
 //!
 //! Run with:

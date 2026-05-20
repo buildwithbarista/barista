@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Public error type for `barista-netcap`.
 //!
 //! The crate has a single error enum so callers (`barista-cli`, the

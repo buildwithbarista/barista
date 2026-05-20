@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `--ci` reproducibility plumbing (M4.3 T6).
 //!
 //! When the user passes `--ci`, every `ActionRequest` envelope the CLI

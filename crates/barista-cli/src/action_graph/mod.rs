@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Maven lifecycle action graph for `barista verify`.
 //!
 //! The action graph is the ordered list of mojo invocations the

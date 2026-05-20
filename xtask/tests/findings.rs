@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Integration tests for `cargo xtask findings`. These exercise
 //! the promotion ceremony and the catalog-listing renderer against
 //! a tempdir fixture so they don't touch the real

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `getsockopt(SO_PEERCRED)` peer-UID verification for Unix sockets.
 //!
 //! After a successful `connect(2)` or `accept(2)`, we ask the kernel

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Structured "report" values produced by each command and consumed
 //! by the per-format renderers.
 //!

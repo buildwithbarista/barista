@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! TLS [`rustls::ClientConfig`] construction.
 //!
 //! Centralises the three TLS modes the public API exposes:

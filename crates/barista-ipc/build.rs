@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Compile-time codegen for the worker IPC schema.
 //!
 //! Invokes `prost-build` to turn `proto/barista/v1/worker.proto` into Rust

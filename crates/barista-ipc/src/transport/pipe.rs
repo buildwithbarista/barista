@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Windows named-pipe transport.
 //!
 //! Mirrors [`super::uds`] on the Windows side. The CLI dials

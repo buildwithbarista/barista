@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `barista tap` — register and inspect taps.
 //!
 //! A **tap** is a named remote endpoint: a roastery shared-cache

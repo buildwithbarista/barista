@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! `Finding` — the analysis pipeline's output record.
 //!
 //! Each analyzer emits zero or more findings. Findings are typed so

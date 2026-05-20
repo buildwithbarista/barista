@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 //! Offline fixture-backed [`MetadataSource`] for resolver tests.
 //!
 //! Loads pre-fetched POMs and `maven-metadata.xml` snapshots from
