@@ -27,8 +27,9 @@
 //! max-concurrent-connections = 12
 //!
 //! [[taps]]
-//! id = "acme"
-//! url = "https://taps.acme.com/barback-pool"
+//! name = "acme"
+//! url = "https://roastery.acme.com"
+//! kind = "roastery"
 //!
 //! [modules]
 //! excluded = ["legacy-thing"]
@@ -101,33 +102,51 @@ pub struct ProjectMetadata {
     pub version: Option<String>,
 }
 
-/// A single `[[taps]]` entry.
+/// A single `[[taps]]` entry — the persisted on-disk shape of a
+/// registered tap.
+///
+/// A tap is a named, registered remote endpoint: either a
+/// [`roastery`](TapKindDecl::Roastery) shared-cache server or a
+/// (placeholder) [`worker`](TapKindDecl::Worker). v0.1 ships
+/// **registration and inspection only** — recording the endpoint and
+/// health-probing it. Routing build actions to a tap is out of scope
+/// for v0.1.
+///
+/// This is the persistence shape; the domain types (validation,
+/// registry operations, health probing) live in the `barista-tap`
+/// crate, which bridges to and from this struct.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TapDecl {
-    /// Stable identifier for this tap. Used in logs and CLI flags.
-    pub id: String,
+    /// Unique, human-readable name for this tap. Used as the lookup
+    /// key for `tap remove` / `tap status <name>`.
+    pub name: String,
 
-    /// HTTPS URL of the tap's barback pool entry point.
+    /// Absolute `http`/`https` URL of the tap endpoint. For a
+    /// roastery tap, the base URL of the cache server; for a worker
+    /// tap, the worker's entry point.
     pub url: String,
 
-    /// Optional bearer-token credential. May be a literal token or
-    /// an `${env.VAR}` reference; expansion is the tap client's
-    /// responsibility.
-    pub auth: Option<String>,
-
-    /// Optional load-balancing weight. The tap client treats `None`
-    /// as 1.
-    pub weight: Option<u32>,
-
-    /// Whether this tap is eligible to be picked. Defaults to true
-    /// when absent.
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    /// What kind of endpoint this tap points at. Defaults to
+    /// [`roastery`](TapKindDecl::Roastery) when omitted.
+    #[serde(default)]
+    pub kind: TapKindDecl,
 }
 
-fn default_true() -> bool {
-    true
+/// On-disk spelling of a tap's kind.
+///
+/// Mirrors `barista_tap::TapKind`; kept here so `barista-config`
+/// owns the serde shape without depending on `barista-tap`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TapKindDecl {
+    /// A roastery shared-cache server (the common case). Probed via
+    /// its unauthenticated `/healthz` endpoint.
+    #[default]
+    Roastery,
+    /// A remote worker endpoint. Placeholder in v0.1 — registered
+    /// and liveness-probed, but never routed to.
+    Worker,
 }
 
 /// `[modules]` — module exclusions and per-module config overrides.
@@ -213,6 +232,150 @@ pub struct ProjectConfigFile {
 }
 
 // ============================================================
+// `[[taps]]` persistence
+// ============================================================
+
+/// Errors raised while loading or persisting the `[[taps]]` section
+/// of a `barista.toml`.
+#[derive(Debug, thiserror::Error)]
+pub enum TapPersistError {
+    /// Reading the existing `barista.toml` failed.
+    #[error("reading {path}: {source}")]
+    Read {
+        /// The file we tried to read.
+        path: std::path::PathBuf,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+    /// Writing the new `barista.toml` failed.
+    #[error("writing {path}: {source}")]
+    Write {
+        /// The file we tried to write.
+        path: std::path::PathBuf,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+    /// The existing file is not valid TOML.
+    #[error("parsing {path}: {detail}")]
+    Parse {
+        /// The file we tried to parse.
+        path: std::path::PathBuf,
+        /// A human-readable parse-error description.
+        detail: String,
+    },
+    /// Re-serializing the mutated document failed.
+    #[error("serializing taps: {0}")]
+    Serialize(String),
+}
+
+/// Read just the `[[taps]]` array from a `barista.toml`.
+///
+/// A missing file (or a file with no `[[taps]]` section) yields an
+/// empty `Vec` — the caller treats "no taps registered" and "no
+/// config file yet" identically, which keeps `tap list` and
+/// `tap remove` clean no-ops on a fresh project.
+///
+/// Returns a [`TapPersistError`] only when the file exists but is
+/// unreadable or is not valid TOML / not a valid `[[taps]]` shape.
+pub fn load_taps(path: &std::path::Path) -> Result<Vec<TapDecl>, TapPersistError> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(TapPersistError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
+    let file: ProjectConfigFile =
+        toml::from_str(&raw).map_err(|e| TapPersistError::Parse {
+            path: path.to_path_buf(),
+            detail: e.to_string(),
+        })?;
+    Ok(file.extensions.taps)
+}
+
+/// Persist `taps` into the `[[taps]]` section of `barista.toml`,
+/// preserving every other section of the file.
+///
+/// The write is atomic: the new document is written to a sibling
+/// temp file and then renamed over the target, so a crash mid-write
+/// can never leave a half-written `barista.toml` behind.
+///
+/// # Reformatting caveat
+///
+/// To preserve sibling sections without depending on a
+/// format-preserving editor, this parses the existing file into a
+/// generic [`toml::Table`], replaces only the `taps` key, and
+/// reserializes. The *values* of other sections are preserved
+/// exactly, but the document is re-emitted by the TOML serializer,
+/// so comments and the original key ordering/whitespace are not
+/// preserved. This is an accepted v0.1 trade-off; the data
+/// round-trips losslessly even though the byte-for-byte formatting
+/// may change.
+pub fn save_taps(path: &std::path::Path, taps: &[TapDecl]) -> Result<(), TapPersistError> {
+    // Start from the existing document (as a generic table) so we
+    // keep every other section. A missing file starts from an empty
+    // table.
+    let mut doc: toml::Table = match std::fs::read_to_string(path) {
+        Ok(s) => toml::from_str(&s).map_err(|e| TapPersistError::Parse {
+            path: path.to_path_buf(),
+            detail: e.to_string(),
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => {
+            return Err(TapPersistError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            });
+        }
+    };
+
+    if taps.is_empty() {
+        // Drop the section entirely when empty so an emptied registry
+        // round-trips back to a tap-less file (and `load_taps`
+        // returns an empty Vec rather than an empty array literal).
+        doc.remove("taps");
+    } else {
+        // Serialize the typed taps through serde so the kebab-case /
+        // enum spellings match the deserialization shape, then splice
+        // the resulting array of tables into the document.
+        let value = toml::Value::try_from(taps)
+            .map_err(|e| TapPersistError::Serialize(e.to_string()))?;
+        doc.insert("taps".to_string(), value);
+    }
+
+    let rendered =
+        toml::to_string_pretty(&doc).map_err(|e| TapPersistError::Serialize(e.to_string()))?;
+
+    write_atomically(path, &rendered).map_err(|source| TapPersistError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Write `contents` to `path` atomically (temp-file + rename),
+/// creating the parent directory if needed.
+fn write_atomically(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let tmp = path.with_extension("toml.tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+// ============================================================
 // Tests
 // ============================================================
 
@@ -257,60 +420,60 @@ version = "1.2.3"
     fn test_03_taps_array_parses() {
         let one = r#"
 [[taps]]
-id = "acme"
-url = "https://taps.acme.com/barback-pool"
+name = "acme"
+url = "https://roastery.acme.com"
 "#;
         let ext: BaristaTomlExtensions = toml::from_str(one).unwrap();
         assert_eq!(ext.taps.len(), 1);
-        assert_eq!(ext.taps[0].id, "acme");
-        assert_eq!(ext.taps[0].url, "https://taps.acme.com/barback-pool");
+        assert_eq!(ext.taps[0].name, "acme");
+        assert_eq!(ext.taps[0].url, "https://roastery.acme.com");
+        // Kind defaults to roastery when omitted.
+        assert_eq!(ext.taps[0].kind, TapKindDecl::Roastery);
 
         let three = r#"
 [[taps]]
-id = "a"
-url = "https://a.example/b"
+name = "a"
+url = "https://a.example"
 
 [[taps]]
-id = "b"
-url = "https://b.example/b"
-weight = 2
+name = "b"
+url = "https://b.example"
+kind = "roastery"
 
 [[taps]]
-id = "c"
-url = "https://c.example/b"
-enabled = false
+name = "c"
+url = "https://c.example"
+kind = "worker"
 "#;
         let ext: BaristaTomlExtensions = toml::from_str(three).unwrap();
         assert_eq!(ext.taps.len(), 3);
-        assert_eq!(ext.taps[1].weight, Some(2));
-        assert!(!ext.taps[2].enabled);
+        assert_eq!(ext.taps[1].kind, TapKindDecl::Roastery);
+        assert_eq!(ext.taps[2].kind, TapKindDecl::Worker);
     }
 
-    // 4. Tap with `auth = "${env.TOKEN}"` parses literally.
+    // 4. A `kind = "worker"` tap parses to the worker variant.
     #[test]
-    fn test_04_tap_auth_env_reference() {
+    fn test_04_tap_kind_worker() {
         let src = r#"
 [[taps]]
-id = "private"
-url = "https://taps.priv/b"
-auth = "${env.TOKEN}"
+name = "builder"
+url = "https://worker.priv"
+kind = "worker"
 "#;
         let ext: BaristaTomlExtensions = toml::from_str(src).unwrap();
-        assert_eq!(ext.taps[0].auth.as_deref(), Some("${env.TOKEN}"));
+        assert_eq!(ext.taps[0].kind, TapKindDecl::Worker);
     }
 
-    // 5. Tap `enabled` defaults to true when absent.
+    // 5. Tap `kind` defaults to roastery when absent.
     #[test]
-    fn test_05_tap_enabled_defaults_true() {
+    fn test_05_tap_kind_defaults_roastery() {
         let src = r#"
 [[taps]]
-id = "x"
-url = "https://x/y"
+name = "x"
+url = "https://x.example"
 "#;
         let ext: BaristaTomlExtensions = toml::from_str(src).unwrap();
-        assert!(ext.taps[0].enabled);
-        assert!(ext.taps[0].weight.is_none());
-        assert!(ext.taps[0].auth.is_none());
+        assert_eq!(ext.taps[0].kind, TapKindDecl::Roastery);
     }
 
     // 6. `[modules]` with `excluded` list parses.
@@ -437,14 +600,14 @@ classloader-cach-overrides = { "x:y" = "cache" }
 max-concurrent-connections = 7
 
 [[taps]]
-id = "acme"
-url = "https://taps.acme.com/b"
+name = "acme"
+url = "https://roastery.acme.com"
 "#;
         let file: ProjectConfigFile = toml::from_str(src).unwrap();
         let net = file.base.network.expect("network");
         assert_eq!(net.max_concurrent_connections, Some(7));
         assert_eq!(file.extensions.taps.len(), 1);
-        assert_eq!(file.extensions.taps[0].id, "acme");
+        assert_eq!(file.extensions.taps[0].name, "acme");
     }
 
     // 13. `ProjectConfigFile` denies unknown top-level fields too.
@@ -499,8 +662,8 @@ name = "just-name"
     fn test_16_tap_unknown_field_errors() {
         let src = r#"
 [[taps]]
-id = "x"
-url = "https://x/y"
+name = "x"
+url = "https://x.example"
 priority = 5
 "#;
         let err = toml::from_str::<BaristaTomlExtensions>(src).unwrap_err();
@@ -524,5 +687,112 @@ classloader-cache-overrides = { "x:y" = "sometimes" }
             msg.contains("sometimes") || msg.to_lowercase().contains("variant"),
             "expected variant error, got: {msg}"
         );
+    }
+
+    // ---------- [[taps]] persistence ----------
+
+    use tempfile::TempDir;
+
+    fn tap(name: &str, url: &str, kind: TapKindDecl) -> TapDecl {
+        TapDecl {
+            name: name.to_string(),
+            url: url.to_string(),
+            kind,
+        }
+    }
+
+    // 18. Loading taps from a non-existent file yields an empty Vec
+    //     (a fresh project has no `barista.toml` yet).
+    #[test]
+    fn test_18_load_taps_missing_file_is_empty() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("barista.toml");
+        let taps = load_taps(&path).unwrap();
+        assert!(taps.is_empty());
+    }
+
+    // 19. save -> load round-trips the taps losslessly, including the
+    //     kind, and persists across a fresh load ("restart").
+    #[test]
+    fn test_19_save_then_load_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("barista.toml");
+        let taps = vec![
+            tap("acme", "https://roastery.acme.com", TapKindDecl::Roastery),
+            tap("builder", "https://worker.acme.com", TapKindDecl::Worker),
+        ];
+        save_taps(&path, &taps).unwrap();
+
+        // Fresh load — simulates a separate process / restart.
+        let loaded = load_taps(&path).unwrap();
+        assert_eq!(loaded, taps);
+        // And the full effective parse sees them too.
+        let ext: BaristaTomlExtensions =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(ext.taps.len(), 2);
+        assert_eq!(ext.taps[0].name, "acme");
+        assert_eq!(ext.taps[1].kind, TapKindDecl::Worker);
+    }
+
+    // 20. Saving over a file with other sections preserves those
+    //     sections' values (network, project) — only `[[taps]]` is
+    //     touched.
+    #[test]
+    fn test_20_save_preserves_other_sections() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("barista.toml");
+        std::fs::write(
+            &path,
+            r#"
+[project]
+name = "my-app"
+
+[network]
+max-concurrent-connections = 11
+"#,
+        )
+        .unwrap();
+
+        save_taps(&path, &[tap("r", "https://r.example", TapKindDecl::Roastery)]).unwrap();
+
+        // Re-parse the whole file: network + project survived, taps added.
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let file: ProjectConfigFile = toml::from_str(&raw).unwrap();
+        assert_eq!(
+            file.base.network.unwrap().max_concurrent_connections,
+            Some(11)
+        );
+        assert_eq!(
+            file.extensions.project.unwrap().name.as_deref(),
+            Some("my-app")
+        );
+        assert_eq!(file.extensions.taps.len(), 1);
+        assert_eq!(file.extensions.taps[0].name, "r");
+    }
+
+    // 21. Saving an empty slice drops the `[[taps]]` section entirely
+    //     so an emptied registry round-trips back to a tap-less file.
+    #[test]
+    fn test_21_save_empty_removes_section() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("barista.toml");
+        save_taps(&path, &[tap("r", "https://r.example", TapKindDecl::Roastery)]).unwrap();
+        assert_eq!(load_taps(&path).unwrap().len(), 1);
+
+        save_taps(&path, &[]).unwrap();
+        assert!(load_taps(&path).unwrap().is_empty());
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("[[taps]]"), "taps section should be gone:\n{raw}");
+    }
+
+    // 22. Backward-compat: an existing config with no `[[taps]]`
+    //     section still parses cleanly and yields no taps.
+    #[test]
+    fn test_22_backward_compat_no_taps_section() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("barista.toml");
+        std::fs::write(&path, "[network]\nmax-concurrent-connections = 3\n").unwrap();
+        let taps = load_taps(&path).unwrap();
+        assert!(taps.is_empty());
     }
 }

@@ -15,6 +15,7 @@ pub mod pull;
 pub mod reactor;
 #[cfg(unix)]
 pub mod shot;
+pub mod tap;
 #[cfg(unix)]
 pub mod verify;
 pub mod wrapper;

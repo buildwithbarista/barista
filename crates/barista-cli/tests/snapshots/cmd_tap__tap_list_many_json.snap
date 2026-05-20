@@ -1,0 +1,24 @@
+---
+source: crates/barista-cli/tests/cmd_tap.rs
+expression: "String::from_utf8(json.stdout).unwrap()"
+---
+{
+  "command": "tap-list",
+  "taps": [
+    {
+      "kind": "roastery",
+      "name": "alpha",
+      "url": "https://alpha.example.com/"
+    },
+    {
+      "kind": "worker",
+      "name": "beta",
+      "url": "http://beta.example.com:9000/"
+    },
+    {
+      "kind": "roastery",
+      "name": "gamma",
+      "url": "https://gamma.example.com/"
+    }
+  ]
+}

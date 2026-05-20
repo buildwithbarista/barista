@@ -45,7 +45,8 @@ pub mod sources;
 
 pub use barista_toml::{
     BaristaTomlExtensions, ClassloaderCachePolicy, ModuleOverride, ModulesConfig, PluginsConfig,
-    ProjectConfigFile, ProjectMetadata, TapDecl,
+    ProjectConfigFile, ProjectMetadata, TapDecl, TapKindDecl, TapPersistError, load_taps,
+    save_taps,
 };
 pub use dot_mvn::{
     DotMvnConfig, DotMvnError, ExtensionSurvey, load_dot_mvn, survey_extensions,

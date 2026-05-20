@@ -1,27 +1,18 @@
 ---
 source: crates/barista-cli/tests/cli_parser.rs
-expression: "render_help(&[\"barista\", \"--help\"])"
+expression: "render_help(&[\"barista\", \"tap\", \"--help\"])"
 ---
-Fast, fully Maven-compatible JVM build tool.
+Register and inspect taps (remote cache / worker endpoints).
 
-Usage: barista [OPTIONS] <COMMAND>
+v0.1 scope is registration and inspection only: add, list, remove, and health-probe taps. Routing build actions to a tap is not implemented in v0.1.
+
+Usage: barista tap [OPTIONS] <COMMAND>
 
 Commands:
-  pull     Resolve dependencies and write `barista.lock`
-  grind    Inspect the resolved dependency graph
-  pour     Materialize resolved artifacts into a target directory
-  dial-in  Interactive configuration wizard
-  shot     Run a one-off command without warming the daemon
-  wrapper  Generate `baristaw` wrapper scripts in the project root
-  tap      Register and inspect taps (remote cache / worker endpoints)
-  clean    `mvn clean` drop-in
-  compile  `mvn compile` drop-in
-  test     `mvn test` drop-in
-  package  `mvn package` drop-in
-  verify   `mvn verify` drop-in
-  install  `mvn install` drop-in
-  deploy   `mvn deploy` drop-in
-  site     `mvn site` drop-in
+  add     Register a new tap and persist it to `barista.toml`
+  list    List the registered taps
+  remove  Remove a registered tap (idempotent — removing an absent tap succeeds quietly)
+  status  Health-probe one tap (or all of them) and report liveness
 
 Options:
       --output <FORMAT>

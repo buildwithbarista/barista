@@ -31,6 +31,11 @@ toml = "0.8"
 # reqwest.
 which = "8"
 barista-config = { path = "../barista-config" }
+# `barista-tap` owns the tap domain (Tap/TapKind/TapRegistry), the
+# `[[taps]]` <-> domain bridge, and the async health probe driving
+# `barista tap status`. The CLI wires the registry to the on-disk
+# `barista.toml` (load -> mutate -> write back).
+barista-tap = { path = "../barista-tap" }
 barista-pom = { path = "../barista-pom" }
 barista-resolver = { path = "../barista-resolver" }
 barista-cache = { path = "../barista-cache" }
@@ -57,7 +62,10 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "io-util", "net", 
 tracing = "0.1"
 
 [dev-dependencies]
-insta = "1.47"
+# `filters` enables `Settings::add_filter`, used by the `tap status`
+# snapshot test to redact the random ephemeral port in a dead-tap
+# URL so the snapshot stays deterministic.
+insta = { version = "1.47", features = ["filters"] }
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"
 toml = "0.8"

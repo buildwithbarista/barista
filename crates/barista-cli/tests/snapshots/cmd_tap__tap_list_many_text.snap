@@ -1,0 +1,8 @@
+---
+source: crates/barista-cli/tests/cmd_tap.rs
+expression: text
+---
+NAME   URL                            KIND
+alpha  https://alpha.example.com/     roastery
+beta   http://beta.example.com:9000/  worker
+gamma  https://gamma.example.com/     roastery

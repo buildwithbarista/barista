@@ -315,6 +315,7 @@ dependencies = [
  "barista-lockfile",
  "barista-pom",
  "barista-resolver",
+ "barista-tap",
  "clap",
  "insta",
  "jsonschema",
@@ -473,6 +474,16 @@ dependencies = [
 [[package]]
 name = "barista-tap"
 version = "0.1.0-alpha.0"
+dependencies = [
+ "barista-config",
+ "reqwest",
+ "serde",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+ "wiremock",
+]
 
 [[package]]
 name = "barista-telemetry"
@@ -1467,6 +1478,7 @@ checksum = "7b4a6248eb93a4401ed2f37dfe8ea592d3cf05b7cf4f8efa867b6895af7e094e"
 dependencies = [
  "console",
  "once_cell",
+ "regex",
  "similar",
  "tempfile",
 ]
@@ -3153,6 +3165,7 @@ dependencies = [
  "idna",
  "percent-encoding",
  "serde",
+ "serde_derive",
 ]
 
 [[package]]

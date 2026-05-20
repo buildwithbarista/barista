@@ -16,7 +16,8 @@
 //! shell out to the binary. Help-text snapshots use `insta`.
 
 use barista_cli::cli::{
-    Cli, Command, GrindCommand, MavenCompatFlag, OutputFormat, ScopeArg, TreeFormat,
+    Cli, Command, GrindCommand, MavenCompatFlag, OutputFormat, ScopeArg, TapCommand, TapKindArg,
+    TreeFormat,
 };
 use clap::CommandFactory;
 use clap::Parser;
@@ -346,5 +347,87 @@ fn snapshot_grind_tree_help() {
     insta::assert_snapshot!(
         "grind_tree_help",
         render_help(&["barista", "grind", "tree", "--help"]),
+    );
+}
+
+// ---- tap subcommand parsing -------------------------------------------
+
+#[test]
+fn tap_add_defaults_to_roastery() {
+    let cli = parse(&["barista", "tap", "add", "acme", "https://r.example"]);
+    match cli.command {
+        Command::Tap {
+            subcommand: TapCommand::Add(args),
+        } => {
+            assert_eq!(args.name, "acme");
+            assert_eq!(args.url, "https://r.example");
+            assert_eq!(args.kind, TapKindArg::Roastery);
+        }
+        _ => panic!("expected Tap::Add"),
+    }
+}
+
+#[test]
+fn tap_add_kind_worker() {
+    let cli = parse(&[
+        "barista", "tap", "add", "w", "http://w.example", "--kind", "worker",
+    ]);
+    match cli.command {
+        Command::Tap {
+            subcommand: TapCommand::Add(args),
+        } => assert_eq!(args.kind, TapKindArg::Worker),
+        _ => panic!("expected Tap::Add"),
+    }
+
+    // An unknown kind is a parse error.
+    assert!(
+        Cli::try_parse_from(["barista", "tap", "add", "x", "http://x", "--kind", "nope"]).is_err()
+    );
+    // `add` requires both name and url.
+    assert!(Cli::try_parse_from(["barista", "tap", "add", "only-name"]).is_err());
+}
+
+#[test]
+fn tap_remove_requires_name() {
+    let cli = parse(&["barista", "tap", "remove", "acme"]);
+    match cli.command {
+        Command::Tap {
+            subcommand: TapCommand::Remove(args),
+        } => assert_eq!(args.name, "acme"),
+        _ => panic!("expected Tap::Remove"),
+    }
+    assert!(Cli::try_parse_from(["barista", "tap", "remove"]).is_err());
+}
+
+#[test]
+fn tap_status_name_is_optional() {
+    // No name -> probe all.
+    let cli = parse(&["barista", "tap", "status"]);
+    match cli.command {
+        Command::Tap {
+            subcommand: TapCommand::Status(args),
+        } => assert!(args.name.is_none()),
+        _ => panic!("expected Tap::Status"),
+    }
+    // With a name -> probe one.
+    let cli = parse(&["barista", "tap", "status", "acme"]);
+    match cli.command {
+        Command::Tap {
+            subcommand: TapCommand::Status(args),
+        } => assert_eq!(args.name.as_deref(), Some("acme")),
+        _ => panic!("expected Tap::Status"),
+    }
+}
+
+#[test]
+fn snapshot_tap_help() {
+    insta::assert_snapshot!("tap_help", render_help(&["barista", "tap", "--help"]));
+}
+
+#[test]
+fn snapshot_tap_add_help() {
+    insta::assert_snapshot!(
+        "tap_add_help",
+        render_help(&["barista", "tap", "add", "--help"]),
     );
 }

@@ -1136,8 +1136,8 @@ mod tests {
 max-concurrent-connections = 5
 
 [[taps]]
-id = "acme"
-url = "https://taps.acme.com/b"
+name = "acme"
+url = "https://roastery.acme.com"
 
 [plugins]
 classloader-cache-overrides = { "org.example:plugin" = "no-cache" }
@@ -1154,7 +1154,7 @@ classloader-cache-overrides = { "org.example:plugin" = "no-cache" }
         // Extensions attached.
         let ext = cfg.project_extensions.expect("project extensions");
         assert_eq!(ext.taps.len(), 1);
-        assert_eq!(ext.taps[0].id, "acme");
+        assert_eq!(ext.taps[0].name, "acme");
         assert_eq!(ext.plugins.classloader_cache_overrides.len(), 1);
         // Audit notes the extensions were set.
         let proj_audit = audit

@@ -201,7 +201,7 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
         ));
         lines.push((
             "project-extensions.taps".into(),
-            format_str_list(&ext.taps.iter().map(|t| t.id.clone()).collect::<Vec<_>>()),
+            format_str_list(&ext.taps.iter().map(|t| t.name.clone()).collect::<Vec<_>>()),
         ));
         lines.push((
             "project-extensions.modules.excluded".into(),
@@ -593,13 +593,13 @@ fn barista_toml_with_taps_and_modules() {
         &proj_cfg,
         r#"
 [[taps]]
-id = "acme"
-url = "https://taps.acme.com/barback"
+name = "acme"
+url = "https://roastery.acme.com"
 
 [[taps]]
-id = "internal"
-url = "https://barback.internal/pool"
-weight = 2
+name = "internal"
+url = "https://roastery.internal"
+kind = "worker"
 
 [modules]
 excluded = ["legacy-util", "deprecated-mod"]

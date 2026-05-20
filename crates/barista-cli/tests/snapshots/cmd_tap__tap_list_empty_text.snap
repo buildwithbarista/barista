@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/cmd_tap.rs
+expression: out
+---
+no taps registered

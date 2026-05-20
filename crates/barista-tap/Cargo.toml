@@ -3,10 +3,48 @@ name = "barista-tap"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Tap (remote-worker) registration and lifecycle management."
+description = "Tap (remote-worker / cache endpoint) registration and lifecycle management."
 publish = false
 
 [lib]
+
+[dependencies]
+# Absolute-URL parsing + scheme validation for tap endpoints. Same
+# major (`2`) the roastery client and resolver already pull in, so
+# this doesn't widen the dependency graph. The `serde` feature lets
+# a `Tap` serialize its URL as a plain string for the CLI's
+# `--output json`.
+url = { version = "2", features = ["serde"] }
+# Typed error enum.
+thiserror = "2"
+# Serialize the health/status report shapes (the CLI renders these
+# as JSON) and derive on the domain enums.
+serde = { version = "1", features = ["derive"] }
+# `reqwest` drives the liveness probe: a GET `/healthz` for roastery
+# taps, a HEAD for worker taps. `default-features = false` +
+# `rustls-tls` matches the rest of the workspace's HTTP stack so the
+# crypto provider stays singular.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# Async runtime types the probe is generic over. Only `time` is
+# needed at the library level (the timeout wrapper); the binary /
+# tests bring their own runtime flavour.
+tokio = { version = "1", features = ["time"] }
+# Structured logging for probe attempts.
+tracing = "0.1"
+# The on-disk `[[taps]]` shape (`TapDecl` / `TapKindDecl`). The
+# bridge between the persisted form and the domain `Tap`/`TapKind`
+# lives here. Edge is one-way: tap -> config, never the reverse, and
+# neither depends on `barista-cli`.
+barista-config = { path = "../barista-config" }
+
+[dev-dependencies]
+# In-process mock HTTP server for the health-probe tests. Pinned to
+# the exact `=0.6.2` the rest of the workspace uses so the test
+# surface doesn't drift across two majors.
+wiremock = "=0.6.2"
+# Multi-thread runtime + macros to drive `#[tokio::test]` probes and
+# an ephemeral-port "dead endpoint" bind.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time"] }
 
 [lints]
 workspace = true

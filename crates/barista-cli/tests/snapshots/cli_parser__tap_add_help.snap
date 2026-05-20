@@ -1,29 +1,28 @@
 ---
 source: crates/barista-cli/tests/cli_parser.rs
-expression: "render_help(&[\"barista\", \"--help\"])"
+expression: "render_help(&[\"barista\", \"tap\", \"add\", \"--help\"])"
 ---
-Fast, fully Maven-compatible JVM build tool.
+Register a new tap and persist it to `barista.toml`
 
-Usage: barista [OPTIONS] <COMMAND>
+Usage: barista tap add [OPTIONS] <NAME> <URL>
 
-Commands:
-  pull     Resolve dependencies and write `barista.lock`
-  grind    Inspect the resolved dependency graph
-  pour     Materialize resolved artifacts into a target directory
-  dial-in  Interactive configuration wizard
-  shot     Run a one-off command without warming the daemon
-  wrapper  Generate `baristaw` wrapper scripts in the project root
-  tap      Register and inspect taps (remote cache / worker endpoints)
-  clean    `mvn clean` drop-in
-  compile  `mvn compile` drop-in
-  test     `mvn test` drop-in
-  package  `mvn package` drop-in
-  verify   `mvn verify` drop-in
-  install  `mvn install` drop-in
-  deploy   `mvn deploy` drop-in
-  site     `mvn site` drop-in
+Arguments:
+  <NAME>
+          Unique name for the tap (letters, digits, '.', '_', '-')
+
+  <URL>
+          Absolute `http`/`https` URL of the tap endpoint
 
 Options:
+      --kind <KIND>
+          What kind of endpoint this is. Defaults to `roastery`
+
+          Possible values:
+          - roastery: A roastery shared-cache server (default). Probed via `/healthz`
+          - worker:   A remote worker endpoint (placeholder in v0.1)
+          
+          [default: roastery]
+
       --output <FORMAT>
           Output format. `human` (default), `json`, or `ndjson`
 

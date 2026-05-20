@@ -179,6 +179,16 @@ pub enum Command {
     #[command(disable_version_flag = true)]
     Wrapper(WrapperArgs),
 
+    /// Register and inspect taps (remote cache / worker endpoints).
+    ///
+    /// v0.1 scope is registration and inspection only: add, list,
+    /// remove, and health-probe taps. Routing build actions to a tap
+    /// is not implemented in v0.1.
+    Tap {
+        #[command(subcommand)]
+        subcommand: TapCommand,
+    },
+
     // -- Maven-vocabulary commands ------------------------------
     // Each routes to barback in Phase 4. Phase 3 returns a
     // structured "not yet executable" error from
@@ -285,6 +295,77 @@ pub struct WhyArgs {
     /// `group:artifact:version`.
     #[arg(value_name = "COORD")]
     pub coords: String,
+}
+
+/// Subcommands of `barista tap`.
+#[derive(Debug, Subcommand)]
+pub enum TapCommand {
+    /// Register a new tap and persist it to `barista.toml`.
+    Add(TapAddArgs),
+    /// List the registered taps.
+    List(TapListArgs),
+    /// Remove a registered tap (idempotent — removing an absent tap
+    /// succeeds quietly).
+    Remove(TapRemoveArgs),
+    /// Health-probe one tap (or all of them) and report liveness.
+    Status(TapStatusArgs),
+}
+
+/// The kind of endpoint a tap points at, as accepted by `--kind`.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
+pub enum TapKindArg {
+    /// A roastery shared-cache server (default). Probed via
+    /// `/healthz`.
+    #[default]
+    Roastery,
+    /// A remote worker endpoint (placeholder in v0.1).
+    Worker,
+}
+
+impl From<TapKindArg> for barista_tap::TapKind {
+    fn from(k: TapKindArg) -> Self {
+        match k {
+            TapKindArg::Roastery => Self::Roastery,
+            TapKindArg::Worker => Self::Worker,
+        }
+    }
+}
+
+/// Arguments for `barista tap add`.
+#[derive(Debug, clap::Args)]
+pub struct TapAddArgs {
+    /// Unique name for the tap (letters, digits, '.', '_', '-').
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Absolute `http`/`https` URL of the tap endpoint.
+    #[arg(value_name = "URL")]
+    pub url: String,
+
+    /// What kind of endpoint this is. Defaults to `roastery`.
+    #[arg(long, value_enum, default_value_t = TapKindArg::Roastery, value_name = "KIND")]
+    pub kind: TapKindArg,
+}
+
+/// Arguments for `barista tap list`.
+#[derive(Debug, clap::Args)]
+pub struct TapListArgs {}
+
+/// Arguments for `barista tap remove`.
+#[derive(Debug, clap::Args)]
+pub struct TapRemoveArgs {
+    /// Name of the tap to remove.
+    #[arg(value_name = "NAME")]
+    pub name: String,
+}
+
+/// Arguments for `barista tap status`.
+#[derive(Debug, clap::Args)]
+pub struct TapStatusArgs {
+    /// Probe only this tap. When omitted, every registered tap is
+    /// probed.
+    #[arg(value_name = "NAME")]
+    pub name: Option<String>,
 }
 
 /// Arguments for `barista pour`.
@@ -430,6 +511,7 @@ pub fn dispatch(cli: Cli) -> i32 {
             }
         }
         Command::Wrapper(args) => crate::cmd::wrapper::run(&global, &args),
+        Command::Tap { subcommand } => crate::cmd::tap::run(&global, &subcommand),
         Command::Clean(a) => {
             crate::cmd::maven_vocab::run(&global, crate::cmd::MavenPhase::Clean, &a)
         }
