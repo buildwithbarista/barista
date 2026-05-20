@@ -8,9 +8,14 @@
 //!   checkout / `git` isn't on `PATH`. The handler treats `"unknown"`
 //!   as `null` in the JSON response so clean tarball installs don't
 //!   surface a lie.
-//! - `ROASTERY_BUILD_DATE` — RFC-3339 UTC timestamp captured at
-//!   compile time, or `"unknown"` if `SystemTime::now()` somehow
-//!   returns a pre-epoch value.
+//! - `ROASTERY_BUILD_DATE` — RFC-3339 UTC timestamp. Honors
+//!   `SOURCE_DATE_EPOCH` (the cross-ecosystem reproducible-builds
+//!   convention, <https://reproducible-builds.org/docs/source-date-epoch/>)
+//!   when that variable is set to a Unix-seconds value, so a release
+//!   pipeline that pins the timestamp to the tagged commit's date gets
+//!   a byte-identical binary across independent builders. Falls back to
+//!   `SystemTime::now()` for ordinary local/dev builds, or `"unknown"`
+//!   if the clock somehow returns a pre-epoch value.
 //! - `ROASTERY_BUILD_RUSTC` — output of `rustc -V`, or `"unknown"` if
 //!   the subprocess fails for any reason.
 //!
@@ -37,6 +42,11 @@ fn main() {
     // If the file doesn't exist (tarball install), cargo silently
     // ignores the directive — no harm done.
     println!("cargo:rerun-if-changed=.git/HEAD");
+    // A reproducible release pins the embedded build date via
+    // `SOURCE_DATE_EPOCH`; re-run when it changes so a flip between a
+    // pinned release build and an ordinary `now()` dev build is
+    // observed by cargo rather than served from a stale rustc-env cache.
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
     let git_sha = git_short_sha().unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=ROASTERY_BUILD_GIT_SHA={git_sha}");
@@ -77,15 +87,40 @@ fn git_short_sha() -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
-/// Compose an RFC-3339 timestamp from `SystemTime::now()` without
-/// pulling in `chrono`/`time` as a build dep.
+/// Compose an RFC-3339 timestamp without pulling in `chrono`/`time`
+/// as a build dep.
+///
+/// Source of the seconds value, in priority order:
+///   1. `SOURCE_DATE_EPOCH` (Unix seconds) when set to a parseable
+///      non-negative integer — the reproducible-builds convention. A
+///      release pipeline sets this to the tagged commit's author date
+///      so two independent builders embed an identical timestamp.
+///   2. `SystemTime::now()` otherwise (ordinary local/dev builds).
 ///
 /// The format is `YYYY-MM-DDTHH:MM:SSZ` (UTC, no fractional seconds).
 /// Returns `None` only on the impossible-in-practice case that the
-/// build clock is before the Unix epoch.
+/// build clock is before the Unix epoch (the `SOURCE_DATE_EPOCH` path
+/// cannot hit that — a negative / unparseable value falls through to
+/// the clock).
 fn build_date_rfc3339() -> Option<String> {
+    if let Some(secs) = source_date_epoch() {
+        return Some(format_rfc3339_utc(secs));
+    }
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
     Some(format_rfc3339_utc(secs))
+}
+
+/// Parse `SOURCE_DATE_EPOCH` as Unix seconds. Returns `None` when the
+/// variable is unset, empty, or not a non-negative integer (in which
+/// case the caller falls back to the wall clock). Per the spec the
+/// value is a count of seconds since the Unix epoch.
+fn source_date_epoch() -> Option<u64> {
+    let raw = std::env::var("SOURCE_DATE_EPOCH").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<u64>().ok()
 }
 
 /// Format `secs_since_epoch` as an RFC-3339 UTC string. Implemented

@@ -337,3 +337,15 @@ jobs:
         # `.github/workflows/roastery-container-test.yml` passes
         # actionlint and zizmor (offline, medium-or-higher).
         run: bash scripts/test-roastery-container-workflow.sh
+
+      - name: Validate release workflow file + build-release helper
+        shell: bash
+        # Exercises `scripts/test-release-workflow.sh` — the focused
+        # actionlint + zizmor gate for the cross-platform reproducible-
+        # build release workflow, plus a shellcheck of the determinism
+        # helper `scripts/build-release.sh` (the script the release
+        # matrix invokes per target) and the validator itself. The
+        # script asserts `.github/workflows/release.yml` passes
+        # actionlint and zizmor (offline, medium-or-higher) and both
+        # shell scripts pass shellcheck.
+        run: bash scripts/test-release-workflow.sh

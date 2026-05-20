@@ -4,8 +4,17 @@
 # (added in a subsequent milestone) carry their own
 # `rust-toolchain.toml` override pinning nightly so `cargo-fuzz` can
 # build. CI installs both stable and nightly so both surfaces work.
+#
+# The exact channel is pinned (not a floating `stable`) because the
+# release pipeline produces byte-reproducible binaries: the embedded
+# `rustc` identity and codegen are part of the artifact's identity, so
+# two independent builders must compile with the same compiler. The
+# pin here, the `rust:1.88.0-bookworm` base image in the roastery
+# Dockerfile, and the `rust 1.88.0` line in `.tool-versions` must all
+# agree. `Cargo.lock` requires features stabilized in 1.88, so the
+# floor cannot drop below that.
 
 [toolchain]
-channel = "1.86.0"
+channel = "1.88.0"
 components = ["rustfmt", "clippy"]
 profile = "default"
