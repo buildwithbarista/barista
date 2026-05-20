@@ -124,6 +124,37 @@
           plugin's release cadence is independent.
         -->
         <maven-shade-plugin.version>3.6.0</maven-shade-plugin.version>
+        <!--
+          CycloneDX SBOM plugin. Emits a CycloneDX software
+          bill-of-materials for barback's dependency graph
+          (`target/bom.json`) so the deps shaded into the
+          `barback-uber.jar` — which ships inside the product — are
+          enumerated in the published release SBOM.
+
+          Bound to the `package` phase under the `sbom` profile below;
+          a plain `mvn verify` does NOT pay the SBOM-generation cost.
+          CI / the release pipeline opts in explicitly:
+            mvn -f barback/pom.xml -P sbom package
+          or invokes the goal directly via
+            scripts/generate-sbom.sh.
+
+          2.9.1 is the current GA line on Maven Central (the Sonatype
+          MCP version-recommendation tools were credit-exhausted at the
+          time of pinning; a Sonatype trust-score check is a pending
+          follow-up). The plugin emits CycloneDX spec 1.6 by default;
+          `schemaVersion` is pinned explicitly below so a plugin bump
+          can't silently change the emitted spec version.
+        -->
+        <cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
+        <!--
+          SBOM generation is wired up under the `sbom` profile below.
+          Same pattern as dependency-check / sast: skipped by default
+          so quick local builds (`mvn verify` / `mvn package`) don't pay
+          the cost; enable explicitly with:
+            mvn -P sbom package
+          or run `scripts/generate-sbom.sh` (which sets the flag false).
+        -->
+        <cyclonedx.skip>true</cyclonedx.skip>
     </properties>
 
     <dependencyManagement>
@@ -595,6 +626,64 @@
                     </execution>
                 </executions>
             </plugin>
+            <plugin>
+                <!--
+                  CycloneDX Maven plugin — emits a CycloneDX SBOM for
+                  barback's dependency graph.
+
+                  Skipped by default via the `cyclonedx.skip` property
+                  (declared in the `sbom` profile's inverse: the base
+                  binding here is `package` but the goal short-circuits
+                  unless `skip` is false). The `sbom` profile flips the
+                  skip flag so a focused
+                    mvn -f barback/pom.xml -P sbom package
+                  produces `target/bom.json`. `scripts/generate-sbom.sh`
+                  drives this same goal in the release pipeline.
+
+                  Configuration rationale:
+                    * `outputFormat=json` — JSON only (the project
+                      standardizes on CycloneDX JSON; the cyclonedx CLI
+                      `merge`/`validate` steps consume JSON).
+                    * `outputName=bom` — fixed leaf so the generate
+                      script + release pipeline can find the file at a
+                      predictable `target/bom.json`.
+                    * `schemaVersion=1.6` — pin the emitted CycloneDX
+                      spec version so a plugin bump can't silently change
+                      it. The cyclonedx CLI merge step up-converts the
+                      per-language SBOMs into the product SBOM's spec
+                      version, so 1.6 here is the validated input level.
+                    * `projectType=application` — barback ships as a
+                      runnable uber-JAR inside the product, not a library
+                      consumers compile against.
+                    * `includeBomSerialNumber` / `includeCompileScope`
+                      etc. keep the plugin defaults (compile + runtime
+                      scopes in, which matches what the shade plugin
+                      bundles into the uber-JAR).
+
+                  Bound to `package` so the SBOM reflects the same
+                  dependency set that `maven-shade-plugin` (also bound to
+                  `package`) bundles into `barback-uber.jar`.
+                -->
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>${cyclonedx-maven-plugin.version}</version>
+                <configuration>
+                    <skip>${cyclonedx.skip}</skip>
+                    <outputFormat>json</outputFormat>
+                    <outputName>bom</outputName>
+                    <schemaVersion>1.6</schemaVersion>
+                    <projectType>application</projectType>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>cyclonedx-makebom</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>makeBom</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
@@ -623,6 +712,20 @@
             <id>sast</id>
             <properties>
                 <spotbugs.skip>false</spotbugs.skip>
+            </properties>
+        </profile>
+        <profile>
+            <!--
+              `sbom` profile: flips the skip flag so the CycloneDX Maven
+              plugin runs on `package`, emitting `target/bom.json`. Used
+              by `scripts/generate-sbom.sh` and the release pipeline; a
+              contributor can reproduce the Java SBOM locally with:
+
+                mvn -f barback/pom.xml -P sbom package
+            -->
+            <id>sbom</id>
+            <properties>
+                <cyclonedx.skip>false</cyclonedx.skip>
             </properties>
         </profile>
         <profile>

@@ -1,0 +1,209 @@
+# Supply-chain SBOM — generate, validate (external tool), publish.
+#
+# Produces CycloneDX software bills-of-materials for the Barista product
+# and validates each one with the CycloneDX CLI — the required external
+# validation tool. CI FAILS on an invalid SBOM.
+#
+# All generation + validation logic lives in `scripts/generate-sbom.sh`
+# (the single source of truth, runnable locally), so "what the pipeline
+# publishes" and "what a maintainer can reproduce by hand" never drift.
+#
+# ── Triggers ──────────────────────────────────────────────────────────
+#   pull_request /      Validate-only. Generate the SBOM(s) and run the
+#   push to main        external-tool validation gate; nothing is
+#                       published. Gives every change that touches the
+#                       dependency graph or the SBOM tooling a hard
+#                       "the SBOM still generates and validates" check.
+#   push to `v*` tag    Generate + validate, then ATTACH the SBOM
+#                       artifacts to the GitHub (pre-)release the
+#                       `release.yml` pipeline creates for the same tag.
+#                       The publish job is `if`-gated to tag refs; a PR
+#                       / main push never reaches it.
+#   workflow_dispatch   Manual run (validate-only; never publishes).
+#
+# ── Aggregation model ─────────────────────────────────────────────────
+# `scripts/generate-sbom.sh` emits three artifacts (manifest-style file
+# names, version from `cargo metadata`):
+#   barista-<version>-sbom.cdx.json        merged product SBOM (primary)
+#   barista-<version>-sbom-rust.cdx.json    Rust workspace SBOM
+#   barista-<version>-sbom-java.cdx.json    barback / Java SBOM
+# The merged product SBOM is the primary published artifact; the
+# per-language SBOMs are co-published as provenance / merge inputs.
+#
+# ── Relationship to release.yml ───────────────────────────────────────
+# This workflow is a SIBLING of `release.yml`, not a change to it: the
+# reproducible-build determinism logic in `release.yml` /
+# `scripts/build-release.sh` is left untouched. On a `v*` tag both
+# workflows fire; `release.yml` creates the release + uploads the
+# binaries + build manifest, and this workflow's `publish` job upserts
+# the SAME release by tag and appends the SBOM assets. `action-gh-release`
+# adds files to an existing release without clobbering its other assets.
+#
+# ── Hygiene ───────────────────────────────────────────────────────────
+# Every action is pinned to a commit SHA (the SHAs are shared with
+# `release.yml` / `ci.yml`); the human-readable tag is recorded next to
+# the SHA. `permissions: {}` is default-deny at the workflow level; each
+# job opts in to the minimum it needs (only `publish` gets
+# `contents: write`). Matrix / context values are routed through `env:`
+# so no `run:` body carries `${{ }}` interpolation (template-injection
+# hygiene).
+#
+# ── Tooling (build/CI only — never a runtime dependency) ──────────────
+#   cargo-cyclonedx          cargo install cargo-cyclonedx --version 0.5.9
+#   cyclonedx (CLI)          CycloneDX/cyclonedx-cli v0.32.0 release
+#                            binary, sha256-pinned on download.
+#   cyclonedx-maven-plugin   2.9.1, fetched by Maven (pinned in
+#                            barback/pom.xml under the `sbom` profile).
+
+name: SBOM
+
+on:
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'roastery/**'
+      - 'xtask/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'barback/pom.xml'
+      - 'scripts/generate-sbom.sh'
+      - 'scripts/test-sbom.sh'
+      - 'scripts/test-sbom-workflow.sh'
+      - '.github/workflows/sbom.yml'
+  push:
+    tags: ['v*']
+    branches: [main]
+  workflow_dispatch:
+
+# Default-deny at the workflow level; each job opts in explicitly.
+permissions: {}
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ---------------------------------------------------------------------
+  # sbom — generate the product SBOM + validate it with the CycloneDX
+  # CLI (the external tool), then upload it as a build artifact so the
+  # `publish` job can attach it to the release on a tag.
+  #
+  # The CLI is installed from the pinned `CycloneDX/cyclonedx-cli`
+  # release; the download is sha256-verified against the pinned digest
+  # so a tampered or moved asset fails the job rather than silently
+  # validating with an unknown binary.
+  # ---------------------------------------------------------------------
+  sbom:
+    name: Generate + validate SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      # Read-only: this job checks out the source and generates +
+      # validates the SBOM. It never writes to the repo or the release.
+      contents: read
+    env:
+      # CycloneDX CLI — pinned release + the linux-x64 asset's sha256.
+      # When bumping CYCLONEDX_CLI_VERSION, refresh CYCLONEDX_CLI_SHA256
+      # from the new release (sha256sum of cyclonedx-linux-x64).
+      CYCLONEDX_CLI_VERSION: '0.32.0'
+      CYCLONEDX_CLI_SHA256: '454879e6a4a405c8a13bff49b8982adcb0596f3019b26b0811c66e4d7f0783e1'
+      CARGO_CYCLONEDX_VERSION: '0.5.9'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain (pinned in rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-03-27
+        with:
+          toolchain: '1.88.0'
+
+      - name: Set up JDK 21 (for the barback Java SBOM)
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install cargo-cyclonedx (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-cyclonedx --version "$CARGO_CYCLONEDX_VERSION" --locked
+
+      - name: Install CycloneDX CLI (pinned release, sha256-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.local/bin"
+          URL="https://github.com/CycloneDX/cyclonedx-cli/releases/download/v${CYCLONEDX_CLI_VERSION}/cyclonedx-linux-x64"
+          curl -fsSL "$URL" -o "${HOME}/.local/bin/cyclonedx"
+          echo "${CYCLONEDX_CLI_SHA256}  ${HOME}/.local/bin/cyclonedx" | sha256sum -c -
+          chmod 0755 "${HOME}/.local/bin/cyclonedx"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --version
+          cyclonedx --version
+          mvn -v | head -1
+          java -version
+
+      - name: Generate + validate SBOM (external-tool gate)
+        shell: bash
+        # `generate-sbom.sh` generates the Rust SBOM (per-crate then
+        # merged), the Java SBOM (cyclonedx-maven-plugin via the `sbom`
+        # profile), merges them into the product SBOM, and validates each
+        # with `cyclonedx validate --fail-on-errors`. Any invalid SBOM
+        # exits the script non-zero and fails this job.
+        run: bash scripts/generate-sbom.sh --out-dir dist
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: dist/barista-*-sbom*.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # publish — attach the SBOM artifacts to the GitHub release.
+  #
+  # GATED OFF on anything but a `v*` tag push: a PR / main push never
+  # reaches this job (it is skipped, not failed). On a tag, `release.yml`
+  # creates the release (binaries + build manifest) and this job upserts
+  # the SAME release by tag and appends the SBOM assets — `action-gh-
+  # release` adds the listed files without clobbering existing assets.
+  #
+  # This is the ONLY job granted `contents: write`.
+  # ---------------------------------------------------------------------
+  publish:
+    name: Attach SBOM to release
+    needs: [sbom]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      # The only write grant in this workflow — needed to append the
+      # SBOM assets to the GitHub Release `release.yml` created for this
+      # tag. SIGNING / ATTESTATION HOOK (later milestone): SLSA SBOM
+      # attestation will additionally need `id-token: write` +
+      # `attestations: write` here; intentionally NOT granted in this
+      # publish-only variant so the permission surface stays minimal.
+      contents: write
+    steps:
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          name: sbom
+          path: dist
+
+      - name: Attach SBOM to the release (pre-release for rc/alpha/beta tags)
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          # Append the SBOM artifacts to the release the `release.yml`
+          # pipeline created for this tag. Other assets (binaries, build
+          # manifest) are left untouched.
+          files: dist/barista-*-sbom*.cdx.json
+          prerelease: ${{ contains(github.ref_name, '-rc.') || contains(github.ref_name, '-alpha.') || contains(github.ref_name, '-beta.') }}
+          fail_on_unmatched_files: true

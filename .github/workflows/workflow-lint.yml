@@ -349,3 +349,22 @@ jobs:
         # actionlint and zizmor (offline, medium-or-higher) and both
         # shell scripts pass shellcheck.
         run: bash scripts/test-release-workflow.sh
+
+      - name: Validate SBOM workflow file + SBOM scripts
+        shell: bash
+        # Exercises `scripts/test-sbom-workflow.sh` — the focused
+        # actionlint + zizmor gate for the supply-chain SBOM workflow
+        # (`.github/workflows/sbom.yml`), plus a shellcheck of the SBOM
+        # generation + validation scripts (`scripts/generate-sbom.sh`,
+        # `scripts/test-sbom.sh`) and the validator itself. The script
+        # asserts the workflow passes actionlint and zizmor (offline,
+        # medium-or-higher) and all SBOM shell scripts pass shellcheck.
+        #
+        # The heavyweight [T] self-test — generate the real SBOM(s) and
+        # validate them with the CycloneDX CLI (the external tool), plus
+        # the corrupted-fixture rejection check — runs in the dedicated
+        # `SBOM` workflow (`.github/workflows/sbom.yml`) on every PR, not
+        # here: it needs the Rust + JDK toolchains and the pinned
+        # cyclonedx-cli download, which this config-validation job does
+        # not provision.
+        run: bash scripts/test-sbom-workflow.sh
