@@ -769,6 +769,7 @@ async fn fetch_artifact_to_cache(
             etag: etag.clone(),
             last_modified: last_modified.clone(),
             upstream_last_updated: None,
+            tier: Default::default(),
         },
         atime_unix: now,
         created_unix: now,

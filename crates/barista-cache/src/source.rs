@@ -7,36 +7,56 @@
 //!    fetches of the same coord serialize in-process.
 //! 2. Check the [`Index`]. On a hit we read from [`Cas`] and serve
 //!    [`FetchOrigin::Disk`].
-//! 3. Otherwise, acquire the cross-process [`FilesystemLock`], then
-//!    fetch via the [`Fetcher`] with conditional headers from the
-//!    prior entry (when revalidating).
-//! 4. On a 2xx response, fetch the `.sha256` and `.sha1` sidecars in
-//!    parallel, verify via [`checksum::verify`], `put` bytes into the
-//!    CAS, and journal the new [`IndexEntry`]. Serve
-//!    [`FetchOrigin::Remote`].
+//! 3. Otherwise, acquire the cross-process [`FilesystemLock`].
+//! 4. If a [`barista_roastery_client::RoasteryClient`] is configured,
+//!    fetch the sidecar `.sha256` from upstream (it's a small text
+//!    file), then issue `roastery.get_blob_with_coords` for the
+//!    SHA-256 the sidecar carries. On a hit, the binary blob is
+//!    served straight from the roastery (which itself may have
+//!    fetched it from upstream behind the scenes via the
+//!    `X-Barista-Coords`-driven upstream-on-miss path). The bytes
+//!    are then verified against the sidecar, written to the local
+//!    CAS, and journaled with [`OriginTier::Roastery`].
+//! 5. Otherwise (no roastery, roastery miss, roastery unreachable,
+//!    roastery auth-failed, or roastery digest-mismatch) fall
+//!    through to the existing direct-upstream path: fetch via the
+//!    [`Fetcher`], verify, persist, journal with
+//!    [`OriginTier::Upstream`].
 //!
 //! The `update_policy` knobs are accepted but only consulted for
 //! future revalidation behavior. In v0.1 the policy stays at the
 //! configured defaults (snapshot=Daily, release=Never) and the
 //! cache serves directly on hit; a richer freshness check is a
 //! follow-up.
+//!
+//! # Per-fetch telemetry
+//!
+//! Every successful fetch emits one structured INFO event with the
+//! fields `coords`, `tier` (`disk` | `roastery` | `upstream`),
+//! `wall_ms`, and `bytes`. When the roastery path was attempted,
+//! the event also carries `roastery_outcome` (`hit` | `miss` |
+//! `unreachable` | `auth_failed` | `digest_mismatch`). Aggregators
+//! that surface these are out of scope for v0.1 — the field names
+//! are committed up front so downstream wiring stays stable.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use async_trait::async_trait;
+use tokio::io::AsyncReadExt;
 
 use barista_config::UpdatePolicy;
 use barista_coords::Coords;
 use barista_pom::raw::{RawPom, parse_pom};
 use barista_resolver::snapshot::{SnapshotInfo, parse_snapshot_metadata};
 use barista_resolver::source::{FetchOrigin, GaMetadata, MetadataError, MetadataSource};
+use barista_roastery_client::{ClientError as RoasteryClientError, Digest, RoasteryClient};
 
-use crate::cas::{Cas, CasError};
+use crate::cas::{Cas, CasError, ContentHash};
 use crate::checksum::{self, Verification};
 use crate::fetch::{ConditionalHeaders, FetchError, FetchOutcome, Fetcher};
-use crate::index::{Index, IndexEntry, IndexKey, Origin};
+use crate::index::{Index, IndexEntry, IndexKey, Origin, OriginTier};
 use crate::lock::{CoordLockMap, CoordVersionKey, FilesystemLock};
 
 /// Sentinel "version" used as the [`IndexKey::version`] for the
@@ -75,6 +95,111 @@ struct Inner {
     snapshot_update_policy: UpdatePolicy,
     #[allow(dead_code)]
     release_update_policy: UpdatePolicy,
+    /// Optional remote roastery cache. When `Some`, the fetch
+    /// pipeline tries the roastery first on a local-CAS miss and
+    /// falls through to the upstream [`Fetcher`] only on roastery
+    /// miss / unreachable / auth-failed / digest-mismatch.
+    roastery: Option<Arc<RoasteryClient>>,
+    /// Base URL of the configured roastery, kept alongside the
+    /// client so the index can record the URL on
+    /// [`OriginTier::Roastery`] entries. `None` iff `roastery` is
+    /// `None`.
+    roastery_url: Option<String>,
+    /// Optional deterministic recorder for the per-fetch
+    /// [`RoasteryOutcome`]. `None` in production; set by tests via
+    /// [`CacheSource::with_roastery_observer`].
+    roastery_observer: Option<RoasteryOutcomeObserver>,
+}
+
+/// Outcome of a single attempt to serve bytes via a configured
+/// roastery — recorded as a structured tracing field so downstream
+/// telemetry aggregators (T7) can surface roastery hit-rate /
+/// failure-mode metrics without re-parsing log strings.
+///
+/// Also surfaced through the optional [`RoasteryOutcomeObserver`]
+/// hook so callers (and integration tests) can observe the
+/// per-fetch classification deterministically, without depending on
+/// log capture across async/threaded boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoasteryOutcome {
+    /// The roastery served the bytes (CAS hit, or it relayed from
+    /// its own upstream via the `X-Barista-Coords` header).
+    Hit,
+    /// The roastery returned 404 even after attempting its own
+    /// upstream-on-miss path — the artifact genuinely isn't there.
+    Miss,
+    /// Connection refused / DNS failure / TLS handshake / generic
+    /// transport error. The cache falls through to direct upstream.
+    Unreachable,
+    /// 401 from the roastery. Almost always an operator
+    /// misconfiguration. Falls through with a WARN log so it's
+    /// visible without taking the build offline.
+    AuthFailed,
+    /// The roastery served bytes whose digest didn't match the one
+    /// we asked for. Logged at ERROR — this should never happen in
+    /// a correctly-operating roastery; the BAR-CAS-001 surface lets
+    /// the cache catch it instead of poisoning local storage.
+    DigestMismatch,
+}
+
+impl RoasteryOutcome {
+    /// The stable lowercase identifier used both in the
+    /// `roastery_outcome` tracing field and by downstream metric
+    /// aggregators.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::Miss => "miss",
+            Self::Unreachable => "unreachable",
+            Self::AuthFailed => "auth_failed",
+            Self::DigestMismatch => "digest_mismatch",
+        }
+    }
+}
+
+/// A cheap, cloneable recorder for [`RoasteryOutcome`] events.
+///
+/// Attached to a [`CacheSource`] via
+/// [`CacheSource::with_roastery_observer`]. Every fetch that
+/// *attempted* the roastery appends its classification here, in
+/// order. This is the deterministic, thread-safe complement to the
+/// `roastery_outcome` tracing field: the tracing field is for
+/// production observability (and may be missed by a thread-local
+/// log capture in tests), whereas the observer is a direct
+/// in-process hook that integration tests assert on.
+///
+/// Internally an `Arc<Mutex<Vec<…>>>`, so clones share the same
+/// backing log and the recorder can be handed to the source while
+/// the test retains a handle to inspect later.
+#[derive(Debug, Clone, Default)]
+pub struct RoasteryOutcomeObserver {
+    events: Arc<std::sync::Mutex<Vec<RoasteryOutcome>>>,
+}
+
+impl RoasteryOutcomeObserver {
+    /// Create an empty observer.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn record(&self, outcome: RoasteryOutcome) {
+        if let Ok(mut guard) = self.events.lock() {
+            guard.push(outcome);
+        }
+    }
+
+    /// Snapshot the recorded outcomes, in fetch order.
+    pub fn outcomes(&self) -> Vec<RoasteryOutcome> {
+        self.events
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// The most recently recorded outcome, if any.
+    pub fn last(&self) -> Option<RoasteryOutcome> {
+        self.events.lock().ok().and_then(|g| g.last().copied())
+    }
 }
 
 impl CacheSource {
@@ -99,12 +224,83 @@ impl CacheSource {
                 cache_root,
                 snapshot_update_policy,
                 release_update_policy,
+                roastery: None,
+                roastery_url: None,
+                roastery_observer: None,
             }),
+        }
+    }
+
+    /// Attach a roastery client to an existing [`CacheSource`].
+    ///
+    /// Returns a new [`CacheSource`] backed by the same on-disk
+    /// state but with the roastery-first fetch path enabled. The
+    /// original handle stays valid and continues to behave as it
+    /// did before — useful for tests that compare with/without
+    /// roastery without re-opening the cache.
+    ///
+    /// `roastery_url` is recorded on every [`OriginTier::Roastery`]
+    /// index entry so cache audits can attribute bytes back to a
+    /// specific remote cache. Typically the base URL of the
+    /// roastery, but any caller-meaningful identifier is fine.
+    pub fn with_roastery(self, client: Arc<RoasteryClient>, roastery_url: String) -> Self {
+        let inner_clone = Inner {
+            cas: self.inner.cas.clone(),
+            index: self.inner.index.clone(),
+            fetcher: self.inner.fetcher.clone(),
+            // Reuse the original coord-lock map so the with/without
+            // pair (if both used) share serialization for the same
+            // coord. Cheap pointer-clone — `CoordLockMap` is
+            // `Arc`-backed.
+            coord_locks: self.inner.coord_locks.clone(),
+            cache_root: self.inner.cache_root.clone(),
+            snapshot_update_policy: self.inner.snapshot_update_policy,
+            release_update_policy: self.inner.release_update_policy,
+            roastery: Some(client),
+            roastery_url: Some(roastery_url),
+            roastery_observer: self.inner.roastery_observer.clone(),
+        };
+        Self {
+            inner: Arc::new(inner_clone),
+        }
+    }
+
+    /// Attach a [`RoasteryOutcomeObserver`] that records the
+    /// per-fetch [`RoasteryOutcome`] classification.
+    ///
+    /// Intended for tests and any caller that wants a deterministic,
+    /// in-process view of how each roastery attempt resolved without
+    /// scraping logs. Returns a new [`CacheSource`] sharing the same
+    /// on-disk state. Compose with [`Self::with_roastery`] in any
+    /// order.
+    pub fn with_roastery_observer(self, observer: RoasteryOutcomeObserver) -> Self {
+        let inner_clone = Inner {
+            cas: self.inner.cas.clone(),
+            index: self.inner.index.clone(),
+            fetcher: self.inner.fetcher.clone(),
+            coord_locks: self.inner.coord_locks.clone(),
+            cache_root: self.inner.cache_root.clone(),
+            snapshot_update_policy: self.inner.snapshot_update_policy,
+            release_update_policy: self.inner.release_update_policy,
+            roastery: self.inner.roastery.clone(),
+            roastery_url: self.inner.roastery_url.clone(),
+            roastery_observer: Some(observer),
+        };
+        Self {
+            inner: Arc::new(inner_clone),
         }
     }
 
     fn lock_root(&self) -> PathBuf {
         self.inner.cache_root.join("locks")
+    }
+
+    /// Forward an outcome to the attached observer, if any. No-op
+    /// when no observer is configured (the production default).
+    fn record_roastery_outcome(&self, outcome: RoasteryOutcome) {
+        if let Some(observer) = &self.inner.roastery_observer {
+            observer.record(outcome);
+        }
     }
 
     /// Fetch + verify + cache an artifact's bytes. Returns the
@@ -202,6 +398,7 @@ impl CacheSource {
                 etag,
                 last_modified,
                 upstream_last_updated: None,
+                tier: OriginTier::Upstream,
             },
             atime_unix: now,
             created_unix: now,
@@ -228,6 +425,7 @@ impl CacheSource {
         url_override: Option<String>,
     ) -> Result<(Vec<u8>, FetchOrigin), MetadataError> {
         let _guard = self.inner.coord_locks.lock(&lock_key).await;
+        let started = Instant::now();
 
         // In-process cache check.
         if let Some(entry) = self.inner.index.get(&index_key) {
@@ -237,6 +435,7 @@ impl CacheSource {
                 .get(&entry.hash)
                 .map_err(|e| map_cas_err(coords, version, e))?;
             let _ = self.inner.index.touch(&index_key, now_unix());
+            log_fetch(coords, "disk", started, bytes.len(), None);
             return Ok((bytes, FetchOrigin::Disk));
         }
 
@@ -259,10 +458,54 @@ impl CacheSource {
                 .cas
                 .get(&entry.hash)
                 .map_err(|e| map_cas_err(coords, version, e))?;
+            log_fetch(coords, "disk", started, bytes.len(), None);
             return Ok((bytes, FetchOrigin::Disk));
         }
 
-        // True miss — fetch from upstream.
+        // True miss. If a roastery is configured AND the request
+        // has the "sidecar+blob" shape (i.e. there's no
+        // `url_override` — `maven-metadata.xml` and the snapshot
+        // metadata XML are served as opaque bytes from upstream and
+        // bypass the roastery), try it first.
+        let mut roastery_outcome: Option<RoasteryOutcome> = None;
+        if url_override.is_none() && self.inner.roastery.is_some() {
+            match self
+                .try_roastery(coords, version, type_for_fetch, classifier_for_fetch)
+                .await
+            {
+                Ok(Some((bytes, entry))) => {
+                    self.inner
+                        .index
+                        .put(index_key, entry)
+                        .map_err(|e| MetadataError::Transport {
+                            coords: format!("{}:{}", coords.group, coords.artifact),
+                            version: version.to_string(),
+                            detail: format!("index put: {e}"),
+                        })?;
+                    self.record_roastery_outcome(RoasteryOutcome::Hit);
+                    log_fetch(
+                        coords,
+                        "roastery",
+                        started,
+                        bytes.len(),
+                        Some(RoasteryOutcome::Hit),
+                    );
+                    return Ok((bytes, FetchOrigin::Remote));
+                }
+                Ok(None) => {
+                    // Roastery 404 — fall through to upstream.
+                    roastery_outcome = Some(RoasteryOutcome::Miss);
+                }
+                Err(outcome) => {
+                    roastery_outcome = Some(outcome);
+                }
+            }
+            if let Some(o) = roastery_outcome {
+                self.record_roastery_outcome(o);
+            }
+        }
+
+        // Direct-upstream fetch.
         let (bytes, entry, origin) = if let Some(url) = url_override {
             self.fetch_url_and_cache(coords, version, &url).await?
         } else {
@@ -284,7 +527,256 @@ impl CacheSource {
                 version: version.to_string(),
                 detail: format!("index put: {e}"),
             })?;
+        log_fetch(coords, "upstream", started, bytes.len(), roastery_outcome);
         Ok((bytes, origin))
+    }
+
+    /// Try to serve the artifact via the configured roastery.
+    ///
+    /// Returns:
+    ///
+    /// - `Ok(Some((bytes, entry)))` on a roastery hit (the bytes
+    ///   were served and verified; the [`IndexEntry`] is ready to
+    ///   write into the index).
+    /// - `Ok(None)` on a roastery 404 (genuine miss; caller should
+    ///   fall through to upstream).
+    /// - `Err(RoasteryOutcome)` on any other failure mode that the
+    ///   caller should treat as "fall through, but record this
+    ///   outcome". The outcome variant tells the caller how loud to
+    ///   be about the fall-through (ERROR for digest-mismatch, WARN
+    ///   for auth-failed, plain INFO for unreachable).
+    ///
+    /// Precondition: `self.inner.roastery.is_some()`.
+    async fn try_roastery(
+        &self,
+        coords: &Coords,
+        version: &str,
+        type_: &str,
+        classifier: Option<&str>,
+    ) -> Result<Option<(Vec<u8>, IndexEntry)>, RoasteryOutcome> {
+        let client = self
+            .inner
+            .roastery
+            .as_ref()
+            .expect("try_roastery called without a configured roastery");
+        let roastery_url = self
+            .inner
+            .roastery_url
+            .clone()
+            .unwrap_or_else(|| "roastery".to_string());
+
+        // Compose the upstream URL for the sidecar. We still go to
+        // the upstream Maven repo for the sidecar — it's a small
+        // text file and the roastery's barista-protocol surface is
+        // digest-keyed (no coord→digest lookup endpoint in v0.1).
+        let upstream_url = self.inner.fetcher.url_for_artifact(
+            None,
+            &coords.group,
+            &coords.artifact,
+            version,
+            classifier,
+            type_,
+        );
+        let sha256_url = self.inner.fetcher.url_for_sidecar(&upstream_url, "sha256");
+        let sha1_url = self.inner.fetcher.url_for_sidecar(&upstream_url, "sha1");
+
+        let empty_cond = ConditionalHeaders::default();
+        let (sha256_res, sha1_res) = tokio::join!(
+            self.inner.fetcher.fetch(&sha256_url, &empty_cond),
+            self.inner.fetcher.fetch(&sha1_url, &empty_cond),
+        );
+
+        let sha256_sidecar = match sha256_res {
+            Ok(FetchOutcome::Fresh { bytes, .. }) => {
+                Some(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            _ => None,
+        };
+        let sha1_sidecar = match sha1_res {
+            Ok(FetchOutcome::Fresh { bytes, .. }) => {
+                Some(String::from_utf8_lossy(&bytes).into_owned())
+            }
+            _ => None,
+        };
+
+        // Without a SHA-256 sidecar the roastery is unusable — its
+        // surface is digest-keyed. Treat as a miss and let the
+        // direct-upstream path handle it (which will tolerate the
+        // missing sidecar and store as Unverified).
+        let Some(sha256_hex) = sha256_sidecar.as_deref().and_then(|s| {
+            // Maven sidecars often contain `<hex>  <filename>` or a
+            // trailing newline; take the first whitespace-delimited
+            // token and trust verify() to validate.
+            s.split_whitespace().next().map(|t| t.trim().to_string())
+        }) else {
+            tracing::debug!(
+                coords = %coords_str(coords, version),
+                "roastery: no SHA-256 sidecar available; skipping roastery attempt"
+            );
+            return Ok(None);
+        };
+        let sha256_hex = sha256_hex.to_lowercase();
+
+        // Parse into a roastery-client Digest.
+        let digest = match Digest::from_hex(&sha256_hex) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(
+                    coords = %coords_str(coords, version),
+                    error = %e,
+                    "roastery: SHA-256 sidecar failed to parse as digest"
+                );
+                return Ok(None);
+            }
+        };
+
+        // Build the X-Barista-Coords header value per PRD §3 / §14.4
+        // grammar: g:a[:t[:c]]:v
+        let coords_header = format_coords_header(coords, version, type_, classifier);
+
+        tracing::debug!(
+            coords = %coords_header,
+            digest = %sha256_hex,
+            roastery = %roastery_url,
+            "roastery: GET blob"
+        );
+
+        let blob = match client.get_blob_with_coords(digest, &coords_header).await {
+            Ok(b) => b,
+            Err(RoasteryClientError::NotFound) => {
+                tracing::debug!(coords = %coords_header, "roastery: 404; falling through to upstream");
+                return Ok(None);
+            }
+            Err(RoasteryClientError::Auth { code, message }) => {
+                tracing::warn!(
+                    coords = %coords_header,
+                    code = %code,
+                    message = %message,
+                    "roastery: auth failed; falling through to upstream"
+                );
+                return Err(RoasteryOutcome::AuthFailed);
+            }
+            Err(RoasteryClientError::ServerRejected { code, message, .. })
+                if code == "BAR-CAS-001" =>
+            {
+                tracing::error!(
+                    coords = %coords_header,
+                    code = %code,
+                    message = %message,
+                    "roastery: digest mismatch; falling through to upstream"
+                );
+                return Err(RoasteryOutcome::DigestMismatch);
+            }
+            Err(RoasteryClientError::Network { .. })
+            | Err(RoasteryClientError::Timeout)
+            | Err(RoasteryClientError::Tls { .. }) => {
+                tracing::info!(
+                    coords = %coords_header,
+                    "roastery: unreachable; falling through to upstream"
+                );
+                return Err(RoasteryOutcome::Unreachable);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    coords = %coords_header,
+                    error = %e,
+                    "roastery: unexpected error; falling through to upstream"
+                );
+                return Err(RoasteryOutcome::Unreachable);
+            }
+        };
+
+        // Drain the blob into memory. v0.1 keeps this buffered to
+        // match the direct-upstream path; switching to a streaming
+        // CAS::put_stream is an obvious follow-up but unblocked by
+        // this milestone.
+        let expected_size = blob.stat.size;
+        let mut bytes = Vec::with_capacity(expected_size as usize);
+        let mut body = blob.body;
+        if let Err(e) = body.read_to_end(&mut bytes).await {
+            tracing::info!(
+                coords = %coords_header,
+                error = %e,
+                "roastery: error draining body; falling through to upstream"
+            );
+            return Err(RoasteryOutcome::Unreachable);
+        }
+        if (bytes.len() as u64) != expected_size {
+            tracing::warn!(
+                coords = %coords_header,
+                expected = expected_size,
+                actual = bytes.len(),
+                "roastery: body length disagreed with Content-Length; falling through to upstream"
+            );
+            return Err(RoasteryOutcome::Unreachable);
+        }
+
+        // Defense-in-depth: verify against the sidecars locally.
+        // The roastery already verified the digest server-side, but
+        // re-checking costs nothing and protects against a buggy
+        // roastery that echoes the digest header without re-hashing.
+        let verification = match checksum::verify(
+            &bytes,
+            sha256_sidecar.as_deref(),
+            sha1_sidecar.as_deref(),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    coords = %coords_header,
+                    error = %e,
+                    "roastery: post-fetch verify failed; treating as digest mismatch and falling through"
+                );
+                return Err(RoasteryOutcome::DigestMismatch);
+            }
+        };
+
+        // Persist into the local CAS.
+        let (cas_hash, _path) = match self.inner.cas.put(&bytes) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    coords = %coords_header,
+                    error = %e,
+                    "roastery: CAS put failed; falling through to upstream"
+                );
+                return Err(RoasteryOutcome::Unreachable);
+            }
+        };
+
+        // Sanity: the bytes-we-stored hash should match what we
+        // asked the roastery for. Comparing 32-byte arrays is
+        // cheap; a mismatch here would mean either our CAS or our
+        // digest-conversion logic is broken.
+        let asked = ContentHash::from_bytes(*digest.as_bytes());
+        if cas_hash != asked {
+            tracing::error!(
+                coords = %coords_header,
+                "roastery: local CAS hashed bytes to a different digest than the roastery returned"
+            );
+            return Err(RoasteryOutcome::DigestMismatch);
+        }
+
+        let sha1_hex = match &verification {
+            Verification::Sha1Verified { hex } => Some(hex.clone()),
+            _ => None,
+        };
+        let now = now_unix();
+        let entry = IndexEntry {
+            hash: cas_hash,
+            size_bytes: bytes.len() as u64,
+            sha1_hex,
+            origin: Origin {
+                repository_url: roastery_url,
+                etag: None,
+                last_modified: None,
+                upstream_last_updated: None,
+                tier: OriginTier::Roastery,
+            },
+            atime_unix: now,
+            created_unix: now,
+        };
+        Ok(Some((bytes, entry)))
     }
 
     /// Fetch + CAS-store a raw URL (no sidecars, no checksum).
@@ -330,6 +822,7 @@ impl CacheSource {
                 etag,
                 last_modified,
                 upstream_last_updated: None,
+                tier: OriginTier::Upstream,
             },
             atime_unix: now,
             created_unix: now,
@@ -505,6 +998,71 @@ pub(crate) fn parse_versions_list(xml: &str) -> Vec<String> {
         buf.clear();
     }
     versions
+}
+
+/// Format a coordinate + version as the `g:a[:t[:c]]:v` string the
+/// roastery's `X-Barista-Coords` header expects.
+///
+/// Per PRD §3 / §14.4: the type and classifier are optional. A
+/// classifier without a type would be ambiguous; if a classifier is
+/// present, the type is always emitted (Maven's POM omits a type
+/// for `jar` but the wire form is unambiguous when both slots are
+/// either present or both empty).
+fn format_coords_header(
+    coords: &Coords,
+    version: &str,
+    type_: &str,
+    classifier: Option<&str>,
+) -> String {
+    match classifier {
+        Some(c) => format!("{}:{}:{}:{}:{}", coords.group, coords.artifact, type_, c, version),
+        None if type_ != "jar" => {
+            // Emit the type for any non-default packaging so the
+            // roastery can disambiguate `pom` from `jar`.
+            format!("{}:{}:{}:{}", coords.group, coords.artifact, type_, version)
+        }
+        None => format!("{}:{}:{}", coords.group, coords.artifact, version),
+    }
+}
+
+/// Compose the `coords:version` short string used in tracing fields
+/// when a full `X-Barista-Coords` value isn't appropriate.
+fn coords_str(coords: &Coords, version: &str) -> String {
+    format!("{}:{}:{}", coords.group, coords.artifact, version)
+}
+
+/// Emit the per-fetch structured INFO event documented at the module
+/// docstring. Centralised here so every tier emits the same field set.
+fn log_fetch(
+    coords: &Coords,
+    tier: &'static str,
+    started: Instant,
+    bytes: usize,
+    roastery_outcome: Option<RoasteryOutcome>,
+) {
+    let wall_ms = started.elapsed().as_millis() as u64;
+    let coords_s = format!("{}:{}", coords.group, coords.artifact);
+    match roastery_outcome {
+        Some(o) => {
+            tracing::info!(
+                coords = %coords_s,
+                tier = tier,
+                wall_ms = wall_ms,
+                bytes = bytes,
+                roastery_outcome = o.as_str(),
+                "fetch served"
+            );
+        }
+        None => {
+            tracing::info!(
+                coords = %coords_s,
+                tier = tier,
+                wall_ms = wall_ms,
+                bytes = bytes,
+                "fetch served"
+            );
+        }
+    }
 }
 
 fn now_unix() -> u64 {

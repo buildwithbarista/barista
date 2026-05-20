@@ -126,7 +126,8 @@ pub struct IndexEntry {
 /// Provenance for a cached artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Origin {
-    /// Repository base URL the artifact was fetched from.
+    /// Repository base URL the artifact was fetched from. For
+    /// [`OriginTier::Roastery`], this is the roastery's base URL.
     pub repository_url: String,
     /// Server `ETag` at fetch time, for conditional refetch.
     pub etag: Option<String>,
@@ -134,6 +135,44 @@ pub struct Origin {
     pub last_modified: Option<String>,
     /// Maven's `<lastUpdated>` from `maven-metadata.xml`, if known.
     pub upstream_last_updated: Option<String>,
+    /// Which fetch tier produced the bytes — direct from a Maven
+    /// upstream, or via a remote roastery cache.
+    ///
+    /// Defaulted on deserialization to [`OriginTier::Upstream`] so
+    /// index entries persisted before the roastery tier landed
+    /// continue to load cleanly. This is the migration policy:
+    /// no rewrite on load, the missing discriminator implicitly
+    /// means "fetched directly from upstream" (the only path the
+    /// older code took).
+    #[serde(default)]
+    pub tier: OriginTier,
+}
+
+/// Which fetch tier produced the bytes for a cached artifact.
+///
+/// Serde-compat: the variant payloads are unit because the
+/// `repository_url` already lives in [`Origin`]. A future change
+/// could split the URL by tier, but in v0.1 keeping the URL field
+/// shared minimises the on-disk impact.
+///
+/// The default is [`Self::Upstream`] so a missing `tier` field on
+/// an older index entry deserialises to the pre-roastery semantics.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum OriginTier {
+    /// Fetched directly from a Maven repository (e.g. Maven Central,
+    /// a corporate proxy, or an internal mirror). The default for
+    /// backward-compat with pre-roastery index entries.
+    #[default]
+    Upstream,
+    /// Fetched via a remote roastery cache. The roastery may itself
+    /// have served from its local CAS or relayed from one of its
+    /// configured upstreams; both surface here as a single tier
+    /// because the cache crate can't (and shouldn't) tell the
+    /// difference.
+    Roastery,
 }
 
 /// Errors surfaced by the index layer.
@@ -546,6 +585,7 @@ mod tests {
                 etag: Some("\"abc\"".to_string()),
                 last_modified: None,
                 upstream_last_updated: None,
+                tier: Default::default(),
             },
             atime_unix: 1_700_000_000,
             created_unix: 1_700_000_000,

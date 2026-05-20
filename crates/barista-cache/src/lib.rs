@@ -41,6 +41,7 @@ pub use fetch::{ConditionalHeaders, FetchConfig, FetchError, FetchOutcome, Fetch
 pub use gc::{GcConfig, GcError, GcStats, run_gc};
 pub use index::{
     DEFAULT_COMPACT_THRESHOLD, Index, IndexEntry, IndexError, IndexKey, OpenReport, Origin,
+    OriginTier,
 };
 pub use journal::{Journal, JournalEntry, JournalError};
 pub use lock::{
@@ -48,4 +49,4 @@ pub use lock::{
 };
 pub use m2::{MirrorError, m2_path, materialize};
 pub use recovery::{RecoveryError, RecoveryReport, is_recoverable, scan_and_recover};
-pub use source::CacheSource;
+pub use source::{CacheSource, RoasteryOutcome, RoasteryOutcomeObserver};

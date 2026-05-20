@@ -42,6 +42,17 @@ use crate::types::{
 /// blob involved.
 const HDR_BARISTA_DIGEST: &str = "x-barista-digest";
 
+/// Request header carrying the Maven coordinates of the artifact the
+/// client expects the requested digest to identify. Format:
+/// `g:a[:t[:c]]:v`. The roastery uses this hint on a local-CAS miss
+/// to fetch the matching artifact from a configured upstream Maven
+/// repository, hash the bytes, and serve them back if the digest
+/// matches.
+///
+/// Only relevant on `GET /v1/cas/sha256/{digest}`; absent on every
+/// other route.
+const HDR_BARISTA_COORDS: &str = "x-barista-coords";
+
 /// Async client for the roastery cache server's barista-protocol
 /// surface.
 ///
@@ -95,10 +106,49 @@ impl RoasteryClient {
     /// failures as [`ClientError::Auth`]; anything else with a
     /// structured error body as [`ClientError::ServerRejected`].
     pub async fn get_blob(&self, digest: Digest) -> Result<BlobStream, ClientError> {
-        let url = self.cas_url(digest)?;
-        tracing::debug!(%url, "GET blob");
+        self.get_blob_inner(digest, None).await
+    }
 
-        let resp = self.send(self.request(Method::GET, url, true)?).await?;
+    /// `GET /v1/cas/sha256/{digest}` with an `X-Barista-Coords` hint.
+    ///
+    /// Identical to [`get_blob`](Self::get_blob) except the request
+    /// carries an `X-Barista-Coords: <coords>` header. When the
+    /// server is configured with upstream-on-miss, the hint lets it
+    /// fetch the matching artifact from a configured upstream Maven
+    /// repository, hash it, and serve the bytes back — turning a
+    /// local CAS miss into a hit that's transparent to the caller.
+    ///
+    /// `coords` should follow the canonical Maven grammar
+    /// `g:a[:t[:c]]:v`. The client does not validate the format
+    /// itself — anything that isn't a valid HTTP header value
+    /// surfaces as [`ClientError::Config`].
+    pub async fn get_blob_with_coords(
+        &self,
+        digest: Digest,
+        coords: &str,
+    ) -> Result<BlobStream, ClientError> {
+        self.get_blob_inner(digest, Some(coords)).await
+    }
+
+    /// Shared GET-blob implementation. `coords` is optional — when
+    /// present, the `X-Barista-Coords` header is set on the request.
+    async fn get_blob_inner(
+        &self,
+        digest: Digest,
+        coords: Option<&str>,
+    ) -> Result<BlobStream, ClientError> {
+        let url = self.cas_url(digest)?;
+        tracing::debug!(%url, coords = ?coords, "GET blob");
+
+        let mut req = self.request(Method::GET, url, true)?;
+        if let Some(c) = coords {
+            let value = HeaderValue::from_str(c).map_err(|e| ClientError::Config {
+                reason: format!("X-Barista-Coords {c:?} is not a valid header value: {e}"),
+            })?;
+            req = req.header(HDR_BARISTA_COORDS, value);
+        }
+
+        let resp = self.send(req).await?;
         if resp.status() == StatusCode::NOT_FOUND {
             return Err(ClientError::NotFound);
         }

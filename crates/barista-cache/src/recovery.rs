@@ -130,6 +130,7 @@ mod tests {
                 etag: None,
                 last_modified: None,
                 upstream_last_updated: None,
+                tier: Default::default(),
             },
             atime_unix: 1_700_000_000,
             created_unix: 1_700_000_000,

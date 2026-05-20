@@ -239,6 +239,7 @@ mod tests {
                 etag: None,
                 last_modified: None,
                 upstream_last_updated: None,
+                tier: Default::default(),
             },
             atime_unix,
             created_unix: atime_unix,

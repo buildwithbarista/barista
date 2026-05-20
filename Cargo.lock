@@ -278,22 +278,29 @@ name = "barista-cache"
 version = "0.1.0-alpha.0"
 dependencies = [
  "async-trait",
+ "axum",
  "barista-config",
  "barista-coords",
  "barista-pom",
  "barista-resolver",
+ "barista-roastery-client",
  "bincode",
  "bytes",
  "crc32fast",
  "fd-lock",
  "quick-xml",
  "reqwest",
+ "roastery",
  "serde",
+ "serde_json",
  "sha1",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
  "wiremock",
 ]
 
@@ -336,6 +343,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "toml",
+ "tracing",
 ]
 
 [[package]]
