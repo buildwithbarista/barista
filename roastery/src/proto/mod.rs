@@ -8,8 +8,12 @@
 //! - [`barista`] — the **barista-protocol** REST/JSON surface Barista
 //!   clients speak. CAS GET/HEAD/PUT, batch presence, health,
 //!   capabilities. Mounted under `/v1/…`.
-//! - [`reapi`] — placeholder for the Remote Execution API gRPC
-//!   handler. Empty today; populated by a follow-up task.
+//! - [`reapi`] — the Bazel **Remote Execution API** gRPC handler:
+//!   `ContentAddressableStorage`, `google.bytestream.ByteStream`, and
+//!   `Capabilities`, fronting the same `Cas` as the barista surface.
+//!   Exposed as an `axum::Router` via [`reapi::routes`] and merged into
+//!   the top-level router (tonic 0.14 services are tower/hyper
+//!   services, the same shape axum routes are).
 //!
 //! The split lets each protocol evolve independently and keeps the
 //! `server` module free of per-protocol details.

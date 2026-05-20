@@ -69,6 +69,12 @@ pub struct AppState {
     /// otherwise. Wrapped in `Arc` because the fetcher carries a
     /// `reqwest::Client` we don't want to clone per request.
     pub upstream: Option<Arc<UpstreamFetcher>>,
+    /// The loaded bearer verifier, when bearer auth is configured. The
+    /// HTTP `AuthLayer` and the REAPI gRPC auth interceptor
+    /// (`crate::proto::reapi::ReapiAuth`) share this exact `Arc` so both
+    /// protocols enforce the same tokens with one in-memory load.
+    /// `None` when bearer auth is not configured.
+    pub bearer: Option<Arc<crate::auth::BearerVerifier>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -85,6 +91,14 @@ impl std::fmt::Debug for AppState {
                     .upstream
                     .as_ref()
                     .map(|_| "<UpstreamFetcher>")
+                    .unwrap_or("none"),
+            )
+            .field(
+                "bearer",
+                &self
+                    .bearer
+                    .as_ref()
+                    .map(|_| "<BearerVerifier>")
                     .unwrap_or("none"),
             )
             .finish()
@@ -147,11 +161,24 @@ pub(crate) fn build_router(state: AppState, auth_layer: AuthLayer) -> Router {
         .with_state(state.clone())
         .layer(auth_layer);
 
+    // T4: Bazel REAPI gRPC surface. `reapi::routes` assembles the
+    // `ContentAddressableStorage` + `ByteStream` + `Capabilities`
+    // tonic services into an `axum::Router` (tonic 0.14 services are
+    // tower/hyper services, the same shape axum routes are). The gRPC
+    // paths (`/build.bazel.remote.execution.v2.*`,
+    // `/google.bytestream.ByteStream/*`) don't collide with the
+    // barista `/v1/...` or ops routes, so a plain `merge` is enough —
+    // content-type (`application/grpc`) routing is handled inside the
+    // generated services. CAS data services carry their own bearer
+    // interceptor built from `state`; Capabilities stays public.
+    let grpc = crate::proto::reapi::routes(state.clone());
+
     Router::new()
         .route("/", get(placeholder_root))
         .merge(crate::proto::barista::public_router().with_state(state.clone()))
         .merge(crate::ops::router().with_state(state))
         .merge(protected)
+        .merge(grpc)
         .layer(TraceLayer::new_for_http())
     // T6: upstream-on-miss layer.
     //
@@ -196,12 +223,13 @@ fn build_upstream(
 /// Resolve the configured auth verifiers from disk + assemble the
 /// [`AuthLayer`].
 ///
-/// Returns the layer plus owned `Arc` handles to the verifiers (so
-/// the caller can stash them on `AppState` if a future task wants
-/// runtime introspection — today they live only inside the layer).
-/// Surfaces a `RoasteryError::Config` on a file-read or parse
-/// failure, attributed to the operator-supplied path.
-fn build_auth(config: &ServerConfig) -> Result<AuthLayer> {
+/// Returns the layer plus the loaded bearer verifier (when bearer auth
+/// is configured) so the caller can stash it on [`AppState`]: the HTTP
+/// `AuthLayer` and the REAPI gRPC auth interceptor share that one
+/// loaded verifier rather than reading the tokens file twice. Surfaces
+/// a `RoasteryError::Config` on a file-read or parse failure,
+/// attributed to the operator-supplied path.
+fn build_auth(config: &ServerConfig) -> Result<(AuthLayer, Option<Arc<BearerVerifier>>)> {
     let bearer = match &config.auth.bearer {
         Some(b) => {
             let v = BearerVerifier::load(&b.tokens_file)?;
@@ -226,14 +254,14 @@ fn build_auth(config: &ServerConfig) -> Result<AuthLayer> {
         }
         None => None,
     };
-    let layer = AuthLayer::new(bearer, mtls);
+    let layer = AuthLayer::new(bearer.clone(), mtls);
     if layer.allows_anonymous() {
         // Loopback-bound dev workflow; the validate() check above
         // already verified this state is only possible with a
         // loopback bind.
         info!("auth: no mechanism configured — accepting anonymous requests (loopback only)");
     }
-    Ok(layer)
+    Ok((layer, bearer))
 }
 
 /// Placeholder handler for `GET /`.
@@ -277,12 +305,19 @@ pub async fn run(config: ServerConfig) -> Result<()> {
     // upstream fetch persists into the same store the handlers read
     // from.
     let upstream = build_upstream(&config, cas.clone())?;
+
+    // Load auth before assembling state so the same `BearerVerifier`
+    // `Arc` flows into both the HTTP `AuthLayer` and the REAPI gRPC
+    // interceptor (via `AppState::bearer`) — one tokens-file load,
+    // shared by both protocols.
+    let (auth_layer, bearer) = build_auth(&config)?;
+
     let state = AppState {
         cas,
         config: Arc::new(config.clone()),
         upstream,
+        bearer,
     };
-    let auth_layer = build_auth(&config)?;
 
     if config.tls.is_some() {
         tls::run_tls(config, state, auth_layer).await
@@ -668,6 +703,7 @@ mod tests {
             cas,
             config: Arc::new(config),
             upstream: None,
+            bearer: None,
         };
         (tmp, state)
     }

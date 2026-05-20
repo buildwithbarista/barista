@@ -187,6 +187,59 @@ prometheus = { version = "0.14", default-features = false }
 # `default-features = false` drops `native-tls` (which would pull
 # OpenSSL into the dep graph for no benefit on top of rustls).
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-manual-roots", "stream", "http2", "json"] }
+# `tonic` 0.14 is the gRPC stack backing the Bazel REAPI surface
+# (Content-Addressable-Storage + Capabilities + ByteStream). It sits on
+# the same `hyper` 1.x + `tower` 0.5 foundation `axum` already uses, so
+# the generated gRPC services compose into the existing router as plain
+# tower services rather than running on a second listener.
+#
+# Features (these match tonic's own default set — note tonic 0.14's
+# default does NOT pull in `prost`; the prost codec is a separate
+# `tonic-prost` crate, declared below):
+#   - `router`    — the `tonic::service::Routes` builder we merge into
+#                   the axum router.
+#   - `codegen`   — `tonic::codegen` + `tonic::async_trait`, referenced
+#                   by the generated service code in OUT_DIR.
+#   - `transport` — the server runtime AND the client `Channel` the
+#                   integration tests dial (transport => server + channel).
+tonic = { version = "0.14", default-features = false, features = ["router", "codegen", "transport"] }
+# In tonic 0.14 the prost codec lives in a separate crate (`tonic` core
+# is codec-agnostic). `tonic-prost` carries the `ProstCodec` the
+# generated `*.rs` bindings reference and re-exports the runtime glue.
+tonic-prost = "0.14"
+# `prost` is the protobuf runtime the generated REAPI message types are
+# built on (`Message` derive, scalar/`bytes`/oneof support). Pinned to
+# the 0.14 line `tonic-prost-build` 0.14 emits code for. (Note: the
+# `barista-ipc` crate independently uses `prost` 0.13 for its hand-rolled
+# IPC schema; Cargo links both majors side-by-side without conflict.)
+prost = "0.14"
+# `prost-types` supplies the Rust types for the `google.protobuf.*`
+# well-known types (`Any`, `Duration`, `Timestamp`, `Empty`, …) the
+# vendored REAPI/googleapis protos import. Declaring it lets the build
+# script compile those imports against prost's bundled WKTs instead of
+# vendoring `google/protobuf/*` into `proto/`.
+prost-types = "0.14"
+# `tokio-stream`'s `wrappers::ReceiverStream` adapts the bounded mpsc
+# channel the ByteStream `Read` handler uses (a reader task fills it,
+# the gRPC server-stream drains it) into the `Stream` tonic expects, so
+# a large blob streams out chunk-by-chunk without buffering in memory.
+tokio-stream = "0.1"
+
+[build-dependencies]
+# `tonic-prost-build` 0.14 drives the compile-time codegen: it feeds the
+# vendored `.proto` files through `protoc` and emits prost message types
+# + tonic service traits into `$OUT_DIR`, picked up via
+# `tonic::include_proto!` from `src/proto/reapi.rs`. ADR-006 (Path B)
+# chose local generation over adopting a pre-generated `*-apis` crate so
+# the pinned proto revisions are the single source of truth.
+tonic-prost-build = "0.14"
+# `protoc-bin-vendored` ships a per-platform `protoc` binary plus its
+# bundled `google/protobuf/*` well-known-type include directory. The
+# build script points `PROTOC` at it (and adds its include path) so a
+# clean `cargo build` needs NO system `protoc` — CI and contributors
+# don't have to install the protobuf toolchain out of band. This is the
+# vendored-protoc posture ADR-006's verification step asks for.
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 # `reqwest` is re-declared in dev-dependencies as a no-op (the
@@ -230,6 +283,15 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 # `ServerConfig` / `ClientConfig` construction. Already in the dep
 # graph transitively; declared here for the direct import.
 rustls-pki-types = "1"
+# `tonic` (with the client `transport`/`Channel`) is needed by the
+# REAPI integration tests (`tests/reapi.rs`) to dial the in-process
+# gRPC server with the generated clients. The library declares the same
+# version; declared here so the test crate (a separate compilation
+# unit) sees it directly. Cargo unifies the two declarations.
+tonic = { version = "0.14", default-features = false, features = ["router", "codegen", "transport"] }
+# `futures-util`'s `stream::iter` builds the client-streaming request
+# the ByteStream `Write` test sends.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

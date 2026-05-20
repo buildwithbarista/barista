@@ -20,10 +20,10 @@ the integration tests and downstream embedders consume.
 ## Status
 
 The current code carries the v0.1 surface for storage, the
-barista-protocol HTTP handler, the ops endpoints (`/healthz`,
-`/metrics`, `/version`), and the authentication surface (bearer
-tokens + mTLS). The REAPI gRPC handler and upstream-on-miss are
-wired in by subsequent tasks — see **Extending the scaffold** below.
+barista-protocol HTTP handler, the Bazel REAPI gRPC handler (CAS +
+ByteStream + Capabilities), upstream-on-miss, the ops endpoints
+(`/healthz`, `/metrics`, `/version`), and the authentication surface
+(bearer tokens + mTLS).
 
 ## Running locally
 
@@ -156,6 +156,106 @@ curl -i -X POST "http://127.0.0.1:7878/v1/cas/missing" \
     -H 'content-type: application/json' \
     -d "{\"digests\":[\"sha256:$BLOB\",\"sha256:000…0\"]}"
 ```
+
+## REAPI (Bazel CAS gRPC)
+
+Alongside the barista-native HTTP surface, the server speaks the Bazel
+**Remote Execution API** (REAPI) over gRPC, so Bazel-ecosystem clients
+can use roastery as a remote cache. **Both protocols front the same
+content-addressed store** — a blob uploaded over HTTP is immediately
+readable over gRPC and vice versa.
+
+The gRPC services mount on the same listener as the HTTP routes (gRPC
+is HTTP/2 with a distinct `application/grpc` content type and
+service-qualified paths, so the two never collide). No separate port is
+needed.
+
+### Services implemented (v0.1)
+
+| Service / RPC | Behaviour |
+|---|---|
+| `ContentAddressableStorage.FindMissingBlobs` | Returns the supplied digests not present in the store (the gRPC analogue of `POST /v1/cas/missing`). |
+| `ContentAddressableStorage.BatchUpdateBlobs` | Uploads small blobs; each is verified against its claimed digest with a per-blob status (`OK` / `INVALID_ARGUMENT`). |
+| `ContentAddressableStorage.BatchReadBlobs` | Reads small blobs by digest; per-blob status (`OK` + data / `NOT_FOUND`). |
+| `ContentAddressableStorage.GetTree` | **`UNIMPLEMENTED`** — roastery is a flat CAS, not a Merkle store (see below). |
+| `ContentAddressableStorage.SplitBlob` / `SpliceBlob` | **`UNIMPLEMENTED`** — no chunking function is advertised in v0.1. |
+| `google.bytestream.ByteStream.Read` | Streams a blob out by resource name. |
+| `google.bytestream.ByteStream.Write` | Streams a blob in; the bytes are verified against the resource-name digest. |
+| `google.bytestream.ByteStream.QueryWriteStatus` | **`UNIMPLEMENTED`** — v0.1 requires a single contiguous write (no resumable uploads). |
+| `Capabilities.GetCapabilities` | Advertises `digest_functions: [SHA256]`, the batch-size cap, the symlink strategy, and API version v2. |
+
+The REAPI **Execution** and **ActionCache** services are intentionally
+**not** implemented: roastery v0.1 is a content cache, not a remote
+executor. The capabilities response advertises no execution
+capabilities and disables Action Cache updates.
+
+### Batch vs ByteStream
+
+`BatchUpdateBlobs` / `BatchReadBlobs` are for *small* blobs and are
+bounded by `max_batch_total_size_bytes` (4 MiB, advertised via
+`Capabilities`). Larger blobs go through the `ByteStream` service, which
+streams chunk-by-chunk and never buffers a whole blob in memory.
+
+### Resource-name grammar
+
+`ByteStream` overlays a path-like grammar on its opaque
+`resource_name`. roastery serves the uncompressed (`IDENTITY`) forms:
+
+- **Read:** `{instance_name}/blobs/{hash}/{size}`
+- **Write:** `{instance_name}/uploads/{uuid}/blobs/{hash}/{size}`
+
+`{instance_name}` may be empty and may itself contain `/`. The
+`compressed-blobs/{compressor}/…` variant is rejected with
+`UNIMPLEMENTED` (the store keeps raw bytes and does not transcode). On a
+`Write`, the streamed bytes are hashed and checked against `{hash}`; a
+mismatch is `INVALID_ARGUMENT`. v0.1 requires a single contiguous write
+from offset 0 — resumable offsets are a follow-up.
+
+### Why `GetTree` is `UNIMPLEMENTED`
+
+REAPI's `GetTree` walks a Merkle tree of `Directory` nodes. roastery is
+a *flat* content-addressed store: it has no directory tree to descend.
+Returning `UNIMPLEMENTED` is the honest answer for a flat CAS at v0.1 —
+a fabricated single-level response would misrepresent the store. A
+future Merkle-aware backend could implement it without a wire-contract
+change.
+
+### Auth
+
+The CAS data services (`ContentAddressableStorage` + `ByteStream`) sit
+behind the same auth posture as the barista-protocol CAS routes: when
+bearer auth is configured, a valid `authorization: Bearer <token>`
+metadata entry is required (verified against the same tokens the HTTP
+layer loaded), and an unauthenticated call is rejected with gRPC
+`UNAUTHENTICATED`. When mTLS is configured, the TLS handshake already
+required a CA-chained client certificate, so a connection that reaches a
+handler is transport-authenticated. The `Capabilities` service is left
+unauthenticated — it is the version-negotiation surface, exactly like
+the public HTTP `/v1/capabilities`. The data services are never more
+open than their HTTP counterparts.
+
+> v0.2 follow-up: the gRPC interceptor gates access but does not yet
+> capture a per-call mTLS *subject* the way the HTTP path does; RBAC in
+> v0.2 will attach a `Principal` over gRPC.
+
+### Proto vendoring + pin policy
+
+The REAPI bindings are generated locally at build time by
+`tonic-prost-build` from `.proto` files **vendored** under `proto/`. The
+exact upstream commits (Bazel `remote-apis` and `googleapis`) are pinned
+and recorded — with source URLs and license attribution — in
+[`proto/REVISIONS.txt`](proto/REVISIONS.txt). Bumping a pin is a
+one-line change in that file plus a re-fetch and rebuild; the generated
+code is never checked in. The build needs **no system `protoc`** — a
+vendored `protoc` (via the `protoc-bin-vendored` build dependency)
+supplies both the compiler and the `google/protobuf/*` well-known-type
+includes, so CI and contributors don't have to install the protobuf
+toolchain.
+
+> Conformance: the v0.1 wire contract + cross-protocol storage sharing
+> are proven by Rust `tonic`-client round-trip tests
+> (`tests/reapi.rs`). Running the full Go-based `bazel-remote`
+> conformance harness against roastery is a deferred follow-up.
 
 ## Upstream-on-miss
 
@@ -687,7 +787,10 @@ roastery/
 │   ├── proto/            wire-protocol handlers
 │   │   ├── mod.rs        module root
 │   │   ├── barista.rs    barista-protocol REST/JSON (/v1/…)
-│   │   └── reapi.rs      REAPI gRPC placeholder (filled in later)
+│   │   ├── reapi.rs      Bazel REAPI gRPC handler (CAS + ByteStream + Capabilities)
+│   │   └── reapi/        REAPI submodules
+│   │       ├── auth.rs       gRPC bearer-auth interceptor for the CAS data services
+│   │       └── resource.rs   ByteStream resource-name grammar parser
 │   ├── ops/              operational endpoints (/healthz, /metrics, /version)
 │   │   ├── mod.rs        module root + sub-router
 │   │   ├── health.rs     /healthz handler
@@ -703,10 +806,12 @@ roastery/
 │       ├── fs.rs         filesystem-backed Cas (production default)
 │       ├── s3.rs         S3 stub (v0.2)
 │       └── gcs.rs        GCS stub (v0.2)
-├── build.rs              build-time identity probe (git sha, rustc, build date)
+├── build.rs              build-time identity probe + REAPI proto codegen (tonic-prost-build)
+├── proto/                vendored REAPI + googleapis .proto files (see proto/REVISIONS.txt for pins)
 └── tests/
     ├── smoke.rs          scaffold smoke tests
     ├── proto_barista.rs  barista-protocol HTTP integration tests
+    ├── reapi.rs          REAPI gRPC integration tests (tonic-client round-trip + cross-protocol sharing)
     ├── ops.rs            /healthz, /metrics, /version integration tests
     ├── auth.rs           bearer + mTLS integration tests
     └── common/           shared test helpers (e.g. ephemeral cert generation)
@@ -717,9 +822,8 @@ roastery/
 Every blob in the roastery is identified by the SHA-256 digest of its
 bytes, rendered as 64 lowercase hex characters. The digest is the
 cache key — there is no separate metadata index. This matches the
-content-addressing model the REAPI gRPC handler (a later milestone)
-negotiates by default and the URL scheme the barista-protocol handler
-commits to.
+content-addressing model the REAPI gRPC handler negotiates by default
+(SHA-256) and the URL scheme the barista-protocol handler commits to.
 
 The `Cas` trait (`roastery::storage::Cas`) is the storage surface every
 protocol handler talks to:

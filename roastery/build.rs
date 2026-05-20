@@ -31,11 +31,40 @@
 //! current `HEAD` does. `cargo:rerun-if-changed=.git/HEAD` covers the
 //! latter without forcing a rebuild when individual `src/` files
 //! change.
+//!
+//! # Bazel REAPI gRPC code generation
+//!
+//! The second job this script performs is compiling the vendored
+//! Protocol Buffer schemas under `proto/` into Rust gRPC bindings via
+//! [`tonic_prost_build`]. The output lands in `$OUT_DIR` and is pulled
+//! into the crate by `tonic::include_proto!` from `src/proto/reapi.rs`.
+//!
+//! - **No system `protoc` required.** We point `protoc` at the binary
+//!   shipped by the `protoc-bin-vendored` build-dependency (and add its
+//!   bundled `google/protobuf/*` well-known-type include directory), so
+//!   a clean `cargo build` works on CI and contributor machines with no
+//!   protobuf toolchain installed.
+//! - **Pinned schemas are the source of truth.** The exact upstream
+//!   commits are recorded in `proto/REVISIONS.txt`; bumping a pin is a
+//!   re-fetch + rebuild, never a hand-edit of generated code.
+//! - **Build vs runtime split (tonic 0.14).** We generate the prost
+//!   message types + the tonic service traits for both server and
+//!   client (the integration tests drive a generated client), but only
+//!   the CAS + Capabilities services are *implemented* by the server.
 
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // ---- Bazel REAPI gRPC codegen ---------------------------------------
+    // Run this first so a codegen failure surfaces before the (always
+    // infallible) build-identity probes below. Returning the error from
+    // `main` makes cargo print it and fail the build with a non-zero
+    // exit — no `panic!` needed (the workspace lint policy forbids
+    // panics in non-test code, build scripts included).
+    generate_reapi_bindings()?;
+
     println!("cargo:rerun-if-changed=build.rs");
     // Re-run when the current commit changes. `.git/HEAD` is the
     // cheapest stable signal across detached-HEAD and branch checkouts.
@@ -56,6 +85,8 @@ fn main() {
 
     let rustc = rustc_version().unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=ROASTERY_BUILD_RUSTC={rustc}");
+
+    Ok(())
 }
 
 /// Run `git rev-parse --short=12 HEAD` and return the trimmed stdout
@@ -174,4 +205,88 @@ fn rustc_version() -> Option<String> {
     }
     let s = String::from_utf8(out.stdout).ok()?.trim().to_string();
     if s.is_empty() { None } else { Some(s) }
+}
+
+/// Compile the vendored REAPI + googleapis `.proto` files into Rust
+/// gRPC bindings under `$OUT_DIR`.
+///
+/// The include root is `proto/` (so the upstream `import` paths like
+/// `build/bazel/semver/semver.proto` and `google/rpc/status.proto`
+/// resolve against the vendored tree). The `google/protobuf/*`
+/// well-known types are *not* vendored — they resolve from the
+/// `protoc` install's bundled include directory, which we add
+/// explicitly from `protoc-bin-vendored`.
+///
+/// We point `protoc` at the vendored binary so no system protobuf
+/// toolchain is needed. If a contributor has set `PROTOC` themselves
+/// we leave their choice alone (the `protoc-bin-vendored` lookup only
+/// runs when `PROTOC` is unset).
+fn generate_reapi_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    let manifest_dir = PathBuf::from(env_var("CARGO_MANIFEST_DIR")?);
+    let proto_root = manifest_dir.join("proto");
+
+    // The single REAPI file (defines every service + message) plus the
+    // ByteStream service used for large blobs. Their transitive imports
+    // are resolved from `proto_root` and the WKT include dir.
+    let reapi_proto = proto_root.join("build/bazel/remote/execution/v2/remote_execution.proto");
+    let bytestream_proto = proto_root.join("google/bytestream/bytestream.proto");
+
+    // Re-run codegen whenever a vendored proto, this build script, or
+    // the protoc override changes. We list the two entry-point protos
+    // plus the proto root so a bumped dependency proto is observed.
+    println!("cargo:rerun-if-changed={}", reapi_proto.display());
+    println!("cargo:rerun-if-changed={}", bytestream_proto.display());
+    println!("cargo:rerun-if-changed={}", proto_root.display());
+    println!("cargo:rerun-if-env-changed=PROTOC");
+
+    // Vendored protoc: only set PROTOC if the contributor hasn't already
+    // pointed it somewhere. `protoc-bin-vendored` ships both the binary
+    // and the bundled well-known-type include path.
+    if std::env::var_os("PROTOC").is_none() {
+        let protoc = protoc_bin_vendored::protoc_bin_path()?;
+        // SAFETY: build scripts run single-threaded, before any other
+        // crate code; setting `PROTOC` here only influences the
+        // `tonic-prost-build`/`prost-build` protoc invocation that
+        // follows on this same thread. There is no concurrent reader of
+        // the environment to race with. The crate's workspace
+        // `unsafe_code` lint warns on `unsafe`; this one block is the
+        // documented exception (Rust 2024 made `set_var` unsafe).
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("PROTOC", protoc);
+        }
+    }
+    let wkt_include = protoc_bin_vendored::include_path()?;
+
+    tonic_prost_build::configure()
+        // Generate both server (we implement CAS + Capabilities) and
+        // client (the integration tests drive a generated client) sides.
+        .build_server(true)
+        .build_client(true)
+        // Emit a single `reapi.rs` that declares the full nested
+        // package-module tree (`build::bazel::…`, `google::rpc`, …).
+        // The generated code uses relative `super::` paths to reach
+        // cross-package types (e.g. a CAS response referencing
+        // `google.rpc.Status`), so the modules MUST share the real
+        // package hierarchy as ancestors. `include_file` lays that out
+        // for us; `src/proto/reapi.rs` `include!`s it at one anchor
+        // point and the `super::` chains resolve. (Multiple
+        // `include_proto!` calls at flat module names break those
+        // chains — hence the single-file approach.)
+        .include_file("reapi_generated.rs")
+        // Generated code lives in OUT_DIR; it is `include!`d, never
+        // checked in, so it is exempt from the workspace clippy gate.
+        .compile_protos(
+            &[reapi_proto, bytestream_proto],
+            &[proto_root, wkt_include],
+        )?;
+
+    Ok(())
+}
+
+/// Read a required environment variable, mapping the absent case to a
+/// boxed error so the caller can `?` it. Used for the cargo-provided
+/// `CARGO_MANIFEST_DIR`, which is always present during a build.
+fn env_var(key: &str) -> Result<String, Box<dyn std::error::Error>> {
+    std::env::var(key).map_err(|e| format!("env var {key}: {e}").into())
 }

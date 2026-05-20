@@ -1,0 +1,82 @@
+Vendored Protocol Buffer revisions
+==================================
+
+The `.proto` files under this directory are vendored verbatim from upstream
+projects and compiled locally at build time by `build.rs` (via
+`tonic-prost-build`). They are NOT edited after fetching; their Apache-2.0
+license headers are preserved as the attribution chain.
+
+To bump a pin: change the commit hash(es) below, re-fetch the affected files
+from the URLs given, and re-run `cargo build -p roastery` so the build script
+regenerates the bindings into `$OUT_DIR`.
+
+--------------------------------------------------------------------------------
+1. Bazel Remote Execution API (REAPI)
+--------------------------------------------------------------------------------
+Repository: https://github.com/bazelbuild/remote-apis
+Commit:     becdd8f9ff811df88a22d3eadd6341753d51d167
+Date:       2026-03-31 (one commit past tag v2.12.0)
+License:    Apache-2.0
+
+Files (paths preserve the upstream `import` layout so the proto compiler
+resolves cross-file imports against this directory as an include root):
+
+  build/bazel/remote/execution/v2/remote_execution.proto
+    https://raw.githubusercontent.com/bazelbuild/remote-apis/becdd8f9ff811df88a22d3eadd6341753d51d167/build/bazel/remote/execution/v2/remote_execution.proto
+
+  build/bazel/semver/semver.proto
+    https://raw.githubusercontent.com/bazelbuild/remote-apis/becdd8f9ff811df88a22d3eadd6341753d51d167/build/bazel/semver/semver.proto
+
+--------------------------------------------------------------------------------
+2. Google APIs (transitive dependencies of the REAPI protos)
+--------------------------------------------------------------------------------
+Repository: https://github.com/googleapis/googleapis
+Commit:     c0fcb35628690e9eb15dcefae41c651c67cd050b
+Date:       2026-01-31
+License:    Apache-2.0
+
+Pin rationale: this is the exact googleapis revision that the REAPI commit
+above builds against. The REAPI `MODULE.bazel` at becdd8f declares
+`bazel_dep(name = "googleapis", version = "0.0.0-20260130-c0fcb356")` — the
+Bazel Central Registry encodes the upstream commit as the trailing short SHA
+`c0fcb356`, which resolves to the full SHA above. Pinning to the REAPI's own
+googleapis means the vendored `.proto` set is internally consistent: the
+google/* messages the REAPI protos import are exactly the ones upstream
+compiles them with.
+
+Files (only the non-well-known protos the REAPI CAS + Capabilities + ByteStream
+surface transitively imports are vendored; `google/protobuf/*` well-known types
+are supplied by `prost`/`prost-types` and are deliberately NOT vendored here):
+
+  google/api/annotations.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/api/annotations.proto
+  google/api/http.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/api/http.proto
+  google/api/client.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/api/client.proto
+  google/api/launch_stage.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/api/launch_stage.proto
+  google/api/field_behavior.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/api/field_behavior.proto
+  google/rpc/status.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/rpc/status.proto
+  google/longrunning/operations.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/longrunning/operations.proto
+  google/bytestream/bytestream.proto
+    https://raw.githubusercontent.com/googleapis/googleapis/c0fcb35628690e9eb15dcefae41c651c67cd050b/google/bytestream/bytestream.proto
+
+--------------------------------------------------------------------------------
+Compilation notes
+--------------------------------------------------------------------------------
+- `remote_execution.proto` defines all REAPI services (Execution, ActionCache,
+  ContentAddressableStorage, Capabilities) in one file. The whole file is
+  compiled, but only ContentAddressableStorage + Capabilities are implemented
+  by this server (plus ByteStream for large blobs). Execution and ActionCache
+  are out of scope for v0.1.
+- `google/longrunning/operations.proto` is pulled in only because the REAPI
+  Execution service references it; the CAS/Capabilities surface does not use
+  long-running operations. It is vendored so the single-file compile of
+  `remote_execution.proto` resolves all imports.
+- The include root for the proto compiler is this directory (`proto/`). The
+  `google/protobuf/*` well-known types resolve from the `protoc` install's
+  bundled include path; they are never vendored here.

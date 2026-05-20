@@ -110,6 +110,7 @@ async fn spawn_bearer_server() -> BearerHarness {
         cas: Arc::new(cas),
         config: Arc::new(cfg.clone()),
         upstream: None,
+        bearer: None,
     };
 
     // Build the same router topology production builds, by going

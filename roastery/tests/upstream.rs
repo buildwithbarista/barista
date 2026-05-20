@@ -195,6 +195,7 @@ async fn spawn_roastery_with_upstream(upstream_cfg: UpstreamConfig) -> Harness {
         cas: cas_arc,
         config: Arc::new(cfg),
         upstream,
+        bearer: None,
     };
 
     let app = axum::Router::new()
