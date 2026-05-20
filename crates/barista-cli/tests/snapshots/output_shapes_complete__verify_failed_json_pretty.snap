@@ -1,0 +1,34 @@
+---
+source: crates/barista-cli/tests/output_shapes_complete.rs
+expression: body
+---
+{
+  "command": "verify",
+  "project-root": "/proj",
+  "phase": "deploy",
+  "planned-actions": 2,
+  "executed-actions": 2,
+  "failed-actions": 1,
+  "daemon-respawns": 0,
+  "invocations": [
+    {
+      "phase": "package",
+      "mojo": "org.apache.maven.plugins:maven-jar-plugin:3.4.1:jar",
+      "module": "/proj",
+      "exit-code": 0,
+      "status": "success",
+      "duration-ms":"[MS]"
+    },
+    {
+      "phase": "deploy",
+      "mojo": "org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy",
+      "module": "/proj",
+      "exit-code": 1,
+      "status": "failure",
+      "failure-message": "no credentials for server `central` in settings.xml",
+      "error-code": "BAR-DEPLOY-AUTH-MISSING",
+      "duration-ms":"[MS]"
+    }
+  ],
+  "duration-ms":"[MS]"
+}

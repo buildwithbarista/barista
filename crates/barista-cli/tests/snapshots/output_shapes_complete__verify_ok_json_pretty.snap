@@ -1,0 +1,32 @@
+---
+source: crates/barista-cli/tests/output_shapes_complete.rs
+expression: body
+---
+{
+  "command": "verify",
+  "project-root": "/proj",
+  "phase": "verify",
+  "planned-actions": 2,
+  "executed-actions": 2,
+  "failed-actions": 0,
+  "daemon-respawns": 0,
+  "invocations": [
+    {
+      "phase": "compile",
+      "mojo": "org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile",
+      "module": "/proj",
+      "exit-code": 0,
+      "status": "success",
+      "duration-ms":"[MS]"
+    },
+    {
+      "phase": "test",
+      "mojo": "org.apache.maven.plugins:maven-surefire-plugin:3.2.5:test",
+      "module": "/proj",
+      "exit-code": 0,
+      "status": "success",
+      "duration-ms":"[MS]"
+    }
+  ],
+  "duration-ms":"[MS]"
+}

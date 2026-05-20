@@ -1,0 +1,22 @@
+---
+source: crates/barista-cli/tests/output_shapes_complete.rs
+expression: redact_project_line(&out)
+---
+barista: `package` is not yet executable.
+
+project: <REDACTED>
+phase:   package
+args:    (none)
+
+The Maven-vocabulary lifecycle phases (clean / compile / test /
+package / verify / install / deploy / site) are drop-in synonyms
+for `mvn <phase>`. Execution wires through the barback daemon,
+which lands in a subsequent milestone.
+
+For now you can:
+  - Run `mvn package` in this project. Output
+    will be identical until barista's barback path differs.
+  - Run `barista pull --no-fetch` to inspect what barista would
+    resolve before lifecycle execution.
+  - Run `barista grind tree` to view the resolved dependency
+    graph as recorded in `barista.lock`.

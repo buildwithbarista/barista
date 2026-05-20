@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/cli_summary_snapshots.rs
+expression: stderr
+---
+dial-in: wrote <DIR>/config.toml (concurrency=<N>, roastery=no)

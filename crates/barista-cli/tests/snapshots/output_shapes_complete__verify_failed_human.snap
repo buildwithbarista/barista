@@ -1,0 +1,6 @@
+---
+source: crates/barista-cli/tests/output_shapes_complete.rs
+expression: stderr.as_string()
+---
+deploy: deploy: 1 mojo(s) failed (executed 2/2) in [MS] ms
+  ✗ deploy :: org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy (exit=1) — no credentials for server `central` in settings.xml

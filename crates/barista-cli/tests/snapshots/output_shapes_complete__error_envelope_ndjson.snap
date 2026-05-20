@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_shapes_complete.rs
+expression: body
+---
+{"event":"error","timestamp":"2026-05-14T12:34:56.789Z","payload":{"message":"barista verify failed: BAR-DEPLOY-AUTH-MISSING: no credentials for server `central`"}}

@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/output_shapes_complete.rs
+expression: stderr.as_string()
+---
+verify: verify: 2/2 mojo(s) in [MS] ms

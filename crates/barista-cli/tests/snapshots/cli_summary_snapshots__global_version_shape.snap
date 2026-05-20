@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/cli_summary_snapshots.rs
+expression: stdout
+---
+barista <VERSION>

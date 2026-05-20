@@ -1,0 +1,5 @@
+---
+source: crates/barista-cli/tests/cli_summary_snapshots.rs
+expression: stderr
+---
+baristaw: wrote 3 files under <DIR> (version 0.1.0-alpha.0)
