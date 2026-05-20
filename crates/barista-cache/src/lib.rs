@@ -49,4 +49,6 @@ pub use lock::{
 };
 pub use m2::{MirrorError, m2_path, materialize};
 pub use recovery::{RecoveryError, RecoveryReport, is_recoverable, scan_and_recover};
-pub use source::{CacheSource, RoasteryOutcome, RoasteryOutcomeObserver};
+pub use source::{
+    CacheSource, PushOutcome, RoasteryOutcome, RoasteryOutcomeObserver, RoasteryPushObserver,
+};

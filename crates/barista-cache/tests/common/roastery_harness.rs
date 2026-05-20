@@ -12,7 +12,11 @@
 //! that always answers `400 BAR-CAS-001` so the cache's
 //! digest-mismatch fall-through can be exercised deterministically.
 
+// This module is shared scaffolding compiled separately into each
+// integration-test binary. Any given binary uses only a subset of the
+// fixtures, so `dead_code` is expected here and silenced module-wide.
 #![allow(
+    dead_code,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -185,6 +189,45 @@ pub async fn spawn_digest_mismatch_mock() -> RoasteryHarness {
             });
             (StatusCode::BAD_REQUEST, axum::Json(body))
         }),
+    );
+
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    wait_for_listener(addr, Duration::from_secs(4)).await;
+
+    RoasteryHarness {
+        addr,
+        _tmp: tmp,
+        _tokens_file: None,
+        server: Some(server),
+    }
+}
+
+/// Spin a tiny axum mock that 404s every blob GET (so the cache's
+/// read path falls through to upstream) but answers every blob PUT
+/// with `500 Internal Server Error`. Used to exercise the
+/// push-after-build failure path: the read succeeds via upstream, the
+/// subsequent push fails, and the failure must NOT fail the fetch.
+pub async fn spawn_put_failing_roastery() -> RoasteryHarness {
+    let tmp = TempDir::new().expect("tempdir");
+
+    let std_listener = StdTcpListener::bind("127.0.0.1:0").expect("bind");
+    std_listener.set_nonblocking(true).expect("nonblocking");
+    let addr = std_listener.local_addr().expect("addr");
+    let listener = TcpListener::from_std(std_listener).expect("from std");
+
+    let app: Router = Router::new().route(
+        "/v1/cas/sha256/{digest}",
+        get(|_: AxPath<String>| async { StatusCode::NOT_FOUND }).put(
+            |_: AxPath<String>| async {
+                let body = serde_json::json!({
+                    "code": "BAR-INTERNAL",
+                    "message": "synthetic PUT failure for push-after-build test",
+                });
+                (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(body))
+            },
+        ),
     );
 
     let server = tokio::spawn(async move {

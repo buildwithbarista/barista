@@ -117,6 +117,15 @@ struct Inner {
     /// [`RoasteryOutcome`]. `None` in production; set by tests via
     /// [`CacheSource::with_roastery_observer`].
     roastery_observer: Option<RoasteryOutcomeObserver>,
+    /// Whether to upload upstream-fetched artifacts back to the
+    /// roastery after they're durably cached locally (the
+    /// `cache.roastery.push` knob). No-op unless a `roastery` is also
+    /// configured. Set via [`CacheSource::with_roastery_push`].
+    roastery_push: bool,
+    /// Optional deterministic recorder for the per-fetch
+    /// [`PushOutcome`]. `None` in production; set by tests via
+    /// [`CacheSource::with_roastery_push_observer`].
+    roastery_push_observer: Option<RoasteryPushObserver>,
 }
 
 /// Outcome of a single attempt to serve bytes via a configured
@@ -210,6 +219,91 @@ impl RoasteryOutcomeObserver {
     }
 }
 
+/// Outcome of a single push-after-build attempt — the upload of an
+/// upstream-fetched artifact back to the configured roastery so the
+/// next client on the team gets a roastery hit (the
+/// `cache.roastery.push` behavior).
+///
+/// A push is *attempted* only for content-addressed blobs
+/// (sidecar+blob-shaped fetches) whose bytes came from upstream — a
+/// blob that was just served *from* the roastery is never re-pushed.
+/// The push is strictly best-effort: a [`PushOutcome::Failed`] is
+/// logged but never propagated to the caller, because the artifact
+/// has already been served from the local CAS.
+///
+/// Like [`RoasteryOutcome`], this is surfaced both as a structured
+/// `push_result` tracing field and through the optional
+/// [`RoasteryPushObserver`] hook so integration tests can assert push
+/// behavior deterministically, without depending on log capture
+/// across async/threaded boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    /// The blob was uploaded to the roastery (HTTP 201, including the
+    /// idempotent re-PUT of an already-present blob).
+    Pushed,
+    /// The push was attempted but failed — roastery unreachable, auth
+    /// failure, a server-side digest mismatch (a serious local
+    /// corruption signal), or a local CAS read error. Logged, never
+    /// propagated.
+    Failed,
+    /// No push was attempted because the bytes were served *from* the
+    /// roastery — they're already there, so re-pushing would be
+    /// wasted work.
+    SkippedRoasterySource,
+}
+
+impl PushOutcome {
+    /// The stable lowercase identifier used in the `push_result`
+    /// tracing field.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pushed => "pushed",
+            Self::Failed => "push_failed",
+            Self::SkippedRoasterySource => "skipped_roastery_source",
+        }
+    }
+}
+
+/// A cheap, cloneable recorder for [`PushOutcome`] events — the
+/// push-side analogue of [`RoasteryOutcomeObserver`].
+///
+/// Attached to a [`CacheSource`] via
+/// [`CacheSource::with_roastery_push_observer`]. Every fetch that
+/// *reached the push decision point* (i.e. an upstream-sourced,
+/// blob-shaped artifact with push enabled, or a roastery-sourced blob
+/// that was skipped) appends its classification here, in order.
+///
+/// Internally an `Arc<Mutex<Vec<…>>>`, so clones share the same
+/// backing log and the recorder can be handed to the source while the
+/// test retains a handle to inspect later.
+#[derive(Debug, Clone, Default)]
+pub struct RoasteryPushObserver {
+    events: Arc<std::sync::Mutex<Vec<PushOutcome>>>,
+}
+
+impl RoasteryPushObserver {
+    /// Create an empty observer.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn record(&self, outcome: PushOutcome) {
+        if let Ok(mut guard) = self.events.lock() {
+            guard.push(outcome);
+        }
+    }
+
+    /// Snapshot the recorded outcomes, in fetch order.
+    pub fn outcomes(&self) -> Vec<PushOutcome> {
+        self.events.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// The most recently recorded outcome, if any.
+    pub fn last(&self) -> Option<PushOutcome> {
+        self.events.lock().ok().and_then(|g| g.last().copied())
+    }
+}
+
 impl CacheSource {
     /// Construct a `CacheSource` from already-opened subsystems. The
     /// caller is responsible for opening the `Cas`/`Index`/`Fetcher`
@@ -235,6 +329,8 @@ impl CacheSource {
                 roastery: None,
                 roastery_url: None,
                 roastery_observer: None,
+                roastery_push: false,
+                roastery_push_observer: None,
             }),
         }
     }
@@ -267,6 +363,66 @@ impl CacheSource {
             roastery: Some(client),
             roastery_url: Some(roastery_url),
             roastery_observer: self.inner.roastery_observer.clone(),
+            roastery_push: self.inner.roastery_push,
+            roastery_push_observer: self.inner.roastery_push_observer.clone(),
+        };
+        Self {
+            inner: Arc::new(inner_clone),
+        }
+    }
+
+    /// Enable (or disable) push-after-build — the `cache.roastery.push`
+    /// behavior.
+    ///
+    /// When enabled *and* a roastery is configured, an artifact
+    /// fetched from upstream is uploaded back to the roastery after
+    /// it's durably cached locally, so the next client on the team
+    /// gets a roastery hit. Enabling push with no roastery configured
+    /// is a no-op (there's nothing to push to). Defaults to disabled.
+    ///
+    /// Returns a new [`CacheSource`] sharing the same on-disk state;
+    /// compose with [`Self::with_roastery`] in any order.
+    pub fn with_roastery_push(self, enabled: bool) -> Self {
+        let inner_clone = Inner {
+            cas: self.inner.cas.clone(),
+            index: self.inner.index.clone(),
+            fetcher: self.inner.fetcher.clone(),
+            coord_locks: self.inner.coord_locks.clone(),
+            cache_root: self.inner.cache_root.clone(),
+            snapshot_update_policy: self.inner.snapshot_update_policy,
+            release_update_policy: self.inner.release_update_policy,
+            roastery: self.inner.roastery.clone(),
+            roastery_url: self.inner.roastery_url.clone(),
+            roastery_observer: self.inner.roastery_observer.clone(),
+            roastery_push: enabled,
+            roastery_push_observer: self.inner.roastery_push_observer.clone(),
+        };
+        Self {
+            inner: Arc::new(inner_clone),
+        }
+    }
+
+    /// Attach a [`RoasteryPushObserver`] that records the per-fetch
+    /// [`PushOutcome`] classification.
+    ///
+    /// Intended for tests and any caller that wants a deterministic,
+    /// in-process view of how each push decision resolved without
+    /// scraping logs. Returns a new [`CacheSource`] sharing the same
+    /// on-disk state. Compose with the other builders in any order.
+    pub fn with_roastery_push_observer(self, observer: RoasteryPushObserver) -> Self {
+        let inner_clone = Inner {
+            cas: self.inner.cas.clone(),
+            index: self.inner.index.clone(),
+            fetcher: self.inner.fetcher.clone(),
+            coord_locks: self.inner.coord_locks.clone(),
+            cache_root: self.inner.cache_root.clone(),
+            snapshot_update_policy: self.inner.snapshot_update_policy,
+            release_update_policy: self.inner.release_update_policy,
+            roastery: self.inner.roastery.clone(),
+            roastery_url: self.inner.roastery_url.clone(),
+            roastery_observer: self.inner.roastery_observer.clone(),
+            roastery_push: self.inner.roastery_push,
+            roastery_push_observer: Some(observer),
         };
         Self {
             inner: Arc::new(inner_clone),
@@ -293,6 +449,8 @@ impl CacheSource {
             roastery: self.inner.roastery.clone(),
             roastery_url: self.inner.roastery_url.clone(),
             roastery_observer: Some(observer),
+            roastery_push: self.inner.roastery_push,
+            roastery_push_observer: self.inner.roastery_push_observer.clone(),
         };
         Self {
             inner: Arc::new(inner_clone),
@@ -307,6 +465,14 @@ impl CacheSource {
     /// when no observer is configured (the production default).
     fn record_roastery_outcome(&self, outcome: RoasteryOutcome) {
         if let Some(observer) = &self.inner.roastery_observer {
+            observer.record(outcome);
+        }
+    }
+
+    /// Forward a push outcome to the attached push observer, if any.
+    /// No-op when no observer is configured (the production default).
+    fn record_push_outcome(&self, outcome: PushOutcome) {
+        if let Some(observer) = &self.inner.roastery_push_observer {
             observer.record(outcome);
         }
     }
@@ -508,6 +674,18 @@ impl CacheSource {
                             detail: format!("index put: {e}"),
                         })?;
                     self.record_roastery_outcome(RoasteryOutcome::Hit);
+                    // Push-after-build never re-uploads bytes we just
+                    // pulled from the roastery — they're already
+                    // there. Record the skip so the push observer can
+                    // assert "no push happened on a roastery hit".
+                    if self.inner.roastery_push {
+                        tracing::debug!(
+                            coords = %coords_str(coords, version),
+                            push_result = PushOutcome::SkippedRoasterySource.as_str(),
+                            "roastery push: source was the roastery; skipping re-push"
+                        );
+                        self.record_push_outcome(PushOutcome::SkippedRoasterySource);
+                    }
                     log_fetch(
                         coords,
                         "roastery",
@@ -530,7 +708,13 @@ impl CacheSource {
             }
         }
 
-        // Direct-upstream fetch.
+        // Direct-upstream fetch. `is_blob_shaped` mirrors the
+        // roastery-attempt gate above: only sidecar+blob-shaped
+        // artifacts (`url_override.is_none()`) are content-addressed
+        // and therefore push-eligible. `maven-metadata.xml` and the
+        // snapshot-metadata XML are opaque, mutable bytes with no
+        // stable CAS identity and must never be pushed.
+        let is_blob_shaped = url_override.is_none();
         let (bytes, entry, origin) = if let Some(url) = url_override {
             self.fetch_url_and_cache(coords, version, &url).await?
         } else {
@@ -544,6 +728,12 @@ impl CacheSource {
             .await?
         };
 
+        // Capture the CAS coordinates of the just-fetched blob before
+        // `entry` is moved into the index — needed to stream it back
+        // out for the push.
+        let pushed_hash = entry.hash;
+        let pushed_size = entry.size_bytes;
+
         self.inner
             .index
             .put(index_key, entry)
@@ -552,8 +742,109 @@ impl CacheSource {
                 version: version.to_string(),
                 detail: format!("index put: {e}"),
             })?;
+
+        // Push-after-build: now that the upstream-sourced bytes are
+        // durably in the local CAS *and* journaled, optionally
+        // advertise them to the team's shared roastery. Strictly
+        // best-effort — see `push_to_roastery` — and only for
+        // content-addressed blobs. We reach this point only on the
+        // upstream path; a roastery hit `return`s earlier and is never
+        // re-pushed.
+        if self.inner.roastery_push && is_blob_shaped && self.inner.roastery.is_some() {
+            self.push_to_roastery(
+                coords,
+                version,
+                type_for_fetch,
+                classifier_for_fetch,
+                pushed_hash,
+                pushed_size,
+            )
+            .await;
+        }
+
         log_fetch(coords, "upstream", started, bytes.len(), roastery_outcome);
         Ok((bytes, origin))
+    }
+
+    /// Upload a locally-cached blob to the configured roastery.
+    ///
+    /// Best-effort: every failure mode (roastery unreachable, auth
+    /// failure, server-side digest mismatch, or a local CAS read
+    /// error) is logged and recorded as [`PushOutcome::Failed`], but
+    /// never propagated — the artifact has already been served from
+    /// the local CAS, so a failed push only costs the team a future
+    /// roastery hit.
+    ///
+    /// The bytes are streamed from the local CAS (a `tokio::fs::File`
+    /// over the just-written object), not re-buffered in memory: the
+    /// blob is already on disk and `put_blob` streams the upload, so
+    /// the whole payload never needs to sit in RAM.
+    ///
+    /// Precondition: `self.inner.roastery.is_some()` and the blob is
+    /// content-addressed (a sidecar+blob-shaped fetch).
+    async fn push_to_roastery(
+        &self,
+        coords: &Coords,
+        version: &str,
+        type_: &str,
+        classifier: Option<&str>,
+        hash: ContentHash,
+        size: u64,
+    ) {
+        let client = self
+            .inner
+            .roastery
+            .as_ref()
+            .expect("push_to_roastery called without a configured roastery");
+
+        let coords_header = format_coords_header(coords, version, type_, classifier);
+        let digest = Digest::from_bytes(*hash.as_bytes());
+        let short = short_digest(&hash);
+
+        // Stream the blob straight out of the local CAS. Opening the
+        // CAS object as a `tokio::fs::File` gives an `AsyncRead` that
+        // `put_blob` consumes without buffering the whole payload.
+        let path = self.inner.cas.path_for(&hash);
+        let file = match tokio::fs::File::open(&path).await {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!(
+                    coords = %coords_header,
+                    digest = %short,
+                    error = %e,
+                    push_result = PushOutcome::Failed.as_str(),
+                    "roastery push: could not open local CAS object; skipping push"
+                );
+                self.record_push_outcome(PushOutcome::Failed);
+                return;
+            }
+        };
+
+        match client.put_blob(digest, file, size).await {
+            Ok(()) => {
+                tracing::info!(
+                    coords = %coords_header,
+                    digest = %short,
+                    push_result = PushOutcome::Pushed.as_str(),
+                    "roastery push: uploaded upstream-fetched blob"
+                );
+                self.record_push_outcome(PushOutcome::Pushed);
+            }
+            Err(e) => {
+                // A push failure is never fatal. Log loudly enough to
+                // be diagnosable (a server-side digest mismatch in
+                // particular would point at local corruption), but
+                // keep serving the build from the local CAS.
+                tracing::warn!(
+                    coords = %coords_header,
+                    digest = %short,
+                    error = %e,
+                    push_result = PushOutcome::Failed.as_str(),
+                    "roastery push: upload failed; artifact still served from local cache"
+                );
+                self.record_push_outcome(PushOutcome::Failed);
+            }
+        }
     }
 
     /// Try to serve the artifact via the configured roastery.
@@ -1054,6 +1345,14 @@ fn format_coords_header(
 /// when a full `X-Barista-Coords` value isn't appropriate.
 fn coords_str(coords: &Coords, version: &str) -> String {
     format!("{}:{}:{}", coords.group, coords.artifact, version)
+}
+
+/// Render the first 12 hex chars of a [`ContentHash`] for compact
+/// tracing fields. Twelve chars (48 bits) is plenty to disambiguate
+/// in a log line without dumping the full 64-char digest.
+fn short_digest(hash: &ContentHash) -> String {
+    let hex = hash.to_hex();
+    hex.chars().take(12).collect()
 }
 
 /// Emit the per-fetch structured INFO event documented at the module
