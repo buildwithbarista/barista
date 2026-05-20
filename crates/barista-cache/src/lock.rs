@@ -19,9 +19,18 @@
 //! ## Runtime
 //!
 //! This module depends on Tokio at runtime (not just dev). The
-//! filesystem-lock acquire path uses `tokio::task::spawn_blocking` to
-//! avoid stalling the async runtime on a potentially long
-//! `flock`/`LockFileEx` call.
+//! filesystem-lock acquire path is a **non-blocking poll loop**: each
+//! attempt issues a single `try_write()` (non-blocking `flock`/
+//! `LockFileEx`) inside `tokio::task::spawn_blocking` and returns
+//! immediately, then the loop sleeps a short async backoff before
+//! retrying. Crucially, no blocking-pool thread is ever parked inside
+//! `flock(2)` waiting for the OS lock — so a timed-out acquirer leaves
+//! nothing leaked behind, and a dropped acquire future simply stops
+//! polling. (A previous design ran a single blocking `write()` inside
+//! `spawn_blocking` and wrapped it in `tokio::time::timeout`; that was
+//! unsound, because `timeout` only abandons the *await* of the join
+//! handle — it cannot cancel the blocking thread, which stayed parked
+//! in `flock()` fighting for the lock long after the "timeout".)
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -205,35 +214,87 @@ impl std::fmt::Debug for FilesystemLock {
     }
 }
 
+/// Initial backoff between non-blocking acquire attempts.
+const ACQUIRE_BACKOFF_START: Duration = Duration::from_millis(5);
+/// Upper bound on the backoff between attempts (the loop ramps up to
+/// this and then polls at this cadence).
+const ACQUIRE_BACKOFF_MAX: Duration = Duration::from_millis(100);
+
 impl FilesystemLock {
-    /// Acquire (blocking) the filesystem lock for a coord. Creates the
-    /// lock file and any missing parent directories.
+    /// Acquire the filesystem lock for a coord, blocking indefinitely
+    /// until it can be taken. Creates the lock file and any missing
+    /// parent directories.
+    ///
+    /// "Blocking" here means *logically* unbounded — it polls (via a
+    /// non-blocking `try_write` + async sleep-backoff) until the lock
+    /// frees. It never parks a blocking-pool thread inside `flock(2)`,
+    /// so the returned future is cancel-safe: dropping it simply stops
+    /// the polling, with nothing leaked behind.
+    ///
+    /// Callers in long-running or interactive contexts (the CLI, the
+    /// daemon) should prefer [`acquire_with_timeout`](Self::acquire_with_timeout)
+    /// so a wedged holder can never deadlock them forever.
     pub async fn acquire(lock_root: &Path, key: &CoordVersionKey) -> Result<Self, LockError> {
         let path = lock_path(lock_root, key);
-        let path_for_blocking = path.clone();
-        tokio::task::spawn_blocking(move || acquire_blocking(path_for_blocking))
-            .await
-            .map_err(|e| LockError::Io {
-                path: path.clone(),
-                source: std::io::Error::other(format!("spawn_blocking join: {e}")),
-            })?
+        let mut backoff = ACQUIRE_BACKOFF_START;
+        loop {
+            if let Some(lock) = Self::try_acquire_once(path.clone()).await? {
+                return Ok(lock);
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(ACQUIRE_BACKOFF_MAX);
+        }
     }
 
-    /// Acquire with a timeout. Returns [`LockError::Timeout`] if not
-    /// acquired within `duration`.
+    /// Acquire with a timeout. Returns [`LockError::Timeout`] if the
+    /// lock could not be taken within `duration`.
+    ///
+    /// Unlike a naive `tokio::time::timeout` wrapper around a blocking
+    /// `flock`, this is a *truthful* timeout: each attempt is a
+    /// non-blocking `try_write` that returns immediately, so when the
+    /// deadline elapses there is no parked thread still fighting for
+    /// the lock — we simply stop polling.
     pub async fn acquire_with_timeout(
         lock_root: &Path,
         key: &CoordVersionKey,
         duration: Duration,
     ) -> Result<Self, LockError> {
         let path = lock_path(lock_root, key);
-        match tokio::time::timeout(duration, Self::acquire(lock_root, key)).await {
-            Ok(res) => res,
-            Err(_) => Err(LockError::Timeout {
-                path,
-                seconds: duration.as_secs(),
-            }),
+        let deadline = tokio::time::Instant::now() + duration;
+        let mut backoff = ACQUIRE_BACKOFF_START;
+        loop {
+            if let Some(lock) = Self::try_acquire_once(path.clone()).await? {
+                return Ok(lock);
+            }
+            // Don't sleep past the deadline; if we'd overrun, bail now.
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(LockError::Timeout {
+                    path,
+                    seconds: duration.as_secs(),
+                });
+            }
+            let remaining = deadline - now;
+            tokio::time::sleep(backoff.min(remaining)).await;
+            backoff = (backoff * 2).min(ACQUIRE_BACKOFF_MAX);
         }
+    }
+
+    /// One non-blocking acquisition attempt, run on the blocking pool.
+    ///
+    /// Returns `Ok(Some(lock))` on success, `Ok(None)` if the lock is
+    /// currently held by someone else (the attempt returned without
+    /// parking), or `Err` on a genuine I/O failure. Because the inner
+    /// `try_write` never blocks, the `spawn_blocking` task always
+    /// returns promptly — no thread is ever left parked in `flock(2)`.
+    async fn try_acquire_once(path: PathBuf) -> Result<Option<Self>, LockError> {
+        let path_for_join = path.clone();
+        tokio::task::spawn_blocking(move || acquire_blocking_once(path))
+            .await
+            .map_err(|e| LockError::Io {
+                path: path_for_join,
+                source: std::io::Error::other(format!("spawn_blocking join: {e}")),
+            })?
     }
 
     /// The on-disk path of this lock file.
@@ -242,7 +303,14 @@ impl FilesystemLock {
     }
 }
 
-fn acquire_blocking(path: PathBuf) -> Result<FilesystemLock, LockError> {
+/// Single, non-blocking attempt to take the exclusive lock at `path`.
+///
+/// Creates the lock file (and parent dirs) as needed, then issues one
+/// `try_write()`. On `ErrorKind::WouldBlock` (the `fd-lock` 4.x mapping
+/// for a contended `flock`/`LockFileEx` on both Unix and Windows) it
+/// returns `Ok(None)` — the caller should back off and retry. Any other
+/// I/O error is surfaced as `Err`.
+fn acquire_blocking_once(path: PathBuf) -> Result<Option<FilesystemLock>, LockError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| LockError::Io {
             path: parent.to_path_buf(),
@@ -271,16 +339,18 @@ fn acquire_blocking(path: PathBuf) -> Result<FilesystemLock, LockError> {
         let ptr: *mut fd_lock::RwLock<std::fs::File> = &mut *boxed;
         &mut *ptr
     };
-    let guard = lock_ref.write().map_err(|e| LockError::Io {
-        path: path.clone(),
-        source: e,
-    })?;
-
-    Ok(FilesystemLock {
-        _guard: guard,
-        _lock: boxed,
-        path,
-    })
+    match lock_ref.try_write() {
+        Ok(guard) => Ok(Some(FilesystemLock {
+            _guard: guard,
+            _lock: boxed,
+            path,
+        })),
+        // Contended: another holder has the lock. `fd-lock` 4.x maps
+        // the non-blocking `flock`/`LockFileEx` "would block" condition
+        // to `ErrorKind::WouldBlock` on both Unix and Windows.
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(e) => Err(LockError::Io { path, source: e }),
+    }
 }
 
 #[cfg(test)]
@@ -294,6 +364,37 @@ mod tests {
         CoordVersionKey {
             coords: Coords::new(group, artifact).unwrap(),
             version: version.to_string(),
+        }
+    }
+
+    /// Wall-clock watchdog for the **synchronous** lock tests.
+    ///
+    /// Runs `f` on a spawned thread and waits up to `secs` for it to
+    /// finish. If it doesn't, we `panic!` from the test thread instead
+    /// of letting a wedged acquire park a worker forever (which would
+    /// hang the whole test binary, since the harness main thread blocks
+    /// in `recv()` waiting on the worker). The 45 orphaned, forever-
+    /// parked `barista_cache-*` test processes that motivated this fix
+    /// could never recur with this guard in place.
+    ///
+    /// On a watchdog trip we deliberately leave the spawned thread
+    /// running (we can't safely cancel it) and fail the test fast — the
+    /// process exit then reaps it.
+    fn with_watchdog<F: FnOnce() + Send + 'static>(secs: u64, f: F) {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            f();
+            // Best-effort: the receiver may already be gone if we
+            // tripped the watchdog; ignore the send error in that case.
+            let _ = tx.send(());
+        });
+        match rx.recv_timeout(Duration::from_secs(secs)) {
+            Ok(()) => {
+                handle.join().expect("watched lock test thread panicked");
+            }
+            Err(_) => panic!(
+                "lock test exceeded {secs}s — likely a FilesystemLock acquire regression"
+            ),
         }
     }
 
@@ -436,50 +537,66 @@ mod tests {
     }
 
     // 10. Two runtimes racing for the same FilesystemLock.
+    //
+    // Wall-clock-guarded (see `with_watchdog`): the contended acquirer
+    // must time out at ~300ms, never park. A 15s watchdog turns any
+    // regression that re-introduces a blocking acquire into a fast,
+    // loud failure instead of an indefinite hang.
     #[test]
     fn fs_lock_excludes_concurrent_acquirers() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().to_path_buf();
-        let k = key("org.example", "lib", "1.0");
+        with_watchdog(15, || {
+            let tmp = TempDir::new().unwrap();
+            let root = tmp.path().to_path_buf();
+            let k = key("org.example", "lib", "1.0");
 
-        let rt1 = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        let lock1 = rt1.block_on(FilesystemLock::acquire(&root, &k)).unwrap();
-
-        let root2 = root.clone();
-        let k2 = k.clone();
-        let handle = std::thread::spawn(move || {
-            let rt2 = tokio::runtime::Builder::new_current_thread()
+            let rt1 = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .unwrap();
-            rt2.block_on(FilesystemLock::acquire_with_timeout(
-                &root2,
-                &k2,
-                Duration::from_millis(300),
-            ))
-        });
+            let lock1 = rt1.block_on(FilesystemLock::acquire(&root, &k)).unwrap();
 
-        let result = handle.join().unwrap();
-        assert!(
-            matches!(result, Err(LockError::Timeout { .. })),
-            "expected Timeout, got {result:?}"
-        );
-        drop(lock1);
+            let root2 = root.clone();
+            let k2 = k.clone();
+            let handle = std::thread::spawn(move || {
+                let rt2 = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                rt2.block_on(FilesystemLock::acquire_with_timeout(
+                    &root2,
+                    &k2,
+                    Duration::from_millis(300),
+                ))
+            });
+
+            let result = handle.join().unwrap();
+            assert!(
+                matches!(result, Err(LockError::Timeout { .. })),
+                "expected Timeout, got {result:?}"
+            );
+            drop(lock1);
+        });
     }
 
     // 11. acquire_with_timeout returns Timeout when contended.
+    //
+    // Wall-clock-guarded via `tokio::time::timeout`: the 200ms acquire
+    // timeout must fire promptly; the 15s outer guard fails fast if the
+    // inner acquire ever wedges instead of timing out.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn fs_lock_timeout_when_contended() {
-        let tmp = TempDir::new().unwrap();
-        let k = key("org.example", "lib", "1.0");
-        let _held = FilesystemLock::acquire(tmp.path(), &k).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(15), async {
+            let tmp = TempDir::new().unwrap();
+            let k = key("org.example", "lib", "1.0");
+            let _held = FilesystemLock::acquire(tmp.path(), &k).await.unwrap();
 
-        let result =
-            FilesystemLock::acquire_with_timeout(tmp.path(), &k, Duration::from_millis(200)).await;
-        assert!(matches!(result, Err(LockError::Timeout { .. })));
+            let result =
+                FilesystemLock::acquire_with_timeout(tmp.path(), &k, Duration::from_millis(200))
+                    .await;
+            assert!(matches!(result, Err(LockError::Timeout { .. })));
+        })
+        .await
+        .expect("lock test exceeded 15s — likely a FilesystemLock acquire regression");
     }
 
     // 12. lock_path is stable across runs.

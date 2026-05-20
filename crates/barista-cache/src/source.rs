@@ -41,7 +41,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use tokio::io::AsyncReadExt;
@@ -57,7 +57,15 @@ use crate::cas::{Cas, CasError, ContentHash};
 use crate::checksum::{self, Verification};
 use crate::fetch::{ConditionalHeaders, FetchError, FetchOutcome, Fetcher};
 use crate::index::{Index, IndexEntry, IndexKey, Origin, OriginTier};
-use crate::lock::{CoordLockMap, CoordVersionKey, FilesystemLock};
+use crate::lock::{CoordLockMap, CoordVersionKey, FilesystemLock, LockError};
+
+/// Upper bound on how long a fetch will wait for the cross-process
+/// [`FilesystemLock`] before failing loudly. An artifact fetch behind a
+/// contended lock should resolve well under two minutes; a wait this
+/// long means another `barista` process is genuinely wedged, and we'd
+/// rather fail the build with a pointer to the stuck lock than hang
+/// forever. Tunable here so it stays discoverable.
+const LOCK_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Sentinel "version" used as the [`IndexKey::version`] for the
 /// group:artifact-level `maven-metadata.xml` entries. The `<>` makes
@@ -444,13 +452,30 @@ impl CacheSource {
         // check and the lock acquisition; re-check after taking the
         // fs lock so we don't double-fetch.
         let lock_root = self.lock_root();
-        let _fs_lock = FilesystemLock::acquire(&lock_root, &lock_key)
-            .await
-            .map_err(|e| MetadataError::Transport {
+        let _fs_lock = FilesystemLock::acquire_with_timeout(
+            &lock_root,
+            &lock_key,
+            LOCK_ACQUIRE_TIMEOUT,
+        )
+        .await
+        .map_err(|e| {
+            let detail = match &e {
+                LockError::Timeout { path, seconds } => format!(
+                    "lock acquisition timed out after {seconds}s for {}:{}:{} — \
+                     another barista process may be stuck; see {}",
+                    coords.group,
+                    coords.artifact,
+                    version,
+                    path.display(),
+                ),
+                other => format!("filesystem lock: {other}"),
+            };
+            MetadataError::Transport {
                 coords: format!("{}:{}", coords.group, coords.artifact),
                 version: version.to_string(),
-                detail: format!("filesystem lock: {e}"),
-            })?;
+                detail,
+            }
+        })?;
 
         if let Some(entry) = self.inner.index.get(&index_key) {
             let bytes = self

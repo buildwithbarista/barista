@@ -71,8 +71,13 @@ jobs:
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-03-27
         with:
           toolchain: stable
+      # Wrapped in coreutils `timeout` (present on ubuntu-latest) so an
+      # interrupted or hung run is killed as a process group rather than
+      # orphaning the test binary. A wedged lock test used to reparent
+      # to PID 1 and live forever; SIGTERM at 20 min, escalating to
+      # SIGKILL 30s later, guarantees the binary cannot be orphaned.
       - name: cargo test
-        run: cargo test --workspace
+        run: timeout --signal=TERM --kill-after=30s 1200s cargo test --workspace
 
   rust-windows:
     name: Rust check + named-pipe conformance + verify smoke (windows)
