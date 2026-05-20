@@ -141,7 +141,12 @@ SHA-256**, and the address *is* the integrity check.
   matching `.sha256` — Barista will accept it: the bytes match the published
   digest. Defending against that requires verifying a publisher signature
   (e.g. PGP / Sigstore) against an out-of-band trust root; that is a v0.2 item
-  (see [Known deferrals](#known-deferrals-v02)).
+  (see [Known deferrals](#known-deferrals-v02)). This boundary is exercised
+  directly by the cache-poisoning red-team suite
+  (`crates/barista-cache/tests/redteam_cache_poison.rs::coordinated_upstream_swap_is_accepted_documented_tofu_residual`),
+  which asserts the *current* accepted behavior rather than pretending a defense
+  exists — the test is the tripwire for if/when consumer-side signature
+  verification lands.
 - **The local cache root is trusted to the OS.** Barista assumes the cache
   directory is only writable by the developer. It does not detect an attacker
   who has filesystem write access and rewrites an object *and* updates the
@@ -197,11 +202,24 @@ whose SHA-256 doesn't match the pinned `sha256`.
 **Residual risk / deferred.**
 
 - **The lockfile itself is not signed.** Its authenticity is anchored to code
-  review + version control, not a cryptographic signature. A reviewer who
-  approves a malicious lockfile change (the digests are opaque hex) gets no
-  automated warning beyond the human-readable diff
-  (`crates/barista-lockfile/src/diff.rs`). This is the standard lockfile trust
-  model (the same as Cargo/npm) and is intentional for v0.1.
+  review + version control, not a cryptographic signature. The
+  `project_signature` is a SHA-256 over the canonicalized effective POMs (the
+  resolution *inputs*), **not** over the lockfile entries: it gates "did the
+  source tree drift from what was locked?", and a `--frozen` build rejects that
+  drift loudly. It does **not** gate a tamper applied *only* to a pinned entry
+  digest/version while the source tree is left untouched — that case reports
+  `Authoritative` under the signature check and is instead caught downstream by
+  the content-addressed re-verify when the artifact is fetched (the
+  cache-poisoning machinery, finding #1). A reviewer who approves a malicious
+  lockfile change (the digests are opaque hex) gets no automated warning beyond
+  the human-readable diff (`crates/barista-lockfile/src/diff.rs`). This is the
+  standard lockfile trust model (the same as Cargo/npm) and is intentional for
+  v0.1. The lockfile-drift red-team suite
+  (`crates/barista-lockfile/tests/redteam_lockfile_drift.rs`) verifies the
+  `--frozen` rejections (drifted source, forged/corrupted/empty/missing
+  signature) and asserts the entry-tamper boundary explicitly
+  (`frozen_entry_tamper_without_source_change_is_documented_residual`) so it
+  cannot silently regress.
 - **`--frozen` is opt-in.** The default mode auto-refreshes a stale lockfile.
   Teams that want drift to be fatal must run CI with `--frozen`; this is the
   documented CI posture, not the default for local iteration.
@@ -508,9 +526,9 @@ here with a severity and a status.
 
 | # | Threat class | Finding | Severity | Status | Mitigation (file + mechanism) |
 |---|---|---|---|---|---|
-| 1 | Cache poisoning | Tampered/MITM'd artifact bytes substituted for a legitimate coordinate | High | mitigated | Content-addressed SHA-256 store (`crates/barista-cache/src/cas.rs`) + sidecar verify (`crates/barista-cache/src/checksum.rs`) + server-side PUT verify (`roastery/src/storage/fs.rs`, `BAR-CAS-001`) |
-| 2 | Cache poisoning | No publisher-signature check; a compromised upstream serving JAR+matching sidecar is accepted | Medium | deferred (v0.2: consumer-side signature verification) | — |
-| 3 | Lockfile drift | Resolved graph diverges from the reviewed/committed lockfile | High | mitigated | Project signature (`crates/barista-lockfile/src/signature.rs`) + `--frozen` reject (`crates/barista-lockfile/src/mode.rs`) + per-entry pinned `sha256` (`crates/barista-lockfile/src/schema.rs`) |
+| 1 | Cache poisoning | Tampered/MITM'd artifact bytes substituted for a legitimate coordinate | High | mitigated — red-team verified | Content-addressed SHA-256 store (`crates/barista-cache/src/cas.rs`) + sidecar verify (`crates/barista-cache/src/checksum.rs`) + server-side PUT verify (`roastery/src/storage/fs.rs`, `BAR-CAS-001`). Red-team: `crates/barista-cache/tests/redteam_cache_poison.rs` — `upstream_wrong_bytes_rejected_and_nothing_persisted`, `roastery_lies_with_poison_caught_client_side_no_poison_persisted`, `roastery_bar_cas_001_rejected_no_poison_persisted`, `truncated_body_leaves_no_partial_object`, `legit_refetch_succeeds_after_rejected_poison` (each proves the no-poison-persisted property: rejected fetch leaves no CAS object, no index entry, no tmp orphan) |
+| 2 | Cache poisoning | No publisher-signature check; a compromised upstream serving JAR+matching sidecar (a coordinated artifact+sidecar swap) is accepted | Medium | accepted residual — red-team documented; deferred (v0.2: consumer-side signature verification) | Checksum verification is trust-on-first-use against the upstream-published sidecar. Boundary asserted honestly by `crates/barista-cache/tests/redteam_cache_poison.rs::coordinated_upstream_swap_is_accepted_documented_tofu_residual` (the self-consistent swap is accepted and cached) and `crates/barista-lockfile/tests/redteam_lockfile_drift.rs::frozen_entry_tamper_without_source_change_is_documented_residual` (the lockfile `project_signature` is over POMs, not entries, so it does not gate entry bytes). The real defense is the lockfile pin + downstream content-addressed re-verify (finding #1) |
+| 3 | Lockfile drift | Resolved graph diverges from the reviewed/committed lockfile | High | mitigated — red-team verified | Project signature (`crates/barista-lockfile/src/signature.rs`) + `--frozen` reject (`crates/barista-lockfile/src/mode.rs`) + per-entry pinned `sha256` (`crates/barista-lockfile/src/schema.rs`). Red-team: `crates/barista-lockfile/tests/redteam_lockfile_drift.rs` — `frozen_rejects_when_source_tree_drifted_from_lockfile`, `frozen_rejects_forged_signature`, `frozen_rejects_corrupted_signature_bytes`, `missing_signature_field_fails_to_parse`, `frozen_rejects_empty_signature`, plus the permissive-by-design contrast (`default_mode_treats_drift_as_refreshable_not_fatal`) and the negative control (`frozen_accepts_untampered_round_tripped_lockfile`) |
 | 4 | Credentials | In-flight `mvn deploy` credentials readable by another local principal on the CLI↔daemon channel | High | mitigated | 0600 owner-only UDS (`crates/barista-ipc/src/transport/uds.rs`) / per-user-SID DACL'd named pipe (`crates/barista-ipc/src/transport/pipe.rs`, `crates/barista-ipc/src/auth/dacl.rs`); decrypt-at-boundary + scoped + zero-after-use `CredentialsEnvelope` (`proto/barista/v1/worker.proto`, `crates/barista-ipc/src/auth/zeroize.rs`) |
 | 5 | Dependency confusion | Malicious artifact preferred over the intended trusted source | High | mitigated | Operator-configured source precedence (`crates/barista-config/src/lib.rs`) + digest-keyed roastery/upstream ordering (`crates/barista-cache/src/source.rs`, `roastery/src/upstream/fetch.rs`) |
 | 6 | Dependency confusion | No coordinate-scoped repository pinning; first-resolution TOFU on a brand-new coordinate | Medium | accepted (mitigated in practice by committing a lockfile) | Lockfile pin (`crates/barista-lockfile/src/schema.rs`) |

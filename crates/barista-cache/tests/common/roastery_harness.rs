@@ -86,6 +86,7 @@ pub async fn spawn_plain_roastery() -> RoasteryHarness {
         cas: Arc::new(cas),
         config: Arc::new(cfg),
         upstream: None,
+        bearer: None,
     };
     let app = axum::Router::new()
         .merge(roastery::proto::barista::public_router().with_state(state.clone()))
@@ -135,13 +136,15 @@ pub async fn spawn_bearer_roastery() -> RoasteryHarness {
         },
         upstream: UpstreamConfig::default(),
     };
+    let bearer_verifier = Arc::new(BearerVerifier::load(tokens.path()).expect("bearer verifier"));
+
     let state = AppState {
         cas: Arc::new(cas),
         config: Arc::new(cfg),
         upstream: None,
+        bearer: Some(bearer_verifier.clone()),
     };
 
-    let bearer_verifier = Arc::new(BearerVerifier::load(tokens.path()).expect("bearer verifier"));
     let auth_layer = AuthLayer::new(Some(bearer_verifier), None);
 
     let protected = roastery::proto::barista::protected_router()
@@ -228,6 +231,73 @@ pub async fn spawn_put_failing_roastery() -> RoasteryHarness {
                 (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(body))
             },
         ),
+    );
+
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    wait_for_listener(addr, Duration::from_secs(4)).await;
+
+    RoasteryHarness {
+        addr,
+        _tmp: tmp,
+        _tokens_file: None,
+        server: Some(server),
+    }
+}
+
+/// Spin a tiny axum mock that answers every blob GET with `200 OK`
+/// carrying **attacker-controlled bytes** while echoing the
+/// *requested* digest in `X-Barista-Digest` (so the client's
+/// header cross-check in `parse_blob_stat` is satisfied). This models
+/// a malicious — or simply buggy — roastery that bypasses its own
+/// server-side PUT verification and serves bytes that do NOT hash to
+/// the digest the client asked for.
+///
+/// It is the harder cousin of [`spawn_digest_mismatch_mock`]: that
+/// fixture has the server *honestly reject* with `400 BAR-CAS-001`;
+/// this one *lies* and returns a 200 with poison. The cache must
+/// still catch it client-side (local sidecar re-verify +
+/// `cas_hash == asked` assertion) and refuse to persist the poison.
+///
+/// `poison` is the body served for every blob GET regardless of the
+/// requested digest.
+pub async fn spawn_lying_roastery(poison: Vec<u8>) -> RoasteryHarness {
+    let tmp = TempDir::new().expect("tempdir");
+
+    let std_listener = StdTcpListener::bind("127.0.0.1:0").expect("bind");
+    std_listener.set_nonblocking(true).expect("nonblocking");
+    let addr = std_listener.local_addr().expect("addr");
+    let listener = TcpListener::from_std(std_listener).expect("from std");
+
+    let poison = Arc::new(poison);
+    let app: Router = Router::new().route(
+        "/v1/cas/sha256/{digest}",
+        get({
+            let poison = Arc::clone(&poison);
+            move |AxPath(digest): AxPath<String>| {
+                let poison = Arc::clone(&poison);
+                async move {
+                    // Echo back the *requested* digest so the
+                    // client-side `X-Barista-Digest` header check
+                    // passes; the body is poison that does NOT hash
+                    // to it.
+                    let hex = digest.strip_prefix("sha256:").unwrap_or(&digest);
+                    let mut headers = axum::http::HeaderMap::new();
+                    headers.insert(
+                        "X-Barista-Digest",
+                        axum::http::HeaderValue::from_str(&format!("sha256:{hex}"))
+                            .expect("digest header"),
+                    );
+                    headers.insert(
+                        axum::http::header::CONTENT_LENGTH,
+                        axum::http::HeaderValue::from_str(&poison.len().to_string())
+                            .expect("len header"),
+                    );
+                    (StatusCode::OK, headers, (*poison).clone())
+                }
+            }
+        }),
     );
 
     let server = tokio::spawn(async move {
