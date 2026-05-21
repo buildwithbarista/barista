@@ -237,6 +237,12 @@ jobs:
       # binaries inside the distributed .tar.gz pass Gatekeeper online. Loose
       # CLI binaries can't be stapled, so verification is online (a one-time
       # offline first-run prompt is possible).
+      #
+      # `--wait` returns the instant Apple reports Accepted/Invalid, so the
+      # `--timeout` is only a protective ceiling, not the expected wait. A
+      # team's *first* submission can sit "In Progress" far longer than steady
+      # state (Apple does extra one-time account validation), so the cap is
+      # generous; steady-state runs finish in minutes well under it.
       - name: Notarize macOS binaries
         if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
         env:
@@ -258,7 +264,7 @@ jobs:
             --key "${KEY_P8}" \
             --key-id "${NOTARY_KEY_ID}" \
             --issuer "${NOTARY_ISSUER_ID}" \
-            --wait --timeout 30m
+            --wait --timeout 2h
           rm -f "${KEY_P8}" "${RUNNER_TEMP}/notarize.zip"
           echo "::notice::Notarized macOS binaries for ${BUILD_TARGET}."
 

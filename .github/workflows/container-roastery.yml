@@ -28,9 +28,11 @@
 # Supply-chain attestations (all keyless via the GitHub OIDC token — no
 # stored secret):
 #
-#   - buildx emits a CycloneDX SBOM (`sbom: true`) and SLSA build
-#     provenance (`provenance: mode=max`), pushed to the registry
-#     attached to the image manifest.
+#   - buildx emits an SPDX SBOM (`sbom: true`; BuildKit's syft scanner
+#     defaults to SPDX) and SLSA build provenance (`provenance: mode=max`),
+#     pushed to the registry attached to the image manifest. (A CycloneDX
+#     SBOM for the image is a planned addition so every artifact carries
+#     both formats.)
 #   - the pushed image is signed by its immutable digest with Sigstore
 #     cosign, so `cosign verify` validates it against the GitHub Actions
 #     workflow identity.
@@ -185,7 +187,8 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           # Keyless supply-chain attestations attached to the image
           # manifest in the registry: SLSA build provenance
-          # (`mode=max` records every build stage) + a CycloneDX SBOM.
+          # (`mode=max` records every build stage) + an SPDX SBOM
+          # (`sbom: true` → BuildKit's syft scanner emits SPDX).
           # Both ride the push; on a PR (push:false) they are built but
           # discarded.
           provenance: mode=max

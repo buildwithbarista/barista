@@ -230,8 +230,23 @@ REMAP_FLAGS=(
     "--remap-path-prefix=${REPO_ROOT}=/barista"
     "--remap-path-prefix=${HOME}=/home"
 )
+
+# Linux ELF only: drop the `.note.gnu.build-id`. The GNU linker's
+# build-id is the one region that is NOT byte-stable across two
+# otherwise-identical Linux builds — it was the sole divergence in the
+# two-build reproducibility check (the surrounding code generation is
+# deterministic; a macOS host build of the same tree is byte-identical
+# run-to-run, and Mach-O has no build-id equivalent). Because we
+# `strip=symbols` and ship no separate debuginfo, the note carries no
+# value here, so removing it is the minimal fix that makes the Linux
+# binary byte-reproducible.
+BUILD_ID_FLAG=""
+case "$TARGET" in
+    *linux*) BUILD_ID_FLAG="-C link-arg=-Wl,--build-id=none" ;;
+esac
+
 # Compose RUSTFLAGS, preserving any caller-provided flags.
-RELEASE_RUSTFLAGS="${RUSTFLAGS:-} ${REMAP_FLAGS[*]} -C strip=symbols"
+RELEASE_RUSTFLAGS="${RUSTFLAGS:-} ${REMAP_FLAGS[*]} -C strip=symbols ${BUILD_ID_FLAG}"
 # Collapse leading/trailing whitespace for cleanliness.
 RELEASE_RUSTFLAGS="$(echo "$RELEASE_RUSTFLAGS" | sed 's/^ *//; s/ *$//')"
 export RUSTFLAGS="$RELEASE_RUSTFLAGS"

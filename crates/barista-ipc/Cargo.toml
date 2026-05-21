@@ -112,7 +112,9 @@ libc = "0.2"
 # `Win32_System_Pipes` carries `CreateNamedPipeW` and the pipe-mode
 # constants; `Win32_Foundation` carries `HANDLE` / `BOOL` / `CloseHandle`
 # / common error codes; `Win32_System_Memory` carries `LocalFree` (used
-# to free the SID allocated by `ConvertStringSidToSidW`).
+# to free the SID allocated by `ConvertStringSidToSidW`);
+# `Win32_System_SystemServices` carries `SECURITY_DESCRIPTOR_REVISION`
+# (the revision constant passed to `InitializeSecurityDescriptor`).
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
@@ -120,6 +122,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_Security_Authorization",
     "Win32_System_Memory",
     "Win32_System_Pipes",
+    "Win32_System_SystemServices",
     "Win32_System_Threading",
 ] }
 

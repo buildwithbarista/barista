@@ -50,7 +50,7 @@
 
 use std::ffi::c_void;
 use std::io;
-use std::mem::{MaybeUninit, size_of};
+use std::mem::size_of;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
@@ -144,7 +144,7 @@ impl PipeDacl {
         //
         // The DACL needs: ACL header + per-ACE { ACCESS_ALLOWED_ACE
         // header + SID body }. We have two ACEs (user + SYSTEM).
-        let sid_user_len = unsafe { GetLengthSid(user_sid.as_ptr().cast::<c_void>()) };
+        let sid_user_len = unsafe { GetLengthSid(user_sid.as_ptr().cast::<c_void>().cast_mut()) };
         let sid_sys_len = unsafe { GetLengthSid(system_sid) };
 
         // ACCESS_ALLOWED_ACE = 8 bytes of header + the SID body, minus
