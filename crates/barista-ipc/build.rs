@@ -41,6 +41,29 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=PROTOC");
 
+    // Vendored protoc: set PROTOC from `protoc-bin-vendored` unless the
+    // contributor already pointed it somewhere. It ships a per-platform
+    // `protoc` binary, so no system protoc install is needed anywhere — CI,
+    // release builds (the cross-platform release matrix), or local dev.
+    // Mirrors roastery's build script.
+    if std::env::var_os("PROTOC").is_none() {
+        let protoc = protoc_bin_vendored::protoc_bin_path().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("vendored protoc unavailable: {e}"),
+            )
+        })?;
+        // SAFETY: build scripts run single-threaded before any other crate
+        // code; setting `PROTOC` here only influences the `prost-build`
+        // protoc invocation that follows on this same thread. The workspace
+        // `unsafe_code` lint warns on `unsafe`; this is the documented
+        // exception (Rust 2024 made `set_var` unsafe).
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("PROTOC", protoc);
+        }
+    }
+
     let mut config = prost_build::Config::new();
 
     // No google.protobuf.* well-known types in the schema (verified against

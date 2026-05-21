@@ -134,6 +134,10 @@ windows-sys = { version = "0.59", features = [
 # `*` bullets + backticked tokens that rustdoc would otherwise try to
 # parse as indented code blocks, producing spurious lex errors).
 prost-build = { version = "0.13", features = ["cleanup-markdown"] }
+# Vendored `protoc` binary so no system protoc install is needed anywhere
+# (CI, the cross-platform release matrix, local dev). build.rs points
+# `PROTOC` at it when unset. Mirrors roastery's build dependency.
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 # `tempfile` provides a per-test tmpdir so concurrent UDS tests don't

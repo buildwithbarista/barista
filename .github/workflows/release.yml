@@ -161,7 +161,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "$LINKER_PKG"
+          # The cross-linker package plus the aarch64 libc dev headers — the
+          # latter is needed so C deps (e.g. `ring`) can cross-compile
+          # (otherwise: "bits/libc-header-start.h: No such file or directory").
+          sudo apt-get install -y --no-install-recommends "$LINKER_PKG" libc6-dev-arm64-cross
           # Point cargo at the cross-linker for this target. The env-var
           # name is the upper-cased, `-`→`_` target triple.
           {
