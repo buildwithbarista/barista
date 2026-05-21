@@ -168,6 +168,43 @@ jobs:
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
           } >> "$GITHUB_ENV"
 
+      # macOS Developer ID signing keychain. Runs on the macOS legs only;
+      # gracefully no-ops (and leaves the binaries unsigned) when the Apple
+      # secrets aren't configured, so forks and secret-less runs still build.
+      # Windows code signing is intentionally NOT wired (kept keyless for now).
+      - name: Set up macOS signing keychain
+        id: signing
+        if: runner.os == 'macOS'
+        env:
+          CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CERT_P12_BASE64}" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Apple signing secrets not set — macOS binaries ship unsigned (Gatekeeper will warn)."
+            exit 0
+          fi
+          KEYCHAIN="${RUNNER_TEMP}/barista-signing.keychain-db"
+          KC_PASS="$(openssl rand -base64 24)"
+          CERT_PATH="${RUNNER_TEMP}/developer-id.p12"
+          printf '%s' "${CERT_P12_BASE64}" | base64 --decode > "${CERT_PATH}"
+          security create-keychain -p "${KC_PASS}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+          security unlock-keychain -p "${KC_PASS}" "${KEYCHAIN}"
+          security import "${CERT_PATH}" -k "${KEYCHAIN}" -P "${CERT_PASSWORD}" \
+            -t cert -f pkcs12 -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "${KC_PASS}" "${KEYCHAIN}" >/dev/null
+          # Prepend the signing keychain to the user search list (keep the rest)
+          # so codesign resolves the identity.
+          existing="$(security list-keychains -d user | sed 's/[[:space:]]*"//g' | tr '\n' ' ')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "${KEYCHAIN}" ${existing}
+          rm -f "${CERT_PATH}"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::macOS Developer ID keychain ready."
+
       - name: Build + package (deterministic)
         shell: bash
         # `scripts/build-release.sh` is the single source of determinism
@@ -181,11 +218,46 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
           BUILD_GIT_SHA: ${{ github.sha }}
+          # Non-empty only on a macOS leg whose signing keychain was set up;
+          # build-release.sh codesigns the Mach-O binaries when this is set
+          # (and `codesign` exists). Empty everywhere else → unsigned build.
+          BARISTA_CODESIGN_IDENTITY: ${{ steps.signing.outputs.enabled == 'true' && secrets.APPLE_SIGNING_IDENTITY || '' }}
         run: |
           bash scripts/build-release.sh \
             --target "$BUILD_TARGET" \
             --out-dir dist \
             --git-sha "$BUILD_GIT_SHA"
+
+      # Notarize the signed macOS binaries with Apple (App Store Connect API
+      # key). notarytool accepts .zip/.dmg/.pkg, so we zip the signed Mach-O
+      # binaries from the built archive; Apple registers their hashes, so the
+      # binaries inside the distributed .tar.gz pass Gatekeeper online. Loose
+      # CLI binaries can't be stapled, so verification is online (a one-time
+      # offline first-run prompt is possible).
+      - name: Notarize macOS binaries
+        if: runner.os == 'macOS' && steps.signing.outputs.enabled == 'true'
+        env:
+          NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          KEY_P8="${RUNNER_TEMP}/notary-key.p8"
+          printf '%s' "${NOTARY_KEY_P8_BASE64}" | base64 --decode > "${KEY_P8}"
+          ARCHIVE="$(ls dist/barista-*-"${BUILD_TARGET}".tar.gz)"
+          WORK="${RUNNER_TEMP}/notarize"
+          rm -rf "${WORK}"; mkdir -p "${WORK}"
+          tar xzf "${ARCHIVE}" -C "${WORK}"
+          PKG_DIR="$(ls -d "${WORK}"/barista-*/)"
+          ditto -c -k --keepParent "${PKG_DIR}bin" "${RUNNER_TEMP}/notarize.zip"
+          xcrun notarytool submit "${RUNNER_TEMP}/notarize.zip" \
+            --key "${KEY_P8}" \
+            --key-id "${NOTARY_KEY_ID}" \
+            --issuer "${NOTARY_ISSUER_ID}" \
+            --wait --timeout 30m
+          rm -f "${KEY_P8}" "${RUNNER_TEMP}/notarize.zip"
+          echo "::notice::Notarized macOS binaries for ${BUILD_TARGET}."
 
       - name: Upload target artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

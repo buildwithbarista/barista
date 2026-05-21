@@ -337,6 +337,28 @@ for doc in LICENSE-APACHE LICENSE-MIT README.md CHANGELOG.md; do
     fi
 done
 
+# macOS code signing (Developer ID + hardened runtime + secure timestamp).
+# Runs only when an identity is provided AND `codesign` is on PATH (i.e. on
+# a macOS runner with the signing keychain already set up by the workflow);
+# a no-op on the Linux/Windows legs and on local builds without an identity.
+# Only OUR Mach-O binaries are signed — the bundled Maven distribution
+# (Apache's) and barback-uber.jar (a JVM jar) are not codesign subjects.
+#
+# Signing embeds a signature + a secure timestamp, so a signed binary is NOT
+# byte-reproducible across builds. That is expected and acceptable: the
+# repro-verify gate runs on the `x86_64-unknown-linux-gnu` target only (which
+# is never signed), so reproducibility is proven on the unsigned Linux build.
+if [[ -n "${BARISTA_CODESIGN_IDENTITY:-}" ]] && command -v codesign >/dev/null 2>&1; then
+    echo "build-release: codesigning Mach-O binaries (Developer ID, hardened runtime)"
+    for bin in "${STAGE}/bin/barista${BIN_SUFFIX}" "${STAGE}/bin/roastery${BIN_SUFFIX}"; do
+        codesign --force --options runtime --timestamp \
+            --sign "${BARISTA_CODESIGN_IDENTITY}" "$bin" \
+            || die "codesign failed for $bin"
+        codesign --verify --strict --verbose=2 "$bin" \
+            || die "codesign verification failed for $bin"
+    done
+fi
+
 # Normalize every file's mtime to SOURCE_DATE_EPOCH so the archive's
 # embedded timestamps are stable. `find | sort` gives a deterministic
 # traversal order. Use the BSD/GNU touch epoch form that's available.
