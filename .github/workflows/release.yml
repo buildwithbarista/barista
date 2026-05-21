@@ -171,6 +171,15 @@ jobs:
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc"
           } >> "$GITHUB_ENV"
 
+      # The Windows runner's Git-bash ships GNU tar (which cannot write a
+      # zip) and no `zip`; the packaging step needs a real zip writer.
+      # Chocolatey (preinstalled) provides `zip`, which build-release.sh
+      # prefers (it falls back to 7-Zip / bsdtar if `zip` is ever absent).
+      - name: Install zip (Windows only)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: choco install zip -y --no-progress
+
       # macOS Developer ID signing keychain. Runs on the macOS legs only;
       # gracefully no-ops (and leaves the binaries unsigned) when the Apple
       # secrets aren't configured, so forks and secret-less runs still build.
@@ -343,9 +352,10 @@ jobs:
             --git-sha "$BUILD_GIT_SHA"
 
       - name: Assert byte-identical
+        id: assert
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           A="target-a/${VERIFY_TARGET}/release/barista"
           B="target-b/${VERIFY_TARGET}/release/barista"
           SHA_A="$(sha256sum "$A" | awk '{print $1}')"
@@ -354,8 +364,33 @@ jobs:
           echo "build B: $SHA_B"
           if [ "$SHA_A" != "$SHA_B" ]; then
             echo "::error::reproducibility check FAILED: $SHA_A != $SHA_B"
-            # Surface the first divergence to make debugging tractable.
-            cmp "$A" "$B" || true
+            # ---- Self-diagnosis: pinpoint WHAT differs so the cause is
+            # actionable without a second run. Saved binaries are also
+            # uploaded (see the failure step below) for offline analysis.
+            echo "----- diff extent -----"
+            DIFFCOUNT="$(cmp -l "$A" "$B" 2>/dev/null | wc -l)"
+            echo "differing bytes: ${DIFFCOUNT} of $(stat -c%s "$A")"
+            echo "first 16 differing offsets (decimal pos | octal A | octal B):"
+            cmp -l "$A" "$B" 2>/dev/null | head -16
+            FIRST="$(cmp -l "$A" "$B" 2>/dev/null | head -1 | awk '{print $1}')"
+            LAST="$(cmp -l "$A" "$B" 2>/dev/null | tail -1 | awk '{print $1}')"
+            echo "first diff @ ${FIRST}, last diff @ ${LAST}"
+            echo "----- ELF sections (find the one containing offset ${FIRST}) -----"
+            readelf -SW "$A" || true
+            echo "----- which symbol owns the region (A) -----"
+            # Re-link is stripped, so use the section; dump a window around
+            # the first diff from both binaries to reveal embedded content.
+            if [ -n "${FIRST}" ]; then
+              START=$(( FIRST > 64 ? FIRST - 64 : 0 ))
+              echo "----- xxd window A @ ${START} -----"
+              xxd -s "${START}" -l 192 "$A" || true
+              echo "----- xxd window B @ ${START} -----"
+              xxd -s "${START}" -l 192 "$B" || true
+              echo "----- printable strings in the window -----"
+              echo "A:"; dd if="$A" bs=1 skip="${START}" count=192 2>/dev/null | strings -n 4 || true
+              echo "B:"; dd if="$B" bs=1 skip="${START}" count=192 2>/dev/null | strings -n 4 || true
+            fi
+            echo "REPRO_FAILED=1" >> "$GITHUB_OUTPUT"
             exit 1
           fi
           # Archives must match too (the packaging step is part of the
@@ -364,6 +399,20 @@ jobs:
           ARC_B="$(ls dist-b/barista-*-"${VERIFY_TARGET}".tar.gz)"
           cmp "$ARC_A" "$ARC_B"
           echo "Reproducibility verified: binary + archive byte-identical across two independent builds."
+
+      # On a reproducibility failure, keep both binaries so the exact
+      # divergence can be analyzed offline (objdump/diff). Temporary
+      # diagnostic aid for the determinism investigation.
+      - name: Upload diverging binaries (on repro failure)
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repro-diverging-binaries
+          path: |
+            target-a/${{ env.VERIFY_TARGET }}/release/barista
+            target-b/${{ env.VERIFY_TARGET }}/release/barista
+          if-no-files-found: warn
+          retention-days: 3
 
   # ---------------------------------------------------------------------
   # publish — attach artifacts + aggregate manifest to a GitHub Release.

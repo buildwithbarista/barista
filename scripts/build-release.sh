@@ -467,13 +467,26 @@ else
     ZIP_MEMBERS="$(mktemp)"
     ( cd "$STAGE_PARENT" && find "$PKG_NAME" -print | LC_ALL=C sort ) > "$ZIP_MEMBERS"
     if command -v zip >/dev/null 2>&1; then
+        # `zip -X` strips uid/gid + extended attrs; `-@` reads the member
+        # list from stdin. Preferred when present (the release workflow
+        # provisions it on the Windows runner).
         ( cd "$STAGE_PARENT" && zip -X -9 "$ARCHIVE_PATH" -@ < "$ZIP_MEMBERS" >/dev/null )
-    elif tar --help 2>&1 | grep -qi 'libarchive\|bsdtar' || tar --version 2>&1 | grep -qi 'bsdtar'; then
+    elif command -v 7z >/dev/null 2>&1; then
+        # 7-Zip ships on GitHub's Windows runners. `@listfile` adds the
+        # named members; `-bso0 -bsp0` silence stdout/progress.
+        ( cd "$STAGE_PARENT" && 7z a -tzip -mx=9 -bso0 -bsp0 "$ARCHIVE_PATH" "@${ZIP_MEMBERS}" >/dev/null )
+    elif command -v bsdtar >/dev/null 2>&1; then
+        ( cd "$STAGE_PARENT" \
+            && bsdtar --format=zip --no-recursion -cf "$ARCHIVE_PATH" --files-from "$ZIP_MEMBERS" )
+    elif tar --version 2>&1 | grep -qi 'bsdtar\|libarchive'; then
+        # Some platforms' default `tar` IS libarchive (e.g. macOS); the
+        # Windows built-in tar.exe is too, but Git-bash shadows it with
+        # GNU tar, which cannot write zip — hence the explicit checks above.
         ( cd "$STAGE_PARENT" \
             && tar --format=zip --no-recursion -cf "$ARCHIVE_PATH" --files-from "$ZIP_MEMBERS" )
     else
         rm -f "$ZIP_MEMBERS"
-        die "no zip tool available: need \`zip\` or a libarchive \`tar\` (bsdtar) to build the Windows .zip"
+        die "no zip tool available: need \`zip\`, \`7z\`, or a libarchive \`tar\`/\`bsdtar\` to build the Windows .zip"
     fi
     rm -f "$ZIP_MEMBERS"
 fi
