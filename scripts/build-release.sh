@@ -139,6 +139,8 @@ cd "$REPO_ROOT"
 # ---------------------------------------------------------------------
 # shellcheck source=scripts/lib/maven-bundle.sh
 . "${REPO_ROOT}/scripts/lib/maven-bundle.sh"
+# shellcheck source=scripts/lib/barback-bundle.sh
+. "${REPO_ROOT}/scripts/lib/barback-bundle.sh"
 
 # ---------------------------------------------------------------------
 # Resolve version + git SHA
@@ -316,6 +318,19 @@ else
     MAVEN_BUNDLE_SHA256="${MAVEN_ARCHIVE_SHA256}"
 fi
 
+# Bundle the barback daemon uber-JAR (default), or skip it for a fast local
+# binary-only build (the launcher then falls back to a dev checkout). The jar
+# ships at share/barista/barback-uber.jar — a sibling of the Maven
+# distribution — where the launcher's bundled-jar discovery finds it. Without
+# it, a binary install can `barista pull` but the daemon build path can't run.
+BARBACK_BUNDLE_SHA256=""
+if [[ "${SKIP_BARBACK_BUNDLE:-0}" == "1" ]]; then
+    echo "build-release: SKIP_BARBACK_BUNDLE=1 — not staging share/barista/barback-uber.jar"
+else
+    stage_barback_bundle "${STAGE}/share/barista"
+    BARBACK_BUNDLE_SHA256="$(sha256_of "${STAGE}/share/barista/${BARBACK_UBER_LEAF}")"
+fi
+
 for doc in LICENSE-APACHE LICENSE-MIT README.md CHANGELOG.md; do
     if [[ -f "$doc" ]]; then
         install -m 0644 "$doc" "${STAGE}/${doc}"
@@ -451,6 +466,8 @@ RUSTC_VERSION="$(rustc --version)"
 #     "git_sha":         "<full sha>",
 #     "maven_bundle":    { "version": "<ver>", "sha256": "<archive sha256>" }
 #                        OR null when SKIP_MAVEN_BUNDLE was set.
+#     "barback_bundle":  { "sha256": "<barback-uber.jar sha256>" }
+#                        OR null when SKIP_BARBACK_BUNDLE was set.
 #   }
 # ---------------------------------------------------------------------
 FRAGMENT_PATH="${OUT_DIR_ABS}/manifest-${TARGET}.json"
@@ -463,6 +480,8 @@ maven_bundle = (
     if maven_version
     else None
 )
+barback_sha256 = "${BARBACK_BUNDLE_SHA256}"
+barback_bundle = {"sha256": barback_sha256} if barback_sha256 else None
 fragment = {
     "target": "${TARGET}",
     "binary_sha256": "${BIN_SHA256}",
@@ -473,6 +492,7 @@ fragment = {
     "barista_version": "${VERSION}",
     "git_sha": "${GIT_SHA}",
     "maven_bundle": maven_bundle,
+    "barback_bundle": barback_bundle,
 }
 with open(sys.argv[1], "w") as f:
     json.dump(fragment, f, indent=2, sort_keys=True)

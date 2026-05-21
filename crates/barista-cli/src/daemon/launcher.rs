@@ -121,8 +121,10 @@ pub enum LauncherError {
     #[error(
         "{ERR_CODE_JAR_NOT_FOUND}: no barback classpath found. \
          Set `BARISTA_BARBACK_JAR=/path/to/barback-uber.jar`, \
-         `BARISTA_BARBACK_CLASSPATH=<classpath>`, or run from a dev \
-         checkout containing `barback/target/classes`. (tried: {tried})"
+         `BARISTA_BARBACK_CLASSPATH=<classpath>`, run from a dev \
+         checkout containing `barback/target/classes`, or install a \
+         release artifact bundling `share/barista/barback-uber.jar`. \
+         (tried: {tried})"
     )]
     JarNotFound {
         /// Comma-joined list of resolution strategies that were
@@ -589,7 +591,7 @@ fn write_pid(socket_dir: &Path, pid: u32) -> std::io::Result<()> {
 /// Strategies attempted in [`discover_jvm_entry`]. Documented as a
 /// type so error messages can list which paths were exercised.
 const TRIED_LIST: &str =
-    "$BARISTA_BARBACK_JAR, $BARISTA_BARBACK_CLASSPATH, $BARISTA_BARBACK_HOME/target/classes";
+    "$BARISTA_BARBACK_JAR, $BARISTA_BARBACK_CLASSPATH, $BARISTA_BARBACK_HOME/target/classes, <install-root>/share/barista/barback-uber.jar";
 
 /// Discover a [`JvmEntry`] to invoke barback with.
 ///
@@ -601,6 +603,11 @@ const TRIED_LIST: &str =
 ///    `<current_dir_walk_up>/barback/`) — the classpath is assembled
 ///    from `target/classes` + `target/test-classes` + the cached
 ///    `mvn dependency:build-classpath` output.
+/// 4. **Bundled uber-JAR** — `<install-root>/share/barista/barback-uber.jar`,
+///    shipped inside end-user release artifacts and discovered from the
+///    running executable's location (see [`bundled_barback_jar`]). This is
+///    the fallback that lets a fresh `brew install` / release tarball run
+///    `barista verify` with no `BARISTA_BARBACK_*` configuration.
 ///
 /// `cwd` is the directory the dev-loop walk-up starts at. Most callers
 /// pass `std::env::current_dir().unwrap_or(...)`. The hookable param
@@ -628,6 +635,17 @@ pub fn discover_jvm_entry(cwd: &Path) -> Result<JvmEntry, LauncherError> {
             main_class: "com.bluminal.barista.barback.Server".to_string(),
         });
     }
+    // 4. Bundled uber-JAR shipped in an end-user release artifact, found
+    //    relative to the running executable (mirrors the bundled Maven-home
+    //    discovery in `super::maven_home`). Canonicalize so `..`/symlink
+    //    shenanigans in the launch path don't defeat the grandparent
+    //    derivation; fall back to the raw path if canonicalization fails.
+    if let Ok(exe) = std::env::current_exe() {
+        let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+        if let Some(jar) = bundled_barback_jar(&exe, &super::maven_home::RealFs) {
+            return Ok(JvmEntry::Jar(jar));
+        }
+    }
     Err(LauncherError::JarNotFound {
         tried: TRIED_LIST.to_string(),
     })
@@ -643,6 +661,34 @@ fn find_barback_dev_dir(cwd: &Path) -> Option<PathBuf> {
         here = d.parent().map(Path::to_path_buf);
     }
     None
+}
+
+/// Install-root-relative path to the bundled barback uber-JAR inside an
+/// end-user release artifact: `<install-root>/share/barista/barback-uber.jar`
+/// — a sibling of the bundled Maven 4 distribution. The `barista`
+/// executable lives at `<install-root>/bin/barista`, so the install root is
+/// the executable's grandparent directory.
+pub const BUNDLED_BARBACK_REL: [&str; 3] = ["share", "barista", "barback-uber.jar"];
+
+/// Derive the bundled barback uber-JAR from the running executable's path.
+///
+/// Mirrors [`super::maven_home::bundled_maven_home`]: end-user installs
+/// (release tarball, Homebrew tap, container image) ship the uber-JAR
+/// bundled, so a fresh `barista verify` finds it with no
+/// `BARISTA_BARBACK_JAR` configured. Returns `Some(<jar>)` only when the
+/// candidate file exists per `fs`. Pure with respect to `fs`.
+pub fn bundled_barback_jar(current_exe: &Path, fs: &impl super::maven_home::FsProbe) -> Option<PathBuf> {
+    // <install-root> = grandparent of the executable (`<root>/bin/barista`).
+    let install_root = current_exe.parent()?.parent()?;
+    let mut candidate = install_root.to_path_buf();
+    for component in BUNDLED_BARBACK_REL {
+        candidate.push(component);
+    }
+    if fs.is_file(&candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 fn build_classpath_from_dev_dir(barback_dir: &Path) -> Result<OsString, LauncherError> {
@@ -784,6 +830,60 @@ mod tests {
             let mode = std::fs::metadata(&d).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o700, "socket dir must be 0700");
         }
+    }
+
+    /// Scripted filesystem probe for the bundled-jar discovery tests: a set
+    /// of paths that "are files". Everything else is absent.
+    struct FakeFs {
+        files: std::collections::HashSet<PathBuf>,
+    }
+    impl crate::daemon::maven_home::FsProbe for FakeFs {
+        fn is_dir(&self, _p: &Path) -> bool {
+            false
+        }
+        fn is_file(&self, p: &Path) -> bool {
+            self.files.contains(p)
+        }
+    }
+
+    fn bundled_jar_path(root: &str) -> PathBuf {
+        let mut p = PathBuf::from(root);
+        for c in BUNDLED_BARBACK_REL {
+            p.push(c);
+        }
+        p
+    }
+
+    #[test]
+    fn bundled_barback_jar_found_for_well_formed_install() {
+        // <root>/bin/barista  ->  install root is <root>
+        let exe = Path::new("/opt/barista/bin/barista");
+        let jar = bundled_jar_path("/opt/barista");
+        let fs = FakeFs {
+            files: [jar.clone()].into_iter().collect(),
+        };
+        assert_eq!(bundled_barback_jar(exe, &fs), Some(jar));
+    }
+
+    #[test]
+    fn bundled_barback_jar_none_when_jar_missing() {
+        // Dev build / un-bundled install: the jar simply isn't there.
+        let exe = Path::new("/opt/barista/bin/barista");
+        let fs = FakeFs {
+            files: std::collections::HashSet::new(),
+        };
+        assert_eq!(bundled_barback_jar(exe, &fs), None);
+    }
+
+    #[test]
+    fn bundled_barback_jar_none_when_exe_too_shallow() {
+        // An exe with no grandparent (`/barista`) can't yield an install
+        // root; resolve to None rather than panicking.
+        let exe = Path::new("/barista");
+        let fs = FakeFs {
+            files: std::collections::HashSet::new(),
+        };
+        assert_eq!(bundled_barback_jar(exe, &fs), None);
     }
 
     // Test mutates process-wide env vars; per-fn allow keeps the

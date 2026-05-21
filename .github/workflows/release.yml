@@ -139,6 +139,16 @@ jobs:
           toolchain: '1.88.0'
           targets: ${{ matrix.target }}
 
+      - name: Set up JDK 21 (to build the bundled barback uber-JAR)
+        # build-release.sh builds barback-uber.jar (reproducibly, via
+        # SOURCE_DATE_EPOCH) and stages it into the artifact so the daemon
+        # build path works from a binary install. `mvn` is preinstalled on
+        # the GitHub-hosted runners; this provides the JDK it builds with.
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Install cross-linker (aarch64 linux only)
         if: matrix.linker_pkg != ''
         shell: bash
@@ -223,6 +233,15 @@ jobs:
         with:
           toolchain: '1.88.0'
           targets: x86_64-unknown-linux-gnu
+
+      - name: Set up JDK 21 (to build the bundled barback uber-JAR)
+        # The reproducibility check builds the archive twice; the bundled
+        # barback-uber.jar is part of the archive, so this job needs the JDK
+        # too. The jar is reproducible (outputTimestamp=SOURCE_DATE_EPOCH).
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: '21'
 
       - name: Build A (clean target dir)
         shell: bash
