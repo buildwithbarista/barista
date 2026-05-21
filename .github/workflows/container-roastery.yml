@@ -25,13 +25,15 @@
 #   workflow_dispatch        → tags computed; pushed only when run
 #                              from the canonical repo
 #
-# Forward-references:
+# Supply-chain attestations (all keyless via the GitHub OIDC token — no
+# stored secret):
 #
-#   - SBOM generation (`sbom: true`) is intentionally OFF; lands via
-#     M6.1 T3 / M C.4 T5 alongside the workspace SBOM workflow.
-#   - SLSA provenance (`provenance: true`) is intentionally OFF;
-#     lands via M C.4 T4 (SLSA L3 attestation).
-#   - Image signing (cosign) is deferred to M C.4 T5.
+#   - buildx emits a CycloneDX SBOM (`sbom: true`) and SLSA build
+#     provenance (`provenance: mode=max`), pushed to the registry
+#     attached to the image manifest.
+#   - the pushed image is signed by its immutable digest with Sigstore
+#     cosign, so `cosign verify` validates it against the GitHub Actions
+#     workflow identity.
 #
 # Every action is pinned to a commit SHA (not a floating tag). The
 # human-readable tag is recorded next to the SHA so future readers
@@ -172,6 +174,7 @@ jobs:
             org.opencontainers.image.vendor=buildwithbarista
 
       - name: Build (and push if eligible)
+        id: build
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
@@ -180,9 +183,28 @@ jobs:
           push: ${{ github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista' }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
-          # SLSA provenance + SBOM are forward-referenced to M C.4 T4
-          # and M C.4 T5 respectively. Disabled here so this PR
-          # doesn't entangle the supply-chain attestation surface
-          # with the initial image-publish path.
-          provenance: false
-          sbom: false
+          # Keyless supply-chain attestations attached to the image
+          # manifest in the registry: SLSA build provenance
+          # (`mode=max` records every build stage) + a CycloneDX SBOM.
+          # Both ride the push; on a PR (push:false) they are built but
+          # discarded.
+          provenance: mode=max
+          sbom: true
+
+      # Sign the pushed image by its immutable digest (keyless, Sigstore).
+      # Gated to actual pushes (canonical repo, not a PR / fork) so forks
+      # — which lack `packages: write` — skip rather than error. Verify:
+      #   cosign verify ghcr.io/buildwithbarista/roastery@<digest> \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     --certificate-identity-regexp '^https://github.com/buildwithbarista/barista/'
+      - name: Install cosign
+        if: github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista'
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign image (keyless)
+        if: github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "ghcr.io/buildwithbarista/roastery@${DIGEST}"

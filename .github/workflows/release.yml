@@ -1,13 +1,15 @@
-# Release workflow — cross-platform reproducible builds (unsigned).
+# Release workflow — cross-platform reproducible builds, signed.
 #
 # Builds byte-reproducible release artifacts for every supported
 # platform target, verifies reproducibility, and (on a `v*` tag) attaches
-# the artifacts + a build manifest to a GitHub Release. This is the
-# UNSIGNED variant: code signing / notarization, SLSA provenance, and
-# SBOM generation layer on top in later milestones (see the
-# "SIGNING / PROVENANCE HOOK" markers below). They consume the artifacts
-# and the per-artifact sha256 this pipeline produces; nothing here needs
-# to change when they land.
+# the artifacts + a build manifest to a GitHub Release. Artifacts are
+# signed keylessly with Sigstore cosign (`*.cosign.bundle`) and carry
+# SLSA Level 3 build provenance (`*.intoto.jsonl`, via the SLSA
+# generator) — both authenticate with the GitHub OIDC token (no stored
+# secret). OS-native code signing (Apple codesign + notarization,
+# Windows Authenticode) is deferred to a later milestone as it requires
+# paid platform certificates; the cosign signatures + SLSA provenance
+# give cryptographic supply-chain integrity for every artifact today.
 #
 # ── Triggers ──────────────────────────────────────────────────────────
 #   push to `v*` tag   Full pipeline + publish to a GitHub (pre-)release.
@@ -39,8 +41,11 @@
 # human-readable tag is recorded next to the SHA so future readers can
 # audit drift without external tools. When bumping, update both the SHA
 # and the comment. `permissions: {}` is default-deny at the workflow
-# level; each job opts in to the minimum it needs (only `publish` gets
-# `contents: write`).
+# level; each job opts in to the minimum it needs (`publish` and the
+# SLSA `provenance` job get `contents: write`; `publish` also gets
+# `id-token: write` for keyless signing). The one exception to SHA
+# pinning is the SLSA generator, which MUST be referenced by version tag
+# (see the `provenance` job).
 
 name: Release
 
@@ -287,15 +292,13 @@ jobs:
       startsWith(github.ref, 'refs/tags/v') &&
       !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
     permissions:
-      # The only write grant in this workflow — needed to create the
-      # GitHub Release and upload assets to it.
-      #
-      # SIGNING / PROVENANCE HOOK (later milestones): SLSA provenance
-      # attestation will additionally need `id-token: write` and
-      # `attestations: write` here; signing key material arrives via
-      # secrets, not permissions. They are intentionally NOT granted in
-      # this unsigned variant so the permission surface stays minimal.
+      # `contents: write` creates the GitHub Release and uploads assets.
+      # `id-token: write` lets cosign sign the release archives keylessly
+      # via Sigstore (GitHub OIDC → short-lived Fulcio cert + Rekor
+      # transparency-log entry); no signing secret is stored. SLSA L3
+      # provenance is produced by the separate `provenance` job.
       contents: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -362,6 +365,35 @@ jobs:
           PY
           echo "manifest_path=${MANIFEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign release archives + manifest (keyless, Sigstore)
+        shell: bash
+        # cosign keyless `sign-blob`: the GitHub OIDC token is exchanged
+        # for a short-lived Fulcio certificate, the signature is recorded
+        # in the Rekor transparency log, and everything needed to verify
+        # is packed into the self-contained `*.cosign.bundle`. No secret.
+        # Verify on a clean machine with:
+        #   cosign verify-blob --bundle <file>.cosign.bundle \
+        #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        #     --certificate-identity-regexp '^https://github.com/buildwithbarista/barista/' \
+        #     <file>
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          signed=0
+          for f in barista-*.tar.gz barista-*.zip barista-*-build-manifest.json; do
+            cosign sign-blob --yes --bundle "${f}.cosign.bundle" "${f}"
+            signed=$((signed + 1))
+          done
+          if [ "$signed" -eq 0 ]; then
+            echo "::error::no artifacts found to sign"
+            exit 1
+          fi
+          echo "signed ${signed} artifact(s)"
+
       - name: Create GitHub release (pre-release for rc/alpha/beta tags)
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
@@ -372,13 +404,87 @@ jobs:
             dist/barista-*.tar.gz
             dist/barista-*.zip
             dist/barista-*-build-manifest.json
+            dist/barista-*.cosign.bundle
           # Pre-release iff the tag carries a pre-release suffix
           # (semver build-up like `-rc.1`, `-alpha.0`, `-beta.2`). A bare
           # `v0.1.0` publishes as a full release.
           prerelease: ${{ contains(github.ref_name, '-rc.') || contains(github.ref_name, '-alpha.') || contains(github.ref_name, '-beta.') }}
           fail_on_unmatched_files: true
-          # SIGNING / PROVENANCE HOOK (later milestones): detached
-          # signatures (`*.sig` / `*.minisig`), notarized macOS bundles,
-          # and SLSA provenance attestations get added to `files:` here
-          # once those milestones land. The unsigned variant ships the
-          # archives + manifest only.
+          # Keyless cosign signatures (`*.cosign.bundle`) are attached
+          # above; SLSA L3 provenance (`*.intoto.jsonl`) is attached by
+          # the `provenance` job below. OS-native code signing (Apple
+          # codesign + notarization, Windows Authenticode) is the only
+          # remaining signing surface — deferred to a later milestone
+          # because it needs paid platform certificates.
+
+  # ---------------------------------------------------------------------
+  # provenance-subjects — collect the sha256 of every release archive
+  # into the base64 "subjects" blob the SLSA generator consumes. Split
+  # out from `publish` so the generator runs as its own job and so this
+  # collection step needs only `contents: read`.
+  #
+  # Tag-only, and never on a manual dry-run — same gate as `publish`. If
+  # skipped, the `provenance` job that needs it is skipped too.
+  # ---------------------------------------------------------------------
+  provenance-subjects:
+    name: Collect SLSA subjects
+    needs: [build, repro-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') &&
+      !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Download all target artifacts
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Hash release archives
+        id: hash
+        shell: bash
+        # `base64 -w0` of the `sha256sum` lines is the exact format the
+        # SLSA generic generator expects as `base64-subjects`.
+        run: |
+          set -euo pipefail
+          cd dist
+          shopt -s nullglob
+          files=( barista-*.tar.gz barista-*.zip )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no release archives found to attest"
+            exit 1
+          fi
+          echo "hashes=$(sha256sum "${files[@]}" | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------
+  # provenance — SLSA Level 3 build provenance for every release archive
+  # (Workstream C.4 Task 4). Keyless: the reusable workflow signs the
+  # in-toto attestation with the GitHub OIDC token via Sigstore
+  # Fulcio/Rekor — no stored secret. `upload-assets: true` attaches the
+  # resulting `*.intoto.jsonl` to the release for this tag. Verify with:
+  #   slsa-verifier verify-artifact <archive> \
+  #     --provenance-path <archive>.intoto.jsonl \
+  #     --source-uri github.com/buildwithbarista/barista
+  #
+  # PIN EXCEPTION: the SLSA generator MUST be referenced by a semantic
+  # version tag, not a commit SHA — slsa-verifier derives the trusted
+  # builder identity from the tag and rejects provenance produced by a
+  # SHA-pinned ref. This is the one `uses:` in the repo not SHA-pinned;
+  # the zizmor `unpinned-uses` finding is suppressed inline below for
+  # exactly this reason.
+  # ---------------------------------------------------------------------
+  provenance:
+    name: SLSA L3 provenance
+    needs: [provenance-subjects]
+    permissions:
+      actions: read # read the workflow run to build the provenance
+      id-token: write # keyless signing via Sigstore Fulcio
+      contents: write # attach the attestation to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0 # zizmor: ignore[unpinned-uses]
+    with:
+      base64-subjects: ${{ needs.provenance-subjects.outputs.hashes }}
+      upload-assets: true
