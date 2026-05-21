@@ -92,11 +92,17 @@ COPY .cargo/ ./.cargo/
 
 # The workspace declares every crate under `crates/` plus `roastery`,
 # `xtask`. Copy every manifest so `cargo` can resolve the workspace
-# graph. We copy `Cargo.toml` and any `build.rs` shims; real source
-# is staged in the next layer.
+# graph. We copy `Cargo.toml`, any `build.rs` shims, and the inputs
+# those build scripts read at compile time; real source is staged in
+# the next layer.
 COPY crates/ ./crates/
 COPY xtask/ ./xtask/
 COPY roastery/Cargo.toml roastery/build.rs ./roastery/
+# roastery's build.rs invokes protoc over the vendored REAPI + barista
+# protos, so the proto tree must be present for the dependency build
+# below (and the real rebuild) — otherwise codegen fails with
+# "Could not make proto path relative: ... No such file or directory".
+COPY roastery/proto/ ./roastery/proto/
 
 # Materialise a stub `roastery/src/main.rs` so cargo can complete a
 # release build of the dependency graph. The real source overwrites
