@@ -363,6 +363,9 @@ jobs:
           echo "build A: $SHA_A"
           echo "build B: $SHA_B"
           if [ "$SHA_A" != "$SHA_B" ]; then
+            # GitHub injects `bash -e`; the diagnostics below intentionally
+            # run commands (cmp) that exit non-zero, so disable errexit here.
+            set +e
             echo "::error::reproducibility check FAILED: $SHA_A != $SHA_B"
             # ---- Self-diagnosis: pinpoint WHAT differs so the cause is
             # actionable without a second run. Saved binaries are also

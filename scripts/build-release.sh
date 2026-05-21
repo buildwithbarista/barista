@@ -207,28 +207,33 @@ mkdir -p "$TARGET_DIR"
 TARGET_DIR_ABS="$(cd "$TARGET_DIR" && pwd)"
 
 # --remap-path-prefix rewrites absolute paths embedded by rustc (in
-# debuginfo, in `file!()` / panic messages, and in build-script-
-# generated `include!`d sources) to stable logical prefixes. Order
-# matters: longer/more-specific prefixes first so a broader rewrite
-# doesn't shadow a nested one.
+# debuginfo, in `file!()` / panic-location strings — which survive
+# `strip=symbols` in .rodata — and in build-script-generated `include!`d
+# sources) to stable logical prefixes:
 #
-#   <TARGET_DIR>           -> /target           (generated OUT_DIR sources)
+#   <HOME>                 -> /home              (anything else under $HOME)
 #   <CARGO_HOME>/registry  -> /cargo-registry   (dependency sources)
 #   <REPO_ROOT>            -> /barista           (first-party sources)
-#   <HOME>                 -> /home              (anything else under $HOME)
+#   <TARGET_DIR>           -> /target           (generated OUT_DIR sources)
 #
-# The target dir is listed first because in the double-build PoC it is
-# the path that differs between the two builders; it may also live
-# under $HOME (so it must win over the broader $HOME rewrite).
+# ORDER IS LOAD-BEARING. rustc applies the LAST matching remapping, so
+# when prefixes nest, the broadest must come FIRST and the most-specific
+# LAST. The target dir lives under the repo root, which (in CI) lives
+# under $HOME; an OUT_DIR path therefore matches three prefixes at once.
+# Listing the target dir last makes its /target rewrite win — otherwise
+# the broader <REPO_ROOT>->/barista shadows it and the target-dir name
+# (e.g. `target-a` vs `target-b`) leaks into a generated-code panic
+# string, so two builds under differently-named target dirs diverge by
+# exactly that one byte. (This was the reproducibility-gate failure.)
 #
 # `-C strip=symbols` drops the symbol table deterministically (the
 # workspace defines no [profile.release] strip setting, so we apply it
 # here at the flag level rather than mutating Cargo.toml).
 REMAP_FLAGS=(
-    "--remap-path-prefix=${TARGET_DIR_ABS}=/target"
+    "--remap-path-prefix=${HOME}=/home"
     "--remap-path-prefix=${CARGO_HOME_RESOLVED}/registry=/cargo-registry"
     "--remap-path-prefix=${REPO_ROOT}=/barista"
-    "--remap-path-prefix=${HOME}=/home"
+    "--remap-path-prefix=${TARGET_DIR_ABS}=/target"
 )
 
 # Linux ELF only: drop the `.note.gnu.build-id`. The GNU linker's
@@ -272,6 +277,12 @@ echo "build-release: RUSTFLAGS=${RUSTFLAGS}"
 # Build
 # ---------------------------------------------------------------------
 if [[ "$DO_BUILD" -eq 1 ]]; then
+    # Pass the ABSOLUTE target dir to cargo so every embedded build path is
+    # the absolute form the `--remap-path-prefix=${TARGET_DIR_ABS}=/target`
+    # rewrite expects (a relative `--target-dir` would otherwise risk a
+    # relative path slipping past the absolute-keyed remap). The remap
+    # ORDER above is what actually neutralizes the target-dir name; this
+    # just keeps the path in the form that ordering operates on.
     echo "build-release: cargo build --release -p barista-cli -p roastery --target ${TARGET}"
     cargo build \
         --release \
@@ -279,7 +290,7 @@ if [[ "$DO_BUILD" -eq 1 ]]; then
         -p barista-cli \
         -p roastery \
         --target "$TARGET" \
-        --target-dir "$TARGET_DIR"
+        --target-dir "$TARGET_DIR_ABS"
 fi
 
 BIN_OUT_DIR="${TARGET_DIR}/${TARGET}/release"
