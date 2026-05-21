@@ -31,6 +31,19 @@ members = [
     "xtask",
 ]
 
+# Release profile. `codegen-units = 1` serializes code generation into a
+# single unit. cargo's default (16) parallelizes codegen, and on
+# x86_64-unknown-linux-gnu the resulting cross-unit ordering is NOT
+# byte-stable across two otherwise-identical builds — the divergence the
+# reproducibility gate caught. (A macOS aarch64 build of the same tree
+# reproduces byte-for-byte under the default, so this is a target-specific
+# LLVM-parallelism effect, not a source-level nondeterminism.) One codegen
+# unit removes that variance and, as a bonus, improves optimization. The
+# release matrix only runs at tag time, so the extra compile latency is an
+# acceptable trade for a reproducible binary.
+[profile.release]
+codegen-units = 1
+
 [workspace.package]
 version = "0.1.0-alpha.0"
 edition = "2024"

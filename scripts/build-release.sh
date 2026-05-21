@@ -451,17 +451,31 @@ if [[ "$ARCHIVE_KIND" == "tar" ]]; then
         ) | gzip -9 -n > "$ARCHIVE_PATH"
     rm -f "$MEMBER_LIST"
 else
-    # Windows: produce a .zip. `zip -X` excludes extra file attributes
-    # (uid/gid, extended attrs); combined with the normalized mtimes set
-    # above and a sorted input list, the archive is byte-stable. zip
-    # embeds per-entry mtime from the filesystem, which we've already
-    # pinned to SOURCE_DATE_EPOCH via touch.
+    # Windows: produce a .zip from a sorted member list (paths relative to
+    # STAGE_PARENT) so the archive does not depend on traversal order.
+    #
+    # Tool selection: prefer `zip -X` (strips uid/gid + extended attrs) when
+    # it is on PATH. GitHub's Windows runners run this script under Git-bash,
+    # which does NOT ship `zip` — but Windows' built-in `tar` is bsdtar
+    # (libarchive), which writes a real zip via `--format=zip`. Either way the
+    # entry mtimes come from the on-disk files, already pinned to
+    # SOURCE_DATE_EPOCH via `touch` above. (Windows archives are not part of
+    # the byte-reproducibility gate, which verifies the Linux target only.)
     ARCHIVE_NAME="${PKG_NAME}.zip"
     ARCHIVE_PATH="${OUT_DIR_ABS}/${ARCHIVE_NAME}"
     rm -f "$ARCHIVE_PATH"
-    ( cd "$STAGE_PARENT" \
-        && find "$PKG_NAME" -print | LC_ALL=C sort \
-        | zip -X -9 "@" "$ARCHIVE_PATH" >/dev/null )
+    ZIP_MEMBERS="$(mktemp)"
+    ( cd "$STAGE_PARENT" && find "$PKG_NAME" -print | LC_ALL=C sort ) > "$ZIP_MEMBERS"
+    if command -v zip >/dev/null 2>&1; then
+        ( cd "$STAGE_PARENT" && zip -X -9 "$ARCHIVE_PATH" -@ < "$ZIP_MEMBERS" >/dev/null )
+    elif tar --help 2>&1 | grep -qi 'libarchive\|bsdtar' || tar --version 2>&1 | grep -qi 'bsdtar'; then
+        ( cd "$STAGE_PARENT" \
+            && tar --format=zip --no-recursion -cf "$ARCHIVE_PATH" --files-from "$ZIP_MEMBERS" )
+    else
+        rm -f "$ZIP_MEMBERS"
+        die "no zip tool available: need \`zip\` or a libarchive \`tar\` (bsdtar) to build the Windows .zip"
+    fi
+    rm -f "$ZIP_MEMBERS"
 fi
 
 # ---------------------------------------------------------------------
