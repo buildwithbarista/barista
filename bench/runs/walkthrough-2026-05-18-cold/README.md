@@ -98,7 +98,7 @@ network" rather than "stable measurement of the tool".
 ## Reproducing
 
 ```bash
-# From the monorepo root:
+# From the repository root:
 cd barista
 cargo build --release -p barista-cli -p barista-bench
 export PATH="$PWD/target/release:$PATH"

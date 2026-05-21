@@ -106,8 +106,7 @@ import java.util.logging.Logger;
  * implemented in v0.1: the override list plus the per-invoker
  * eviction-driven {@code invalidateAll} already bound the live entry
  * count, and the 5-plugin workload AC is orders of magnitude below the
- * cap. Wiring LRU is a follow-up tracked in the open-questions section
- * of the roadmap.
+ * cap. Wiring LRU is a documented v0.1 follow-up.
  *
  * <h2>Concurrency</h2>
  *

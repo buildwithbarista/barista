@@ -34,8 +34,8 @@
 //! # Performance note
 //!
 //! v0.1 uses plain `serde + bincode` for both the journal records and
-//! the snapshot. The roadmap mentions rkyv zero-copy as a
-//! future optimization — at expected cache sizes (low millions of
+//! the snapshot. rkyv zero-copy is a possible future optimization —
+//! at expected cache sizes (low millions of
 //! entries) the perf difference is invisible, and bincode keeps the
 //! encoder simple. Swapping codecs is a localized change behind this
 //! module's API.

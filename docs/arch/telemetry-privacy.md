@@ -565,16 +565,15 @@ non-telemetry-touching dependency bump).
 
 ## 9. Endpoint TBD note (Q2)
 
-The roadmap tracks an open question, **Q2: telemetry
-endpoint choice — self-hosted vs. Sentry/Honeycomb**, scheduled to
-be resolved by the end of M3.3. **Q2 is not resolved as of this
-document's first revision.**
+An open question remains for v0.1 — labelled here **Q2: telemetry
+endpoint choice — self-hosted vs. Sentry/Honeycomb**. **Q2 is not
+resolved as of this document's first revision.**
 
 The v0.1 default for the shipped configuration is
 `transport_enabled = false`. Flipping it to `true` in any shipped
 configuration is gated on **both**:
 
-1. **`[H]` sign-off on this document** (the M3.3 Task 5 acceptance
+1. **`[H]` sign-off on this document** (a release-gating acceptance
    criterion).
 2. **Q2 resolution** — a concrete endpoint URL, an identified
    operator, and a written retention contract on the receiving side
@@ -586,10 +585,10 @@ day Q2 lands, no new code needs to ship in this crate — only a
 config-default change. That default change is itself a re-review
 trigger per [§8](#8-change-management).
 
-If Q2 slips past M3.3 (per the documented fallback path),
-this document remains the gate; the no-op transport remains the
-default and the milestone-level `[T]` AC "zero network calls when
-telemetry disabled" continues to be the live assertion.
+If Q2 remains unresolved at v0.1 release, this document remains the
+gate; the no-op transport remains the default and the `[T]` AC "zero
+network calls when telemetry disabled" continues to be the live
+assertion.
 
 ---
 

@@ -69,13 +69,13 @@ The corrupted journal was saved to
 `/tmp/barista-bench-debug/journal-corrupted-*.log` for diagnosis.
 After `rm -rf ~/.barista/cache && barista pull` to rebuild the cache
 state, this re-measurement ran cleanly. Filed as a follow-up under
-M2.3 (Cache CAS — initial); the crash-recovery work from M2.3 T10
-should be catching this. This is a documented gap.
+crash recovery (Cache CAS); the crash-recovery work
+should be catching this.
 
 ## How to reproduce
 
 ```bash
-# From the monorepo root:
+# From the repository root:
 cd barista
 cargo build --release -p barista-cli -p barista-bench
 export PATH="$PWD/target/release:$PATH"
@@ -112,5 +112,4 @@ versioned in git — but not yet **published**. Three follow-ups remain:
    (including baselines for mvn 3.9.x and mvnd 2.x once those land)
    is the "constantly run" promise. Filed.
 
-See the roadmap's Workstream A milestones (A.2
-T4, A.3 T2/T4) for status.
+These remain tracked as benchmarking and CI follow-ups.

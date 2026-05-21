@@ -61,7 +61,6 @@ target/
 **/.git/
 .github/
 .claude/
-.tooling/
 .idea/
 .vscode/
 **/*.tmp

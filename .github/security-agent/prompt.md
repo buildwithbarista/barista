@@ -155,8 +155,7 @@ about.
   `.github/branch-protection.yml`).
 - Modifying CI gating in `Cargo.toml`'s workspace-lints table, in
   `clippy.toml`, or in `rust-toolchain.toml`.
-- Anything outside `barista`'s own tree (you have no permissions to
-  touch sibling repos).
+- Anything outside this repository's own tree.
 
 If the right fix requires any of the above, **bail out**.
 
