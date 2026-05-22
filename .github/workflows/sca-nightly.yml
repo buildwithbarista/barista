@@ -117,10 +117,18 @@ jobs:
   # `rustsec/audit-check` action fetches the advisory DB on every
   # invocation, so the nightly run picks up advisories published in
   # the last 24 hours without needing a cache-busting step.
+  #
+  # continue-on-error: true — soft gate matching sca.yml. The advisory-DB
+  # TOML parser (RUSTSEC-2026-0076.md) and the rustsec/audit-check action
+  # itself have suffered upstream breakage outside our control. cargo-deny
+  # and OSV-Scanner (both hard gates in this workflow) are the authoritative
+  # advisory checks; cargo-audit failures here should not abort the nightly
+  # run or suppress SARIF uploads from other scanners.
   # ---------------------------------------------------------------------------
   cargo-audit-check:
     name: cargo-audit (fresh DB)
     runs-on: ubuntu-latest
+    continue-on-error: true  # soft gate — upstream DB/action breakage; cargo-deny + OSV are the hard gates
     permissions:
       contents: read
       issues: write

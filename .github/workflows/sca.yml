@@ -103,6 +103,13 @@ jobs:
   # disagree on what an advisory means for a workspace and we want the
   # broader signal.
   #
+  # continue-on-error: true — cargo-audit is a SOFT gate. The advisory-DB
+  # TOML parser (RUSTSEC-2026-0076.md) and the rustsec/audit-check action
+  # itself have suffered upstream breakage outside our control. cargo-deny
+  # and OSV-Scanner (both hard gates in this workflow) cover the same
+  # advisory surface and remain the merge-blocking signal. cargo-audit runs
+  # for belt-and-suspenders signal only; a failure here does not block a PR.
+  #
   # Local reproduction:
   #   cargo install cargo-audit --locked
   #   cargo audit
@@ -110,6 +117,7 @@ jobs:
   cargo-audit-check:
     name: cargo-audit
     runs-on: ubuntu-latest
+    continue-on-error: true  # soft gate — upstream DB/action breakage; cargo-deny + OSV are the hard gates
     permissions:
       contents: read
       issues: write
