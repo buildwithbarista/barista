@@ -53,7 +53,10 @@ jobs:
       matrix:
         include:
           - language: rust
-            build-mode: autobuild
+            # Rust does NOT support `autobuild` — CodeQL's Rust extractor
+            # works from the Cargo manifests/lockfile, so `none` is the
+            # only valid build mode (autobuild fails analysis at init).
+            build-mode: none
           - language: java
             build-mode: autobuild
             # CodeQL's Java autobuilder runs `mvn package` from the
