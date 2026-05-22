@@ -88,6 +88,11 @@ jobs:
           # severity) for higher coverage. Tune to `security-extended`
           # if the noise becomes a problem.
           queries: security-and-quality
+          # Exclude generated and build-output trees (proto-generated
+          # Java, JMH test sources, spike reactor scaffolding) so that
+          # generated-code alerts don't crowd out actionable findings.
+          # See .github/codeql/codeql-config.yml for the full rationale.
+          config-file: .github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4

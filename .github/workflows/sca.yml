@@ -286,6 +286,11 @@ jobs:
           # Fail the job on any finding at the configured severity.
           exit-code: '1'
           ignore-unfixed: false
+          # trivy.yaml carries CVE-ID/misconfig-ID + path-scoped suppressions
+          # for confirmed false positives (offline resolver fixtures, frozen
+          # benchmark corpus, Helm golden test outputs, intentional distroless
+          # design). barback/pom.xml CVEs are deliberately NOT suppressed there.
+          trivy-config: trivy.yaml
       - name: Upload SARIF to code scanning
         # Always upload, even when the scan step failed, so reviewers can
         # inspect the findings in the Security tab.

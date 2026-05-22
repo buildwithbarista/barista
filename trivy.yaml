@@ -1,0 +1,71 @@
+# Trivy scanner configuration.
+#
+# Consumed by the `aquasecurity/trivy-action` via the `trivy-config:`
+# input in `.github/workflows/sca.yml` and `.github/workflows/sca-nightly.yml`
+# (both `trivy-fs` jobs). This is the single authoritative suppression file
+# for the repository (Decision D2 in the security remediation plan).
+#
+# Suppression policy:
+#   - Every entry is scoped to a specific CVE/misconfig ID **and** one or
+#     more exact file paths. No directory-wide blanket skips.
+#   - Each entry carries a one-line rationale.
+#   - `barback/pom.xml` CVEs (CVE-2025-67030, CVE-2023-2976, CVE-2020-8908)
+#     are intentionally NOT suppressed here — they are real and tracked for
+#     remediation in the dependency bump milestones.
+#   - Any future suppression for p02+/p03+ corpus entries requires
+#     explicit human sign-off and a new entry below.
+
+vulnerability:
+  ignore:
+    # ------------------------------------------------------------------
+    # CVE-2025-48924 — commons-lang3 vulnerability.
+    # Scoped to offline resolver test fixtures and the frozen p01
+    # benchmark corpus POM. These artifacts are static test data only;
+    # they are never on the runtime or compile classpath and are never
+    # shipped. Suppressed per documented design decision.
+    # ------------------------------------------------------------------
+    - id: CVE-2025-48924
+      paths:
+        - crates/barista-resolver/tests/fixtures/org.apache.commons/commons-lang3/3.14.0/pom.xml
+        - crates/barista-resolver/tests/fixtures/org.apache.commons/commons-lang3/3.15.0/pom.xml
+        - bench/projects/p01/checkout/pom.xml
+
+    # ------------------------------------------------------------------
+    # GHSA-72hv-8253-57qq — jackson-core / jackson-databind advisory.
+    # Scoped to offline resolver test fixtures and the frozen p01
+    # benchmark corpus POM. Same rationale as CVE-2025-48924 above:
+    # static test data; never compiled, never shipped.
+    # ------------------------------------------------------------------
+    - id: GHSA-72hv-8253-57qq
+      paths:
+        - crates/barista-resolver/tests/fixtures/com.fasterxml.jackson.core/jackson-core/2.18.0/pom.xml
+        - crates/barista-resolver/tests/fixtures/com.fasterxml.jackson.core/jackson-databind/2.18.0/pom.xml
+        - bench/projects/p01/checkout/pom.xml
+
+misconfig:
+  ignore:
+    # ------------------------------------------------------------------
+    # KSV-0125 — image tag should not use a mutable tag / uses latest.
+    # Scoped to the rendered Helm golden test output files. These are
+    # expected outputs of `helm template` used for snapshot testing;
+    # they reference the project's own ghcr.io image with the
+    # {{ .Values.image.tag }} value set to a placeholder during test
+    # rendering. Not a live deployment manifest.
+    # ------------------------------------------------------------------
+    - id: KSV-0125
+      paths:
+        - roastery/deploy/helm/fixtures/default.golden.yaml
+        - roastery/deploy/helm/fixtures/mtls-tls.golden.yaml
+        - roastery/deploy/helm/fixtures/s3-public-bearer.golden.yaml
+
+    # ------------------------------------------------------------------
+    # DS-0026 — HEALTHCHECK instruction missing in Dockerfile.
+    # Intentional design: the roastery image is based on
+    # gcr.io/distroless/cc-debian12, which carries no shell. A
+    # Dockerfile HEALTHCHECK CMD would never execute. Kubernetes liveness
+    # and readiness probes hit the /healthz HTTP endpoint directly
+    # (see roastery/Dockerfile lines ~36-38 for the full rationale).
+    # ------------------------------------------------------------------
+    - id: DS-0026
+      paths:
+        - roastery/Dockerfile

@@ -67,6 +67,45 @@ specific finding. Nothing else.
 
 ---
 
+## Documented suppressions — findings that are OUT OF SCOPE
+
+The following scanner findings are **intentional design decisions** already
+recorded in committed suppression configs. If you receive an issue for any of
+these, **do not open a fix PR and do not revert the suppression**. Post a
+single comment on the issue explaining it is a documented, intentionally
+suppressed false positive, and close the issue as "not planned".
+
+### Trivy false positives suppressed in `trivy.yaml`
+
+| Finding ID | Suppressed path(s) | Rationale |
+|---|---|---|
+| CVE-2025-48924 | `crates/barista-resolver/tests/fixtures/org.apache.commons/commons-lang3/3.14.0/pom.xml`, `.../3.15.0/pom.xml`, `bench/projects/p01/checkout/pom.xml` | Offline resolver test fixtures and frozen benchmark corpus; never on the runtime classpath, never shipped. |
+| GHSA-72hv-8253-57qq | `crates/barista-resolver/tests/fixtures/com.fasterxml.jackson.core/jackson-core/2.18.0/pom.xml`, `.../jackson-databind/2.18.0/pom.xml`, `bench/projects/p01/checkout/pom.xml` | Same — offline test data; static fixtures only. |
+| KSV-0125 | `roastery/deploy/helm/fixtures/default.golden.yaml`, `mtls-tls.golden.yaml`, `s3-public-bearer.golden.yaml` | Rendered Helm golden test outputs referencing the project's own ghcr.io image; expected output, not a live manifest. |
+| DS-0026 | `roastery/Dockerfile` | HEALTHCHECK intentionally omitted — distroless image has no shell; Kubernetes liveness/readiness probes hit `/healthz` directly. Rationale comment at Dockerfile lines ~36-38. |
+
+### CodeQL generated-code exclusions configured in `.github/codeql/codeql-config.yml`
+
+Alerts whose `most_recent_instance.location.path` matches any of the patterns
+below are generated-code noise, not hand-authored defects. Do not open issues
+or fix PRs for them:
+
+- Any path containing `/target/` (Maven build output)
+- Any path containing `/generated-sources/` (protobuf-generated Java)
+- Any path containing `/generated-test-sources/` (JMH-generated test sources)
+
+If a CodeQL alert fires on one of these paths, post a comment on any resulting
+issue noting it is generated code already excluded by the CodeQL config, and
+close the issue as "not planned".
+
+### What this section does NOT cover
+
+`barback/pom.xml` CVEs (CVE-2025-67030, CVE-2023-2976, CVE-2020-8908) are
+**real findings** and are **not** suppressed. Issues for those should be acted
+on via the normal dep-bump path (allowed-scope A above).
+
+---
+
 ## Allowed scope — what you may change
 
 You may take any of the following actions **and no others**:

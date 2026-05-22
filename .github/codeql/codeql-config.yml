@@ -1,0 +1,34 @@
+# CodeQL analysis configuration.
+#
+# This file is referenced by the `Initialize CodeQL` step in
+# `.github/workflows/codeql.yml` via `config-file:`.
+#
+# Purpose: exclude generated and compiled build-output trees from the
+# CodeQL database so that alerts for generated code (proto-generated
+# Java, JMH sources, spike reactor scaffolding) don't crowd out
+# actionable findings in hand-authored source.
+#
+# Note: for compiled languages (Java), `paths-ignore` is best-effort —
+# the CodeQL extractor processes whatever the build system compiles.
+# The broad globs below suppress the most common generated paths; if
+# any generated-code alerts survive a real run, switch to the Plan B
+# approach documented in the security remediation plan (compilation-root
+# profile or query-filters).
+
+paths-ignore:
+  # Maven build output — every module's compiled classes, resources,
+  # generated sources, OWASP reports, and Surefire test output land
+  # here. There is no root aggregator pom; bench/JMH and spike reactor
+  # modules also write under their own `target/` trees.
+  - "**/target/**"
+
+  # Protobuf-generated Java sources (emitted by
+  # io.github.ascopes:protobuf-maven-plugin with
+  # registerAsCompilationRoot=true in barback/pom.xml).
+  # These are compiled and extracted by the CodeQL autobuilder; the
+  # glob intercepts them at the well-known Maven generated-sources path.
+  - "**/generated-sources/**"
+
+  # JMH-generated test sources (bench/ module uses the JMH annotation
+  # processor, which emits Java under generated-test-sources/).
+  - "**/generated-test-sources/**"
