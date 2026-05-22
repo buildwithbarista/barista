@@ -58,7 +58,11 @@ use tempfile::TempDir;
 /// and macOS (`/var/folders/…`).  Without this ordering the snapshot
 /// bracket column shifts by OS, causing CI failures on Linux when
 /// snapshots are captured on macOS.
-fn render_effective(config: &Config, audit: &LoadAudit, path_redact: &dyn Fn(&str) -> String) -> String {
+fn render_effective(
+    config: &Config,
+    audit: &LoadAudit,
+    path_redact: &dyn Fn(&str) -> String,
+) -> String {
     let mut lines: Vec<(String, String)> = Vec::new();
 
     // ---- paths ----
