@@ -48,7 +48,17 @@ use tempfile::TempDir;
 /// human-readable string. Field names are kebab-case and sorted
 /// alphabetically; lists are emitted as bracketed comma-separated
 /// values, with empty lists rendered as `[]`.
-fn render_effective(config: &Config, audit: &LoadAudit) -> String {
+/// Render the effective `Config` + `LoadAudit` to a stable string.
+///
+/// `path_redact` is applied to every path string in the audit section
+/// **before** the fixed-width column padding (`{:<40}`) is applied.
+/// Redacting first ensures the padded column position depends only on
+/// the stable placeholder token (e.g. `"<HOME>/..."`) and not on the
+/// real on-disk path length, which differs between Linux (`/tmp/…`)
+/// and macOS (`/var/folders/…`).  Without this ordering the snapshot
+/// bracket column shifts by OS, causing CI failures on Linux when
+/// snapshots are captured on macOS.
+fn render_effective(config: &Config, audit: &LoadAudit, path_redact: &dyn Fn(&str) -> String) -> String {
     let mut lines: Vec<(String, String)> = Vec::new();
 
     // ---- paths ----
@@ -238,7 +248,7 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
 
     out.push_str("\n=== audit ===\n");
     for layer in &audit.layers_applied {
-        let (name, path) = match &layer.layer {
+        let (name, raw_path) = match &layer.layer {
             LayerSource::Defaults => ("defaults".to_string(), String::new()),
             LayerSource::UserConfig(p) => ("user-config".to_string(), format_path(p)),
             LayerSource::ProjectConfig(p) => ("project-config".to_string(), format_path(p)),
@@ -246,6 +256,9 @@ fn render_effective(config: &Config, audit: &LoadAudit) -> String {
             LayerSource::Environment => ("environment".to_string(), String::new()),
             LayerSource::Cli => ("cli".to_string(), String::new()),
         };
+        // Redact BEFORE padding so the column width is computed from the
+        // stable token length, not the real (OS-dependent) path length.
+        let path = path_redact(&raw_path);
         let mut fields = layer.fields_set.clone();
         fields.sort();
         out.push_str(&format!(
@@ -396,7 +409,7 @@ fn defaults_only() {
         CliOverrides::default(),
     );
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -415,7 +428,7 @@ fn user_only() {
     );
     inputs.user_config_path = Some(user_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -433,7 +446,7 @@ fn project_only() {
     );
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -455,7 +468,7 @@ fn project_overrides_user() {
     inputs.user_config_path = Some(user_cfg);
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -478,7 +491,7 @@ fn env_overrides_project() {
     inputs.user_config_path = Some(user_cfg);
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -505,7 +518,7 @@ fn cli_overrides_env() {
     inputs.user_config_path = Some(user_cfg);
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -528,7 +541,7 @@ fn settings_xml_local_repository() {
         CliOverrides::default(),
     );
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -583,7 +596,7 @@ fn settings_xml_full() {
         CliOverrides::default(),
     );
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -620,7 +633,7 @@ classloader-cache-overrides = { "org.example:plugin" = "no-cache", "org.example:
     );
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -671,7 +684,7 @@ fn all_six_layers() {
     inputs.user_config_path = Some(user_cfg);
     inputs.project_config_path = Some(proj_cfg);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -686,7 +699,7 @@ fn walk_up_finds_project_toml() {
     // CWD is nested; loader walks up to find barista.toml at proj root.
     let inputs = make_inputs(sb.home(), &nested, HashMap::new(), CliOverrides::default());
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -699,7 +712,7 @@ fn compat_mode_via_env() {
 
     let inputs = make_inputs(sb.home(), sb.home(), env, CliOverrides::default());
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }
 
@@ -714,6 +727,6 @@ fn cli_cache_dir_and_no_daemon() {
     };
     let inputs = make_inputs(sb.home(), sb.home(), HashMap::new(), cli);
     let (cfg, audit) = load_effective_config(inputs).unwrap();
-    let rendered = render_effective(&cfg, &audit);
+    let rendered = render_effective(&cfg, &audit, &|s| sb.redact(s));
     insta::assert_snapshot!(sb.redact(&rendered));
 }

@@ -38,8 +38,8 @@ telemetry.transport-enabled        = false
 
 === audit ===
 defaults         <-                                          [<all>]
-user-config      <- "<HOME>/.barista/config.toml" [network.request-timeout-secs, telemetry.client-id, telemetry.enabled]
-project-config   <- "<PROJ>/barista.toml" [compat.excluded-modules, logging.level]
-settings-xml     <- "<HOME>/.m2/settings.xml" [paths.m2-repository]
+user-config      <- "<HOME>/.barista/config.toml"            [network.request-timeout-secs, telemetry.client-id, telemetry.enabled]
+project-config   <- "<PROJ>/barista.toml"                    [compat.excluded-modules, logging.level]
+settings-xml     <- "<HOME>/.m2/settings.xml"                [paths.m2-repository]
 environment      <-                                          [daemon.idle-shutdown-secs, maven.compat-mode]
 cli              <-                                          [logging.level, network.max-concurrent-connections]

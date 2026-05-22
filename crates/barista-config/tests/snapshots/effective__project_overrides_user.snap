@@ -38,5 +38,5 @@ telemetry.transport-enabled        = false
 
 === audit ===
 defaults         <-                                          [<all>]
-user-config      <- "<HOME>/.barista/config.toml" [network.max-concurrent-connections]
-project-config   <- "<PROJ>/barista.toml" [network.max-concurrent-connections]
+user-config      <- "<HOME>/.barista/config.toml"            [network.max-concurrent-connections]
+project-config   <- "<PROJ>/barista.toml"                    [network.max-concurrent-connections]

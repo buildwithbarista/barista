@@ -42,4 +42,4 @@ telemetry.transport-enabled                            = false
 
 === audit ===
 defaults         <-                                          [<all>]
-project-config   <- "<PROJ>/barista.toml" [project-extensions]
+project-config   <- "<PROJ>/barista.toml"                    [project-extensions]
