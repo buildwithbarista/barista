@@ -114,8 +114,16 @@ RUN mkdir -p roastery/src \
 # Build dependencies only. `--locked` forces the build to honour
 # `Cargo.lock` exactly (no implicit resolver upgrades inside the
 # image build).
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/work/target \
+#
+# The cache mounts are keyed by ${TARGETPLATFORM}: in a multi-arch
+# (linux/amd64 + linux/arm64) build the two platform stages run
+# concurrently, and an unkeyed shared cache makes them race on
+# unpacking the same crate into the registry — surfacing as
+# `failed to open .../<crate>/.cargo-ok: File exists (os error 17)`.
+# Per-platform ids isolate the caches (and the target dir is
+# arch-specific anyway), keeping the builds parallel and race-free.
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
+    --mount=type=cache,target=/work/target,id=cargo-target-${TARGETPLATFORM} \
     cargo build --release --locked -p roastery
 
 # Stage real source and rebuild. The stub at `roastery/src/{main,lib}.rs`
@@ -128,8 +136,8 @@ COPY roastery/tests/ ./roastery/tests/
 # the registry + target dirs populated by the previous layer, so
 # only the changed crates (roastery + its first-party rebuilds)
 # actually recompile.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/work/target \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry-${TARGETPLATFORM} \
+    --mount=type=cache,target=/work/target,id=cargo-target-${TARGETPLATFORM} \
     touch roastery/Cargo.toml \
     && cargo build --release --locked -p roastery \
     && cp /work/target/release/roastery /usr/local/bin/roastery
