@@ -190,7 +190,7 @@ fn run(args: RunArgs) -> i32 {
     let runner_id = args
         .runner_id
         .clone()
-        .or_else(|| hostname())
+        .or_else(hostname)
         .unwrap_or_else(|| "local-dev".to_string());
     let barista_version = args
         .barista_version
@@ -835,7 +835,7 @@ fn detect_hardware() -> RunHardware {
         let memory_gb = read_first_line("/proc/meminfo", "MemTotal:")
             .and_then(|s| {
                 s.split_whitespace()
-                    .nth(0)
+                    .next()
                     .and_then(|n| n.parse::<u64>().ok())
             })
             .map(|kb| (kb / 1024 / 1024) as u32)
@@ -1138,6 +1138,7 @@ mod capture {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn measure_baseline_with_capture(
         cwd: &Path,
         baseline: &Baseline,
@@ -1252,6 +1253,7 @@ mod capture {
         exit_code: i32,
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_one_capture_iteration(
         cwd: &Path,
         baseline: &Baseline,
@@ -1431,8 +1433,7 @@ mod capture {
             }
             if Instant::now() >= deadline {
                 return Err(format!(
-                    "mitmdump did not begin listening on 127.0.0.1:{port} within {:?}",
-                    READY_POLL_TIMEOUT
+                    "mitmdump did not begin listening on 127.0.0.1:{port} within {READY_POLL_TIMEOUT:?}"
                 ));
             }
             tokio::time::sleep(READY_POLL_INTERVAL).await;
@@ -1459,6 +1460,25 @@ mod capture {
         }
     }
 
+    /// Parse the HAR at `path` and return `(network_calls, network_bytes)`.
+    /// Returns `(None, None)` if the file doesn't exist or doesn't
+    /// parse; the harness reports the iteration as zero-counts rather
+    /// than failing the whole baseline.
+    fn parse_har_counts(path: &Path) -> Option<(Option<u64>, Option<u64>)> {
+        let bytes = std::fs::read(path).ok()?;
+        let har = parse_har_bytes(&bytes).ok()?;
+        let entries = &har.log.entries;
+        let calls = entries.len() as u64;
+        let total_bytes: i64 = entries
+            .iter()
+            .map(|e| {
+                // HAR content.size can be -1 ("unknown"); clamp to 0.
+                e.response.content.size.max(0)
+            })
+            .sum();
+        Some((Some(calls), Some(total_bytes.max(0) as u64)))
+    }
+
     #[cfg(test)]
     mod split_upstream_tests {
         use super::split_upstream;
@@ -1481,24 +1501,5 @@ mod capture {
         fn rejects_missing_scheme() {
             assert!(split_upstream("repo.maven.apache.org/maven2").is_err());
         }
-    }
-
-    /// Parse the HAR at `path` and return `(network_calls, network_bytes)`.
-    /// Returns `(None, None)` if the file doesn't exist or doesn't
-    /// parse; the harness reports the iteration as zero-counts rather
-    /// than failing the whole baseline.
-    fn parse_har_counts(path: &Path) -> Option<(Option<u64>, Option<u64>)> {
-        let bytes = std::fs::read(path).ok()?;
-        let har = parse_har_bytes(&bytes).ok()?;
-        let entries = &har.log.entries;
-        let calls = entries.len() as u64;
-        let total_bytes: i64 = entries
-            .iter()
-            .map(|e| {
-                // HAR content.size can be -1 ("unknown"); clamp to 0.
-                e.response.content.size.max(0)
-            })
-            .sum();
-        Some((Some(calls), Some(total_bytes.max(0) as u64)))
     }
 }

@@ -1431,7 +1431,7 @@ mod tests {
             "A is kept as a direct provided dep"
         );
         assert!(
-            g.winners.get(&co("ex", "B")).is_none(),
+            !g.winners.contains_key(&co("ex", "B")),
             "B is the closure of a `provided` direct dep — must not be \
              pulled into the consumer's graph; closure = {:?}",
             g.winners.keys().collect::<Vec<_>>()
