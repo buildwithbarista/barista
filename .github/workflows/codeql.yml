@@ -86,11 +86,16 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          # security-and-quality is the broader of the two default
-          # suites; the trade-off is more findings (some lower
-          # severity) for higher coverage. Tune to `security-extended`
-          # if the noise becomes a problem.
-          queries: security-and-quality
+          # security-extended (security queries + lower-precision security
+          # queries) WITHOUT the maintainability/style queries. The
+          # `-and-quality` suite's style rules (missing-override-annotation,
+          # confusing-method-signature, missing-clone-method, …) fire en masse
+          # on the protobuf-generated Java under target/generated-sources/,
+          # which `paths-ignore` cannot exclude for a compiled language
+          # (the generated sources are registered compilation roots). Scoping
+          # to security-extended drops that noise at the source while keeping
+          # full security coverage.
+          queries: security-extended
           # Exclude generated and build-output trees (proto-generated
           # Java, JMH test sources, spike reactor scaffolding) so that
           # generated-code alerts don't crowd out actionable findings.

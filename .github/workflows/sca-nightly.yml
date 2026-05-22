@@ -269,6 +269,9 @@ jobs:
           # Without this config in the nightly run, suppressed FPs would bounce
           # back every 24 h and reopen already-closed alerts.
           trivy-config: trivy.yaml
+          # Skip the roastery Helm chart: its `{{ fail }}` guard (BAR-AUTH-005)
+          # aborts Trivy's Helm render and fails the scan. Mirrors sca.yml.
+          skip-dirs: roastery/deploy/helm
       - name: Upload SARIF to code scanning
         if: always()
         uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4

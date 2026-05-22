@@ -291,6 +291,15 @@ jobs:
           # benchmark corpus, Helm golden test outputs, intentional distroless
           # design). barback/pom.xml CVEs are deliberately NOT suppressed there.
           trivy-config: trivy.yaml
+          # Skip the roastery Helm chart: Trivy's misconfig Helm scanner
+          # renders it with default values and hits the chart's own
+          # `{{ fail }}` guard (BAR-AUTH-005: non-loopback bind without auth),
+          # which Trivy reports as a scan ERROR (job fails). The chart's guard
+          # already enforces secure config; rendered golden manifests are
+          # snapshot-tested under deploy/helm/fixtures/. The action's
+          # `skip-dirs` input is the effective mechanism (a `scan.skip-dirs`
+          # entry inside trivy.yaml does not suppress the render).
+          skip-dirs: roastery/deploy/helm
       - name: Upload SARIF to code scanning
         # Always upload, even when the scan step failed, so reviewers can
         # inspect the findings in the Security tab.
