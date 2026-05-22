@@ -196,6 +196,7 @@ fn sample_action_request() -> ActionRequest {
         maven_compat: "3".to_string(),
         jvm_args: vec!["-Xmx512m".to_string()],
         credentials: None,
+        extra_mvn_args: vec![],
     }
 }
 
