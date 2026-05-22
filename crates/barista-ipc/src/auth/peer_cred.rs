@@ -208,7 +208,10 @@ fn peer_uid_linux(stream: &UnixStream) -> Result<u32> {
     // SAFETY: `getsockopt` returned 0 above, so the kernel
     // populated all bytes of the `ucred` struct.
     let cred = unsafe { cred.assume_init() };
-    #[allow(clippy::as_conversions)]
+    // `cred.uid`'s type is platform-dependent: it is already `u32` on Linux
+    // (`ucred`), so the cast is a no-op there (unnecessary_cast), but it is a
+    // real `uid_t`→`u32` conversion on other Unix targets — hence both allows.
+    #[allow(clippy::as_conversions, clippy::unnecessary_cast)]
     let uid = cred.uid as u32;
     Ok(uid)
 }
