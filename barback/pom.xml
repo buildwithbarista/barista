@@ -110,6 +110,23 @@
         -->
         <plexus-utils.version>4.0.3</plexus-utils.version>
         <!--
+          Guava arrives transitively via com.google.inject:guice 6.0.0
+          (the embedded Maven 4 DI container) at 31.0.1-jre, which is
+          affected by CVE-2023-2976 (MEDIUM — FileBackedOutputStream
+          temp-dir local information disclosure) and CVE-2020-8908 (LOW —
+          Files.createTempDir). Because barback runs as a long-lived
+          daemon with cache write access, the temp-dir exposure carries
+          elevated real-world risk, so it is fixed rather than accepted.
+          Pin to 33.4.8-jre (clears both CVEs) via dependencyManagement
+          below. Guava is a leaf utility lib, not part of the ClassWorld
+          realm layout, so pinning it ahead of the embedded Maven version
+          is low-risk; the integration suite re-validates.
+          Sonatype MCP was unavailable (credit-exhausted) when this was
+          set; fallback per policy: OSV.dev reports 0 open vulnerabilities
+          for 33.4.8-jre + the CI Trivy/OWASP gate confirms both CVEs clear.
+        -->
+        <guava.version>33.4.8-jre</guava.version>
+        <!--
           maven-shade-plugin builds the runnable `barback-uber.jar`
           consumed by the Rust-side daemon launcher (the `BARISTA_BARBACK_JAR`
           discovery path in `crates/barista-cli/src/daemon/launcher.rs`).
@@ -189,6 +206,19 @@
                 <groupId>org.codehaus.plexus</groupId>
                 <artifactId>plexus-utils</artifactId>
                 <version>${plexus-utils.version}</version>
+            </dependency>
+            <!--
+              Force Guava to 33.4.8-jre (fixes CVE-2023-2976, MEDIUM, and
+              CVE-2020-8908, LOW). It enters transitively via
+              com.google.inject:guice 6.0.0 at 31.0.1-jre; this
+              nearest-wins override pins the fixed version throughout the
+              tree (including the shaded barback-uber.jar) without changing
+              the Guice/embedded-Maven version. See the version property above.
+            -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
