@@ -88,8 +88,9 @@ async fn spawn_server() -> Harness {
     // Build the public router via the library — same code production
     // serves — but skip `roastery::run`'s graceful-shutdown loop so
     // the test can `abort()` the task on Drop.
-    let app =
-        axum::Router::new().merge(roastery::proto::barista::router()).with_state(state);
+    let app = axum::Router::new()
+        .merge(roastery::proto::barista::router())
+        .with_state(state);
 
     let server = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;

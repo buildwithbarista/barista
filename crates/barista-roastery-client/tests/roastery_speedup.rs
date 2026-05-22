@@ -72,7 +72,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::Path as AxumPath;
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use barista_roastery_client::{ClientConfig, Digest, RoasteryClient, TlsConfig};

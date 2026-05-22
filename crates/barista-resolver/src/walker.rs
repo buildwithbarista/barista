@@ -1039,12 +1039,13 @@ async fn prefetch_parent_chain<S: MetadataSource + ?Sized>(
         if chain.contains_key(&key) {
             break;
         }
-        let coords =
-            Coords::new(&p.group_id, &p.artifact_id).map_err(|e| WalkError::ParentChainResolution {
+        let coords = Coords::new(&p.group_id, &p.artifact_id).map_err(|e| {
+            WalkError::ParentChainResolution {
                 coords: format!("{}:{}", p.group_id, p.artifact_id),
                 version: p.version.clone(),
                 detail: e.to_string(),
-            })?;
+            }
+        })?;
         let (parent_pom, _origin) = fetch_pom_via_session(source, &coords, &p.version, opts)
             .await
             .map_err(|e| WalkError::ParentChainResolution {
@@ -1120,13 +1121,12 @@ async fn resolve_child_pom<S: MetadataSource + ?Sized>(
             | Err(barista_pom::ResolveError::BomImportResolution {
                 coords: missing, ..
             }) => {
-                let (mg, ma, mv) = parse_gav(&missing).ok_or_else(|| {
-                    WalkError::EffectivePomResolution {
+                let (mg, ma, mv) =
+                    parse_gav(&missing).ok_or_else(|| WalkError::EffectivePomResolution {
                         coords: coords.to_string(),
                         version: version.to_string(),
                         detail: format!("unparseable missing-coord from resolver: {missing}"),
-                    }
-                })?;
+                    })?;
                 let mc = Coords::new(&mg, &ma).map_err(|e| WalkError::ParentChainResolution {
                     coords: format!("{mg}:{ma}"),
                     version: mv.clone(),

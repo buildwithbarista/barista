@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::TryStreamExt;
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE};
+use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Body, Client, Method, Response, StatusCode};
 use serde::Deserialize;
 use tokio::io::AsyncRead;
@@ -189,12 +189,7 @@ impl RoasteryClient {
     /// can budget I/O. The server hashes-and-verifies as bytes flow
     /// in; a digest mismatch surfaces as
     /// `ClientError::ServerRejected { code: "BAR-CAS-001", .. }`.
-    pub async fn put_blob<R>(
-        &self,
-        digest: Digest,
-        body: R,
-        size: u64,
-    ) -> Result<(), ClientError>
+    pub async fn put_blob<R>(&self, digest: Digest, body: R, size: u64) -> Result<(), ClientError>
     where
         R: AsyncRead + Send + Unpin + 'static,
     {
@@ -253,9 +248,7 @@ impl RoasteryClient {
             let url = self.endpoint("v1/cas/missing")?;
             tracing::debug!(%url, batch = chunk.len(), "POST cas/missing");
 
-            let req = self
-                .request(Method::POST, url, true)?
-                .json(&body);
+            let req = self.request(Method::POST, url, true)?.json(&body);
             let resp = self.send(req).await?;
             let resp = check_status(resp).await?;
 
@@ -419,8 +412,7 @@ fn validate(cfg: &ClientConfig) -> Result<(), ClientError> {
     let scheme = cfg.base_url.scheme();
     match (scheme, &cfg.tls) {
         ("https", TlsConfig::PlainHttp) => Err(ClientError::Config {
-            reason: "TlsConfig::PlainHttp cannot be used against an https:// base URL"
-                .to_string(),
+            reason: "TlsConfig::PlainHttp cannot be used against an https:// base URL".to_string(),
         }),
         ("http", TlsConfig::SystemRoots) | ("http", TlsConfig::CustomCa { .. }) => {
             // Permitted: a TLS-flavoured config against an http://
@@ -534,10 +526,7 @@ async fn check_status(resp: Response) -> Result<Response, ClientError> {
     let status_code = status.as_u16();
 
     // Drain the body once; the JSON parse is best-effort.
-    let body_bytes = resp
-        .bytes()
-        .await
-        .map_err(ClientError::from_reqwest)?;
+    let body_bytes = resp.bytes().await.map_err(ClientError::from_reqwest)?;
 
     // Try the structured `ErrorBody` shape first. Match the server's
     // serialisation: `code`, `message`, optional `expected` /
@@ -606,9 +595,7 @@ mod tests {
     #[test]
     fn validate_rejects_plain_http_against_https() {
         let url: Url = "https://example.com".parse().unwrap();
-        let cfg = ClientConfig::builder(url)
-            .tls(TlsConfig::PlainHttp)
-            .build();
+        let cfg = ClientConfig::builder(url).tls(TlsConfig::PlainHttp).build();
         let err = validate(&cfg).unwrap_err();
         assert!(matches!(err, ClientError::Config { .. }));
     }
@@ -616,9 +603,7 @@ mod tests {
     #[test]
     fn validate_accepts_plain_http_against_http() {
         let url: Url = "http://127.0.0.1:8080".parse().unwrap();
-        let cfg = ClientConfig::builder(url)
-            .tls(TlsConfig::PlainHttp)
-            .build();
+        let cfg = ClientConfig::builder(url).tls(TlsConfig::PlainHttp).build();
         validate(&cfg).expect("plain http + http URL should validate");
     }
 
@@ -634,9 +619,7 @@ mod tests {
     #[test]
     fn validate_rejects_unsupported_scheme() {
         let url: Url = "ftp://example.com".parse().unwrap();
-        let cfg = ClientConfig::builder(url)
-            .tls(TlsConfig::PlainHttp)
-            .build();
+        let cfg = ClientConfig::builder(url).tls(TlsConfig::PlainHttp).build();
         let err = validate(&cfg).unwrap_err();
         assert!(matches!(err, ClientError::Config { .. }));
     }
@@ -644,9 +627,7 @@ mod tests {
     #[tokio::test]
     async fn new_refuses_plain_http_against_https() {
         let url: Url = "https://example.com".parse().unwrap();
-        let cfg = ClientConfig::builder(url)
-            .tls(TlsConfig::PlainHttp)
-            .build();
+        let cfg = ClientConfig::builder(url).tls(TlsConfig::PlainHttp).build();
         let err = RoasteryClient::new(cfg).unwrap_err();
         assert!(matches!(err, ClientError::Config { .. }));
     }
@@ -654,9 +635,7 @@ mod tests {
     #[tokio::test]
     async fn new_succeeds_for_plain_http_base() {
         let url: Url = "http://127.0.0.1:8080".parse().unwrap();
-        let cfg = ClientConfig::builder(url)
-            .tls(TlsConfig::PlainHttp)
-            .build();
+        let cfg = ClientConfig::builder(url).tls(TlsConfig::PlainHttp).build();
         let _client = RoasteryClient::new(cfg).expect("plain http construction");
     }
 }

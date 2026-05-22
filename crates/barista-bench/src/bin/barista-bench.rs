@@ -31,8 +31,8 @@ use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use barista_bench::{
-    Baseline, IterationMeasurement, Manifest, ResultsDocument, RunHardware, Summary,
-    load_manifest, write_results,
+    Baseline, IterationMeasurement, Manifest, ResultsDocument, RunHardware, Summary, load_manifest,
+    write_results,
 };
 use clap::{Parser, Subcommand};
 
@@ -48,7 +48,7 @@ use clap::{Parser, Subcommand};
     version,
     about = "Run Barista benchmark manifests and emit results.json.",
     propagate_version = true,
-    arg_required_else_help = true,
+    arg_required_else_help = true
 )]
 struct Cli {
     #[command(subcommand)]
@@ -146,7 +146,11 @@ struct RunArgs {
     /// requests to. Defaults to Maven Central; override for an
     /// alternate mirror.
     #[cfg(feature = "capture")]
-    #[arg(long, value_name = "URL", default_value = "https://repo.maven.apache.org/maven2")]
+    #[arg(
+        long,
+        value_name = "URL",
+        default_value = "https://repo.maven.apache.org/maven2"
+    )]
     capture_upstream: String,
 }
 
@@ -198,8 +202,10 @@ fn run(args: RunArgs) -> i32 {
     eprintln!("barista-bench: output  = {}", output_root.display());
     eprintln!("barista-bench: runner  = {runner_id}");
     eprintln!("barista-bench: git     = {git_sha}");
-    eprintln!("barista-bench: hw      = {}, {} core(s) {}",
-        hardware.cpu, hardware.cores_logical, hardware.os);
+    eprintln!(
+        "barista-bench: hw      = {}, {} core(s) {}",
+        hardware.cpu, hardware.cores_logical, hardware.os
+    );
 
     let baseline_filter: Option<Vec<&str>> = if args.baselines.is_empty() {
         None
@@ -210,7 +216,10 @@ fn run(args: RunArgs) -> i32 {
     let mut had_error = false;
     for (manifest_path, manifest) in &manifests {
         if let Some(pat) = &args.filter
-            && !manifest.id.to_ascii_lowercase().contains(&pat.to_ascii_lowercase())
+            && !manifest
+                .id
+                .to_ascii_lowercase()
+                .contains(&pat.to_ascii_lowercase())
         {
             continue;
         }
@@ -224,7 +233,8 @@ fn run(args: RunArgs) -> i32 {
             work_dir.to_path_buf()
         };
 
-        let baselines = filter_baselines(&manifest.effective_baselines(), baseline_filter.as_deref());
+        let baselines =
+            filter_baselines(&manifest.effective_baselines(), baseline_filter.as_deref());
         if baselines.is_empty() {
             eprintln!(
                 "barista-bench: {}: no baselines after filter — skipping",
@@ -358,7 +368,14 @@ fn run(args: RunArgs) -> i32 {
     // emitted so `bench.barista.build` can be pointed at a local
     // run-directory in dev.
     if !args.dry_run
-        && let Err(e) = write_index(&output_root, &run_id, &timestamp, &git_sha, &hardware, &runner_id)
+        && let Err(e) = write_index(
+            &output_root,
+            &run_id,
+            &timestamp,
+            &git_sha,
+            &hardware,
+            &runner_id,
+        )
     {
         eprintln!("barista-bench: warning: could not write index.json: {e}");
     }
@@ -377,7 +394,8 @@ fn collect_manifests(args: &RunArgs) -> Result<Vec<(PathBuf, Manifest)>, String>
     }
     if let Some(dir) = &args.corpus {
         let mut entries: Vec<PathBuf> = Vec::new();
-        let read = fs::read_dir(dir).map_err(|e| format!("reading corpus dir {}: {e}", dir.display()))?;
+        let read =
+            fs::read_dir(dir).map_err(|e| format!("reading corpus dir {}: {e}", dir.display()))?;
         for child in read.flatten() {
             let p = child.path();
             if !p.is_dir() {
@@ -391,8 +409,7 @@ fn collect_manifests(args: &RunArgs) -> Result<Vec<(PathBuf, Manifest)>, String>
         entries.sort();
         let mut out = Vec::with_capacity(entries.len());
         for path in entries {
-            let m = load_manifest(&path)
-                .map_err(|e| format!("loading {}: {e}", path.display()))?;
+            let m = load_manifest(&path).map_err(|e| format!("loading {}: {e}", path.display()))?;
             out.push((path, m));
         }
         return Ok(out);
@@ -544,11 +561,11 @@ fn cold_cache_env(
             "BARISTA_PATHS__CACHE_DIR",
             barista_cache_abs.display().to_string(),
         ),
+        ("BARISTA_PATHS__M2_REPOSITORY", m2_abs.display().to_string()),
         (
-            "BARISTA_PATHS__M2_REPOSITORY",
-            m2_abs.display().to_string(),
+            "MAVEN_OPTS",
+            format!("-Dmaven.repo.local={}", m2_abs.display()),
         ),
-        ("MAVEN_OPTS", format!("-Dmaven.repo.local={}", m2_abs.display())),
     ])
 }
 
@@ -657,7 +674,10 @@ fn build_results_doc(
 ) -> ResultsDocument {
     let summary = summarize(&iterations);
     let mut metadata = BTreeMap::new();
-    metadata.insert("baseline_display_name".to_string(), baseline.display_name.clone());
+    metadata.insert(
+        "baseline_display_name".to_string(),
+        baseline.display_name.clone(),
+    );
     if let Some(corpus_id) = &manifest.corpus_id {
         metadata.insert("corpus_id".to_string(), corpus_id.clone());
     }
@@ -807,8 +827,8 @@ fn detect_hardware() -> RunHardware {
         };
     }
     if cfg!(target_os = "linux") {
-        let cpu = read_first_line("/proc/cpuinfo", "model name")
-            .unwrap_or_else(|| "unknown".into());
+        let cpu =
+            read_first_line("/proc/cpuinfo", "model name").unwrap_or_else(|| "unknown".into());
         let cores_logical = std::thread::available_parallelism()
             .map(|n| n.get() as u32)
             .unwrap_or(0);
@@ -861,11 +881,7 @@ fn detect_os() -> String {
 }
 
 fn sysctl_string<S: AsRef<OsStr>>(key: S) -> Option<String> {
-    command_output(&[
-        "sysctl",
-        "-n",
-        key.as_ref().to_str()?,
-    ])
+    command_output(&["sysctl", "-n", key.as_ref().to_str()?])
 }
 
 fn sysctl_u32<S: AsRef<OsStr>>(key: S) -> Option<u32> {
@@ -1116,9 +1132,7 @@ mod capture {
     fn baseline_capture_kind(baseline: &Baseline) -> BaselineCapture {
         let argv = shell_split(&baseline.command);
         match argv.first().map(String::as_str) {
-            Some("barista") if !argv.iter().any(|a| a == "--no-daemon") => {
-                BaselineCapture::Barista
-            }
+            Some("barista") if !argv.iter().any(|a| a == "--no-daemon") => BaselineCapture::Barista,
             Some("mvn") | Some("mvnd") => BaselineCapture::Maven,
             _ => BaselineCapture::None,
         }
@@ -1150,9 +1164,8 @@ mod capture {
             );
         }
 
-        std::fs::create_dir_all(har_dir).map_err(|e| {
-            format!("could not create HAR output dir {}: {e}", har_dir.display())
-        })?;
+        std::fs::create_dir_all(har_dir)
+            .map_err(|e| format!("could not create HAR output dir {}: {e}", har_dir.display()))?;
 
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1267,7 +1280,11 @@ mod capture {
                     format!("reverse:{mitm_target}"),
                     "--ssl-insecure".to_string(),
                 ];
-                (cfg, shell_split(&baseline.command), Vec::<(&'static str, String)>::new())
+                (
+                    cfg,
+                    shell_split(&baseline.command),
+                    Vec::<(&'static str, String)>::new(),
+                )
             }
             BaselineCapture::Maven => {
                 // Forward-proxy mode is mitmdump's default — no
@@ -1304,14 +1321,10 @@ mod capture {
             BaselineCapture::Barista => {
                 let (_, upstream_path) = split_upstream(upstream_url)?;
                 let proxy_url = format!("http://127.0.0.1:{listen_port}{upstream_path}");
-                (
-                    argv,
-                    vec![("BARISTA_TEST_UPSTREAM_URL", proxy_url)],
-                )
+                (argv, vec![("BARISTA_TEST_UPSTREAM_URL", proxy_url)])
             }
             BaselineCapture::Maven => {
-                let settings_xml =
-                    mvn_settings_xml(side_artifacts_dir, phase, idx, listen_port)?;
+                let settings_xml = mvn_settings_xml(side_artifacts_dir, phase, idx, listen_port)?;
                 // Inject `--settings <path>` right after argv[0] so it
                 // applies before any other flag mvn parses.
                 let mut new_argv = Vec::with_capacity(argv.len() + 2);

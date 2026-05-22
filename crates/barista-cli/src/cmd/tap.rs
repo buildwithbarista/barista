@@ -39,9 +39,7 @@ use std::time::Duration;
 use barista_tap::{DEFAULT_PROBE_TIMEOUT, Tap, TapHealth, TapRegistry, probe};
 use serde::Serialize;
 
-use crate::cli::{
-    GlobalFlags, OutputFormat, TapAddArgs, TapCommand, TapRemoveArgs, TapStatusArgs,
-};
+use crate::cli::{GlobalFlags, OutputFormat, TapAddArgs, TapCommand, TapRemoveArgs, TapStatusArgs};
 
 /// Dispatch a `barista tap <sub>` invocation. Returns the exit code.
 pub fn run(global: &GlobalFlags, cmd: &TapCommand) -> i32 {
@@ -174,10 +172,7 @@ fn run_status(global: &GlobalFlags, args: &TapStatusArgs) -> Result<i32, TapCmdE
     let all_healthy = results.iter().all(|(_, h)| h.is_healthy());
 
     if json_output(global) {
-        let views: Vec<StatusView> = results
-            .iter()
-            .map(|(t, h)| StatusView::new(t, h))
-            .collect();
+        let views: Vec<StatusView> = results.iter().map(|(t, h)| StatusView::new(t, h)).collect();
         print_json(&serde_json::json!({ "command": "tap-status", "taps": views }))?;
     } else if results.is_empty() {
         println!("no taps registered");
@@ -193,10 +188,7 @@ fn run_status(global: &GlobalFlags, args: &TapStatusArgs) -> Result<i32, TapCmdE
 
 /// Probe every target, preserving order. Builds a current-thread
 /// tokio runtime with IO + time enabled (the probe needs both).
-fn probe_all(
-    targets: &[&Tap],
-    timeout: Duration,
-) -> Result<Vec<(Tap, TapHealth)>, TapCmdError> {
+fn probe_all(targets: &[&Tap], timeout: Duration) -> Result<Vec<(Tap, TapHealth)>, TapCmdError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
@@ -327,12 +319,7 @@ fn print_json(value: &serde_json::Value) -> Result<(), TapCmdError> {
 
 /// Render a clean fixed-column table of taps to stdout.
 fn print_tap_table(taps: &[Tap]) {
-    let name_w = taps
-        .iter()
-        .map(|t| t.name.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
+    let name_w = taps.iter().map(|t| t.name.len()).max().unwrap_or(4).max(4);
     let url_w = taps
         .iter()
         .map(|t| t.url.as_str().len())

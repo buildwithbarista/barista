@@ -30,15 +30,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use barista_cache::{
-    Cas, CacheSource, FetchConfig, Fetcher, Index, IndexEntry, IndexKey, Origin, OriginTier,
+    CacheSource, Cas, FetchConfig, Fetcher, Index, IndexEntry, IndexKey, Origin, OriginTier,
     RoasteryOutcome, RoasteryOutcomeObserver,
 };
 use barista_config::UpdatePolicy;
 use barista_coords::Coords;
 use barista_resolver::source::{FetchOrigin, MetadataSource};
-use barista_roastery_client::{
-    AuthConfig, ClientConfig, Digest, RoasteryClient, TlsConfig,
-};
+use barista_roastery_client::{AuthConfig, ClientConfig, Digest, RoasteryClient, TlsConfig};
 use tempfile::TempDir;
 use url::Url;
 use wiremock::matchers::{method, path};
@@ -121,11 +119,7 @@ fn roastery_client_bearer(base: &str, token: &str) -> RoasteryClient {
 /// controls whether the binary POM is served (200) or not (e.g.
 /// 404). The sidecars are always served (200) when `with_sidecar`,
 /// else 404.
-async fn mount_pom_and_sidecars(
-    server: &MockServer,
-    with_pom: bool,
-    with_sidecar: bool,
-) {
+async fn mount_pom_and_sidecars(server: &MockServer, with_pom: bool, with_sidecar: bool) {
     let pom_path = "/org/example/lib/1.0/lib-1.0.pom";
     let sha256_path = "/org/example/lib/1.0/lib-1.0.pom.sha256";
     let sha1_path = "/org/example/lib/1.0/lib-1.0.pom.sha1";
@@ -171,7 +165,10 @@ async fn seed_roastery(client: &RoasteryClient, bytes: &[u8]) {
     let digest = Digest::of_bytes(bytes);
     let size = bytes.len() as u64;
     let reader = Cursor::new(bytes.to_vec());
-    client.put_blob(digest, reader, size).await.expect("seed put");
+    client
+        .put_blob(digest, reader, size)
+        .await
+        .expect("seed put");
 }
 
 /// Read the recorded OriginTier for the sample POM from a freshly
@@ -192,8 +189,10 @@ async fn cache_with_roastery_configured_serves_from_roastery_on_local_miss() {
     let upstream = MockServer::start().await;
     // Upstream serves the sidecar (so the cache learns the digest)
     // but NOT the binary POM — proving the binary came from roastery.
-    mount_pom_and_sidecars(&upstream, /* with_pom */ false, /* with_sidecar */ true)
-        .await;
+    mount_pom_and_sidecars(
+        &upstream, /* with_pom */ false, /* with_sidecar */ true,
+    )
+    .await;
 
     let client = roastery_client(&roastery.base_url());
     seed_roastery(&client, SAMPLE_POM.as_bytes()).await;
@@ -436,8 +435,7 @@ fn cache_origin_roastery_round_trips_through_index_serde() {
 
     let cfg = bincode::config::standard();
     let bytes = bincode::serde::encode_to_vec(&entry, cfg).unwrap();
-    let (decoded, _): (IndexEntry, _) =
-        bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
+    let (decoded, _): (IndexEntry, _) = bincode::serde::decode_from_slice(&bytes, cfg).unwrap();
     assert_eq!(decoded, entry);
     assert_eq!(decoded.origin.tier, OriginTier::Roastery);
 }

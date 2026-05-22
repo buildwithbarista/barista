@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use barista_cache::{
-    Cas, CacheSource, FetchConfig, Fetcher, Index, OriginTier, PushOutcome, RoasteryOutcome,
+    CacheSource, Cas, FetchConfig, Fetcher, Index, OriginTier, PushOutcome, RoasteryOutcome,
     RoasteryOutcomeObserver, RoasteryPushObserver,
 };
 use barista_config::UpdatePolicy;
@@ -46,7 +46,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 mod common;
-use common::roastery_harness::{spawn_plain_roastery, spawn_put_failing_roastery, RoasteryHarness};
+use common::roastery_harness::{RoasteryHarness, spawn_plain_roastery, spawn_put_failing_roastery};
 
 const SAMPLE_POM: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">

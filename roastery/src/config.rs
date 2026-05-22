@@ -456,8 +456,7 @@ fn parse_storage_backend(
                 .and_then(|v| v.to_str())
                 .ok_or_else(|| {
                     RoasteryError::Config(
-                        "ROASTERY_STORAGE_BACKEND=s3 requires ROASTERY_STORAGE_BUCKET"
-                            .to_string(),
+                        "ROASTERY_STORAGE_BACKEND=s3 requires ROASTERY_STORAGE_BUCKET".to_string(),
                     )
                 })?
                 .to_string();
@@ -466,8 +465,7 @@ fn parse_storage_backend(
                 .and_then(|v| v.to_str())
                 .ok_or_else(|| {
                     RoasteryError::Config(
-                        "ROASTERY_STORAGE_BACKEND=s3 requires ROASTERY_STORAGE_REGION"
-                            .to_string(),
+                        "ROASTERY_STORAGE_BACKEND=s3 requires ROASTERY_STORAGE_REGION".to_string(),
                     )
                 })?
                 .to_string();
@@ -479,8 +477,7 @@ fn parse_storage_backend(
                 .and_then(|v| v.to_str())
                 .ok_or_else(|| {
                     RoasteryError::Config(
-                        "ROASTERY_STORAGE_BACKEND=gcs requires ROASTERY_STORAGE_BUCKET"
-                            .to_string(),
+                        "ROASTERY_STORAGE_BACKEND=gcs requires ROASTERY_STORAGE_BUCKET".to_string(),
                     )
                 })?
                 .to_string();
@@ -565,9 +562,7 @@ fn parse_upstream(
     let timeout_secs = match timeout.as_ref().and_then(|v| v.to_str()) {
         None => DEFAULT_UPSTREAM_TIMEOUT_SECS,
         Some(s) => s.parse::<u32>().map_err(|e| {
-            RoasteryError::Config(format!(
-                "invalid ROASTERY_UPSTREAM_TIMEOUT_SECS {s:?}: {e}"
-            ))
+            RoasteryError::Config(format!("invalid ROASTERY_UPSTREAM_TIMEOUT_SECS {s:?}: {e}"))
         })?,
     };
     if timeout_secs == 0 {
@@ -649,14 +644,8 @@ mod tests {
         let dir = PathBuf::from("/tmp/unused");
         let err = parse_storage_backend(Some("s3".into()), None, None, None, &dir).unwrap_err();
         assert!(matches!(err, RoasteryError::Config(_)));
-        let err = parse_storage_backend(
-            Some("s3".into()),
-            Some("b".into()),
-            None,
-            None,
-            &dir,
-        )
-        .unwrap_err();
+        let err = parse_storage_backend(Some("s3".into()), Some("b".into()), None, None, &dir)
+            .unwrap_err();
         assert!(matches!(err, RoasteryError::Config(_)));
     }
 
@@ -683,8 +672,7 @@ mod tests {
     #[test]
     fn parse_storage_backend_rejects_unknown_kind() {
         let dir = PathBuf::from("/tmp/unused");
-        let err = parse_storage_backend(Some("azure".into()), None, None, None, &dir)
-            .unwrap_err();
+        let err = parse_storage_backend(Some("azure".into()), None, None, None, &dir).unwrap_err();
         assert!(matches!(err, RoasteryError::Config(_)));
     }
 

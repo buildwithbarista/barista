@@ -95,9 +95,10 @@ mod tests {
     #[test]
     fn normalise_maps_unknown_to_none() {
         assert_eq!(normalise("unknown"), None);
-        assert_eq!(normalise("rustc 1.84.0 (abc 2024-01-01)"), Some(
-            "rustc 1.84.0 (abc 2024-01-01)"
-        ));
+        assert_eq!(
+            normalise("rustc 1.84.0 (abc 2024-01-01)"),
+            Some("rustc 1.84.0 (abc 2024-01-01)")
+        );
         // Empty string is *not* the sentinel — we'd rather surface
         // "the build script ran and produced an empty value, please
         // investigate" than silently null it out.

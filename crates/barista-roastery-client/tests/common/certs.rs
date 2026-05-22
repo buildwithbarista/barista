@@ -12,8 +12,8 @@ use std::sync::OnceLock;
 
 use rcgen::string::Ia5String;
 use rcgen::{
-    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
-    KeyUsagePurpose, SanType,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose,
+    SanType,
 };
 use tempfile::NamedTempFile;
 
@@ -61,8 +61,7 @@ pub fn build_pki(server_dns: &str) -> TestPki {
         KeyUsagePurpose::DigitalSignature,
         KeyUsagePurpose::KeyEncipherment,
     ];
-    server_params.extended_key_usages =
-        vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
+    server_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
     let server_cert = server_params
         .signed_by(&server_kp, &ca_issuer)
         .expect("server cert");
@@ -75,8 +74,7 @@ pub fn build_pki(server_dns: &str) -> TestPki {
     let mut client_dn = DistinguishedName::new();
     client_dn.push(DnType::CommonName, "roastery-client-test-client");
     client_params.distinguished_name = client_dn;
-    client_params.extended_key_usages =
-        vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+    client_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
     let client_cert = client_params
         .signed_by(&client_kp, &ca_issuer)
         .expect("client cert");
@@ -106,8 +104,7 @@ pub fn build_pki(server_dns: &str) -> TestPki {
     let mut uc_dn = DistinguishedName::new();
     uc_dn.push(DnType::CommonName, "unrelated-client");
     unrelated_client_params.distinguished_name = uc_dn;
-    unrelated_client_params.extended_key_usages =
-        vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
+    unrelated_client_params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ClientAuth];
     let unrelated_client_cert = unrelated_client_params
         .signed_by(&unrelated_client_kp, &unrelated_issuer)
         .expect("u-client cert");

@@ -394,9 +394,9 @@ mod tests {
             Ok(()) => {
                 handle.join().expect("watched lock test thread panicked");
             }
-            Err(_) => panic!(
-                "lock test exceeded {secs}s — likely a FilesystemLock acquire regression"
-            ),
+            Err(_) => {
+                panic!("lock test exceeded {secs}s — likely a FilesystemLock acquire regression")
+            }
         }
     }
 

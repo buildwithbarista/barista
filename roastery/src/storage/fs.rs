@@ -135,11 +135,7 @@ impl Cas for FsCas {
         }
     }
 
-    async fn put(
-        &self,
-        expected_digest: Digest,
-        mut source: CasReader,
-    ) -> Result<Stat> {
+    async fn put(&self, expected_digest: Digest, mut source: CasReader) -> Result<Stat> {
         // Fast-path: if the digest is already present, skip the work.
         // We still read the source to EOF to honour the streaming
         // contract (callers may be tee'ing data through us), but we
@@ -198,7 +194,10 @@ impl Cas for FsCas {
                 break;
             }
             hasher.update(&buf[..n]);
-            writer.write_all(&buf[..n]).await.map_err(StorageError::Io)?;
+            writer
+                .write_all(&buf[..n])
+                .await
+                .map_err(StorageError::Io)?;
             // Track total bytes. `usize → u64` is widening on every
             // target Barista supports (32-bit and 64-bit), so the
             // conversion can't fail; we still go through `try_from`
@@ -232,13 +231,12 @@ impl Cas for FsCas {
         // `tempfile::NamedTempFile::persist` consumes the tempfile so
         // its Drop won't fire on the now-renamed inode.
         let target_for_blocking = target.clone();
-        let persist_result = tokio::task::spawn_blocking(move || {
-            staging.persist(&target_for_blocking)
-        })
-        .await
-        .map_err(|e| StorageError::Other {
-            context: format!("spawn_blocking for tempfile persist failed: {e}"),
-        })?;
+        let persist_result =
+            tokio::task::spawn_blocking(move || staging.persist(&target_for_blocking))
+                .await
+                .map_err(|e| StorageError::Other {
+                    context: format!("spawn_blocking for tempfile persist failed: {e}"),
+                })?;
 
         match persist_result {
             Ok(_) => Ok(Stat {
@@ -319,7 +317,9 @@ impl Cas for FsCas {
                 Err(_) => continue, // non-UTF8 dirent: not ours, skip.
             };
             if prefix_name.len() != 2
-                || !prefix_name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                || !prefix_name
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
             {
                 continue; // not a CAS prefix dir.
             }
@@ -455,9 +455,9 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..16 {
             let cas = cas.clone();
-            handles.push(tokio::spawn(async move {
-                cas.put(digest, cursor(blob)).await
-            }));
+            handles.push(tokio::spawn(
+                async move { cas.put(digest, cursor(blob)).await },
+            ));
         }
         for h in handles {
             let stat = h.await.unwrap().unwrap();
@@ -590,7 +590,10 @@ mod tests {
 
     impl RepeatReader {
         fn new(byte: u8, len: usize) -> Self {
-            Self { byte, remaining: len }
+            Self {
+                byte,
+                remaining: len,
+            }
         }
     }
 

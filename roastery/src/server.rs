@@ -211,9 +211,8 @@ fn build_upstream(
         return Ok(None);
     }
     let timeout = std::time::Duration::from_secs(u64::from(config.upstream.timeout_secs));
-    let fetcher = UpstreamFetcher::new(config.upstream.repos.clone(), timeout, cas).map_err(
-        |e| RoasteryError::Config(format!("failed to build upstream HTTP client: {e}")),
-    )?;
+    let fetcher = UpstreamFetcher::new(config.upstream.repos.clone(), timeout, cas)
+        .map_err(|e| RoasteryError::Config(format!("failed to build upstream HTTP client: {e}")))?;
     info!(
         repos = config.upstream.repos.len(),
         timeout_secs = config.upstream.timeout_secs,
@@ -637,7 +636,13 @@ pub mod tls {
                     .unwrap_or_default();
                 debug!(certs = chain.len(), "tls: captured peer cert chain");
                 let chain = ClientCertChain(Arc::new(chain));
-                Ok((tls_stream, InjectCertChain { inner: service, chain }))
+                Ok((
+                    tls_stream,
+                    InjectCertChain {
+                        inner: service,
+                        chain,
+                    },
+                ))
             })
         }
     }
@@ -680,8 +685,8 @@ pub mod tls {
 pub fn init_tracing() {
     use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,roastery=info"));
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,roastery=info"));
 
     let _ = tracing_subscriber::registry()
         .with(filter)

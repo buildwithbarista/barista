@@ -209,10 +209,7 @@ impl RoasteryOutcomeObserver {
 
     /// Snapshot the recorded outcomes, in fetch order.
     pub fn outcomes(&self) -> Vec<RoasteryOutcome> {
-        self.events
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.events.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     /// The most recently recorded outcome, if any.
@@ -620,30 +617,27 @@ impl CacheSource {
         // check and the lock acquisition; re-check after taking the
         // fs lock so we don't double-fetch.
         let lock_root = self.lock_root();
-        let _fs_lock = FilesystemLock::acquire_with_timeout(
-            &lock_root,
-            &lock_key,
-            LOCK_ACQUIRE_TIMEOUT,
-        )
-        .await
-        .map_err(|e| {
-            let detail = match &e {
-                LockError::Timeout { path, seconds } => format!(
-                    "lock acquisition timed out after {seconds}s for {}:{}:{} — \
+        let _fs_lock =
+            FilesystemLock::acquire_with_timeout(&lock_root, &lock_key, LOCK_ACQUIRE_TIMEOUT)
+                .await
+                .map_err(|e| {
+                    let detail = match &e {
+                        LockError::Timeout { path, seconds } => format!(
+                            "lock acquisition timed out after {seconds}s for {}:{}:{} — \
                      another barista process may be stuck; see {}",
-                    coords.group,
-                    coords.artifact,
-                    version,
-                    path.display(),
-                ),
-                other => format!("filesystem lock: {other}"),
-            };
-            MetadataError::Transport {
-                coords: format!("{}:{}", coords.group, coords.artifact),
-                version: version.to_string(),
-                detail,
-            }
-        })?;
+                            coords.group,
+                            coords.artifact,
+                            version,
+                            path.display(),
+                        ),
+                        other => format!("filesystem lock: {other}"),
+                    };
+                    MetadataError::Transport {
+                        coords: format!("{}:{}", coords.group, coords.artifact),
+                        version: version.to_string(),
+                        detail,
+                    }
+                })?;
 
         if let Some(entry) = self.inner.index.get(&index_key) {
             let bytes = self
@@ -667,14 +661,13 @@ impl CacheSource {
                 .await
             {
                 Ok(Some((bytes, entry))) => {
-                    self.inner
-                        .index
-                        .put(index_key, entry)
-                        .map_err(|e| MetadataError::Transport {
+                    self.inner.index.put(index_key, entry).map_err(|e| {
+                        MetadataError::Transport {
                             coords: format!("{}:{}", coords.group, coords.artifact),
                             version: version.to_string(),
                             detail: format!("index put: {e}"),
-                        })?;
+                        }
+                    })?;
                     self.record_roastery_outcome(RoasteryOutcome::Hit);
                     // Push-after-build never re-uploads bytes we just
                     // pulled from the roastery — they're already
@@ -1333,7 +1326,10 @@ fn format_coords_header(
     classifier: Option<&str>,
 ) -> String {
     match classifier {
-        Some(c) => format!("{}:{}:{}:{}:{}", coords.group, coords.artifact, type_, c, version),
+        Some(c) => format!(
+            "{}:{}:{}:{}:{}",
+            coords.group, coords.artifact, type_, c, version
+        ),
         None if type_ != "jar" => {
             // Emit the type for any non-default packaging so the
             // roastery can disambiguate `pom` from `jar`.

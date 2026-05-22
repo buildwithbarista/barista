@@ -61,11 +61,7 @@ impl Cas for S3Cas {
         Err(StorageError::NotImplemented { backend: "s3" })
     }
 
-    async fn put(
-        &self,
-        _expected_digest: Digest,
-        _source: CasReader,
-    ) -> Result<Stat> {
+    async fn put(&self, _expected_digest: Digest, _source: CasReader) -> Result<Stat> {
         Err(StorageError::NotImplemented { backend: "s3" })
     }
 
@@ -95,7 +91,10 @@ mod tests {
         let digest = Digest::of_bytes(b"x");
 
         let err = cas.stat(digest).await.unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "s3" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "s3" }
+        ));
 
         match cas.get(digest).await {
             Err(StorageError::NotImplemented { backend: "s3" }) => {}
@@ -107,13 +106,22 @@ mod tests {
             .put(digest, Box::new(Cursor::new(b"x".to_vec())))
             .await
             .unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "s3" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "s3" }
+        ));
 
         let err = cas.delete(digest).await.unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "s3" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "s3" }
+        ));
 
         let err = cas.list(None).await.unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "s3" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "s3" }
+        ));
     }
 
     #[test]

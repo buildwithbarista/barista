@@ -278,9 +278,6 @@ mod tests {
     #[test]
     fn to_maven_path_five_components_inserts_classifier() {
         let c = Coords::parse("org.example:foo:jar:sources:1.0").unwrap();
-        assert_eq!(
-            c.to_maven_path(),
-            "org/example/foo/1.0/foo-1.0-sources.jar"
-        );
+        assert_eq!(c.to_maven_path(), "org/example/foo/1.0/foo-1.0-sources.jar");
     }
 }

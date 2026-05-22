@@ -99,7 +99,10 @@ fn list_empty_json() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
-    insta::assert_snapshot!("tap_list_empty_json", String::from_utf8(out.stdout).unwrap());
+    insta::assert_snapshot!(
+        "tap_list_empty_json",
+        String::from_utf8(out.stdout).unwrap()
+    );
 }
 
 #[test]
@@ -118,7 +121,13 @@ fn list_many_text_and_json() {
     stdout_with_code(&cfg, &["add", "alpha", "https://alpha.example.com"], 0);
     stdout_with_code(
         &cfg,
-        &["add", "beta", "http://beta.example.com:9000", "--kind", "worker"],
+        &[
+            "add",
+            "beta",
+            "http://beta.example.com:9000",
+            "--kind",
+            "worker",
+        ],
         0,
     );
     stdout_with_code(&cfg, &["add", "gamma", "https://gamma.example.com"], 0);
@@ -133,7 +142,10 @@ fn list_many_text_and_json() {
         .output()
         .unwrap();
     assert_eq!(json.status.code(), Some(0));
-    insta::assert_snapshot!("tap_list_many_json", String::from_utf8(json.stdout).unwrap());
+    insta::assert_snapshot!(
+        "tap_list_many_json",
+        String::from_utf8(json.stdout).unwrap()
+    );
 }
 
 #[test]
@@ -188,12 +200,18 @@ async fn add_list_status_remove_cycle_is_idempotent() {
         stdout_with_code(&cfg, &["remove", "live"], 0);
         // registry is empty again
         let empty = stdout_with_code(&cfg, &["list"], 0);
-        assert!(empty.contains("no taps registered"), "round {round}: {empty}");
+        assert!(
+            empty.contains("no taps registered"),
+            "round {round}: {empty}"
+        );
     }
 
     // After the full cycle the on-disk config has no taps section.
     let raw = std::fs::read_to_string(&cfg).unwrap_or_default();
-    assert!(!raw.contains("[[taps]]"), "config should be tap-less:\n{raw}");
+    assert!(
+        !raw.contains("[[taps]]"),
+        "config should be tap-less:\n{raw}"
+    );
 }
 
 // ============================================================

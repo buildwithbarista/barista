@@ -165,7 +165,9 @@ impl ClientError {
                 || s.contains("invalidcertificate")
                 || s.contains("invalid certificate")
             {
-                Self::Tls { reason: e.to_string() }
+                Self::Tls {
+                    reason: e.to_string(),
+                }
             } else {
                 Self::Network { source: e }
             }

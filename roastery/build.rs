@@ -278,10 +278,7 @@ fn generate_reapi_bindings() -> Result<(), Box<dyn std::error::Error>> {
         .include_file("reapi_generated.rs")
         // Generated code lives in OUT_DIR; it is `include!`d, never
         // checked in, so it is exempt from the workspace clippy gate.
-        .compile_protos(
-            &[reapi_proto, bytestream_proto],
-            &[proto_root, wkt_include],
-        )?;
+        .compile_protos(&[reapi_proto, bytestream_proto], &[proto_root, wkt_include])?;
 
     Ok(())
 }

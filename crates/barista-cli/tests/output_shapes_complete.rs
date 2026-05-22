@@ -324,7 +324,10 @@ fn verify_failed_json_pretty() {
     let doc: Value = serde_json::from_str(&body).expect("verify is valid JSON");
     // The failing path carries the structured daemon code downstream
     // tooling branches on.
-    assert_eq!(doc["invocations"][1]["error-code"], "BAR-DEPLOY-AUTH-MISSING");
+    assert_eq!(
+        doc["invocations"][1]["error-code"],
+        "BAR-DEPLOY-AUTH-MISSING"
+    );
     verify_settings().bind(|| {
         insta::assert_snapshot!("verify_failed_json_pretty", body);
     });

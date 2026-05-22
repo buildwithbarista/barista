@@ -556,9 +556,7 @@ pub enum RoasteryConfigError {
     /// `auth-token-env` and `mtls-client-cert`/`mtls-client-key`
     /// are mutually exclusive — a single roastery can authenticate
     /// in only one mode at a time.
-    #[error(
-        "[cache.roastery]: auth-token-env and mtls-client-* are mutually exclusive — pick one"
-    )]
+    #[error("[cache.roastery]: auth-token-env and mtls-client-* are mutually exclusive — pick one")]
     AmbiguousAuth,
     /// `auth-token-env` named an environment variable that wasn't
     /// set (or was empty).
@@ -938,7 +936,10 @@ honor-jvm-config = true
             ..Default::default()
         };
         let err = p.resolve(|_| None).expect_err("should reject");
-        assert!(matches!(err, RoasteryConfigError::MtlsPairIncomplete { .. }));
+        assert!(matches!(
+            err,
+            RoasteryConfigError::MtlsPairIncomplete { .. }
+        ));
     }
 
     #[test]

@@ -20,16 +20,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use roastery::{
-    AppState, AuthConfig as RoasteryAuthConfig, AuthLayer, BearerAuthConfig, BearerVerifier,
-    FsCas, MtlsAuthConfig, ServerConfig, StorageBackend, TlsConfig as RoasteryTlsConfig,
-    UpstreamConfig,
+    AppState, AuthConfig as RoasteryAuthConfig, AuthLayer, BearerAuthConfig, BearerVerifier, FsCas,
+    MtlsAuthConfig, ServerConfig, StorageBackend, TlsConfig as RoasteryTlsConfig, UpstreamConfig,
 };
 use tempfile::{NamedTempFile, TempDir};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-use super::certs::{build_pki, ensure_crypto_provider, TestPki};
+use super::certs::{TestPki, build_pki, ensure_crypto_provider};
 
 pub struct Harness {
     pub addr: SocketAddr,
@@ -144,8 +143,7 @@ pub async fn spawn_bearer_server() -> Harness {
         bearer: None,
     };
 
-    let bearer_verifier =
-        Arc::new(BearerVerifier::load(tokens.path()).expect("bearer verifier"));
+    let bearer_verifier = Arc::new(BearerVerifier::load(tokens.path()).expect("bearer verifier"));
     let auth_layer = AuthLayer::new(Some(bearer_verifier), None);
 
     let protected = roastery::proto::barista::protected_router()

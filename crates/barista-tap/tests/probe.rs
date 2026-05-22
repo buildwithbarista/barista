@@ -21,7 +21,7 @@
 
 use std::time::{Duration, Instant};
 
-use barista_tap::{Tap, TapKind, TapHealth, probe};
+use barista_tap::{Tap, TapHealth, TapKind, probe};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -122,7 +122,10 @@ async fn worker_reachable_even_on_4xx() {
 
     let tap = Tap::new("worker", server.uri(), TapKind::Worker).unwrap();
     let health = probe(&tap, PROBE_TIMEOUT).await;
-    assert!(health.is_healthy(), "expected healthy (reachable), got {health:?}");
+    assert!(
+        health.is_healthy(),
+        "expected healthy (reachable), got {health:?}"
+    );
 }
 
 #[tokio::test]

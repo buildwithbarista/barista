@@ -239,7 +239,11 @@ fn every_corpus_manifest_has_a_checkout_dir() {
 
 /// Shared assertions for the P03 lifecycle sub-manifests: they all
 /// share P03's corpus_id, declare baselines, and target Tier-2.
-fn assert_p03_lifecycle_invariants(manifest: &Manifest, expected_id: &str, want_baselines: &[&str]) {
+fn assert_p03_lifecycle_invariants(
+    manifest: &Manifest,
+    expected_id: &str,
+    want_baselines: &[&str],
+) {
     assert_corpus_invariants(manifest, expected_id);
     assert_eq!(
         manifest.corpus_id.as_deref(),
@@ -265,7 +269,11 @@ fn assert_p03_lifecycle_invariants(manifest: &Manifest, expected_id: &str, want_
     // Every baseline must declare a non-empty command and (where
     // appropriate) a prepare step.
     for b in &baselines {
-        assert!(!b.command.trim().is_empty(), "baseline `{}` has empty command", b.id);
+        assert!(
+            !b.command.trim().is_empty(),
+            "baseline `{}` has empty command",
+            b.id
+        );
         assert!(
             !b.display_name.trim().is_empty(),
             "baseline `{}` has empty display_name",

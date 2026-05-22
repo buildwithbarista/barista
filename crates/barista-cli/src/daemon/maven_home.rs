@@ -162,8 +162,8 @@ pub fn bundled_maven_home(current_exe: &Path, fs: &impl FsProbe) -> Option<PathB
         return None;
     }
     // Must contain a Maven launcher under bin/ and a lib/ directory.
-    let has_launcher =
-        fs.is_file(&candidate.join("bin").join("mvn")) || fs.is_file(&candidate.join("bin").join("mvn.cmd"));
+    let has_launcher = fs.is_file(&candidate.join("bin").join("mvn"))
+        || fs.is_file(&candidate.join("bin").join("mvn.cmd"));
     let has_lib = fs.is_dir(&candidate.join("lib"));
     if has_launcher && has_lib {
         Some(candidate)
@@ -384,8 +384,7 @@ mod tests {
             .with_dir(mvn_home.clone())
             .with_file(mvn_home.join("bin").join("mvn"))
             .with_dir(mvn_home.join("lib"));
-        let resolved =
-            resolve_maven_home(None, Some(PathBuf::from("/from/env")), Some(exe), &fs);
+        let resolved = resolve_maven_home(None, Some(PathBuf::from("/from/env")), Some(exe), &fs);
         assert_eq!(resolved.source, MavenHomeSource::Env);
         assert_eq!(resolved.path, Some(PathBuf::from("/from/env")));
     }

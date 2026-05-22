@@ -372,7 +372,13 @@ fn tap_add_defaults_to_roastery() {
 #[test]
 fn tap_add_kind_worker() {
     let cli = parse(&[
-        "barista", "tap", "add", "w", "http://w.example", "--kind", "worker",
+        "barista",
+        "tap",
+        "add",
+        "w",
+        "http://w.example",
+        "--kind",
+        "worker",
     ]);
     match cli.command {
         Command::Tap {

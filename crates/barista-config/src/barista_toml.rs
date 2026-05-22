@@ -290,11 +290,10 @@ pub fn load_taps(path: &std::path::Path) -> Result<Vec<TapDecl>, TapPersistError
             });
         }
     };
-    let file: ProjectConfigFile =
-        toml::from_str(&raw).map_err(|e| TapPersistError::Parse {
-            path: path.to_path_buf(),
-            detail: e.to_string(),
-        })?;
+    let file: ProjectConfigFile = toml::from_str(&raw).map_err(|e| TapPersistError::Parse {
+        path: path.to_path_buf(),
+        detail: e.to_string(),
+    })?;
     Ok(file.extensions.taps)
 }
 
@@ -343,8 +342,8 @@ pub fn save_taps(path: &std::path::Path, taps: &[TapDecl]) -> Result<(), TapPers
         // Serialize the typed taps through serde so the kebab-case /
         // enum spellings match the deserialization shape, then splice
         // the resulting array of tables into the document.
-        let value = toml::Value::try_from(taps)
-            .map_err(|e| TapPersistError::Serialize(e.to_string()))?;
+        let value =
+            toml::Value::try_from(taps).map_err(|e| TapPersistError::Serialize(e.to_string()))?;
         doc.insert("taps".to_string(), value);
     }
 
@@ -755,7 +754,11 @@ max-concurrent-connections = 11
         )
         .unwrap();
 
-        save_taps(&path, &[tap("r", "https://r.example", TapKindDecl::Roastery)]).unwrap();
+        save_taps(
+            &path,
+            &[tap("r", "https://r.example", TapKindDecl::Roastery)],
+        )
+        .unwrap();
 
         // Re-parse the whole file: network + project survived, taps added.
         let raw = std::fs::read_to_string(&path).unwrap();
@@ -778,13 +781,20 @@ max-concurrent-connections = 11
     fn test_21_save_empty_removes_section() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("barista.toml");
-        save_taps(&path, &[tap("r", "https://r.example", TapKindDecl::Roastery)]).unwrap();
+        save_taps(
+            &path,
+            &[tap("r", "https://r.example", TapKindDecl::Roastery)],
+        )
+        .unwrap();
         assert_eq!(load_taps(&path).unwrap().len(), 1);
 
         save_taps(&path, &[]).unwrap();
         assert!(load_taps(&path).unwrap().is_empty());
         let raw = std::fs::read_to_string(&path).unwrap();
-        assert!(!raw.contains("[[taps]]"), "taps section should be gone:\n{raw}");
+        assert!(
+            !raw.contains("[[taps]]"),
+            "taps section should be gone:\n{raw}"
+        );
     }
 
     // 22. Backward-compat: an existing config with no `[[taps]]`

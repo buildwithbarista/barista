@@ -45,7 +45,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
-use common::certs::{build_pki, ensure_crypto_provider, TestPki};
+use common::certs::{TestPki, build_pki, ensure_crypto_provider};
 
 // ---------------------------------------------------------------------
 // Bearer-only harness (plain HTTP)
@@ -117,8 +117,7 @@ async fn spawn_bearer_server() -> BearerHarness {
 
     // Build the same router topology production builds, by going
     // through the public + protected sub-router constructors.
-    let bearer_verifier =
-        Arc::new(roastery::BearerVerifier::load(tokens.path()).unwrap());
+    let bearer_verifier = Arc::new(roastery::BearerVerifier::load(tokens.path()).unwrap());
     let auth_layer = roastery::AuthLayer::new(Some(bearer_verifier), None);
 
     let protected = roastery::proto::barista::protected_router()
@@ -180,11 +179,7 @@ fn arbitrary_digest_hex() -> String {
 async fn unauthenticated_request_rejected_when_bearer_required() {
     let h = spawn_bearer_server().await;
     let c = http_client();
-    let url = format!(
-        "{}/v1/cas/sha256/{}",
-        h.base_url(),
-        arbitrary_digest_hex()
-    );
+    let url = format!("{}/v1/cas/sha256/{}", h.base_url(), arbitrary_digest_hex());
     let resp = c.get(&url).send().await.unwrap();
     assert_eq!(resp.status(), 401);
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -197,11 +192,7 @@ async fn unauthenticated_request_rejected_when_bearer_required() {
 async fn valid_bearer_token_allowed() {
     let h = spawn_bearer_server().await;
     let c = http_client();
-    let url = format!(
-        "{}/v1/cas/sha256/{}",
-        h.base_url(),
-        arbitrary_digest_hex()
-    );
+    let url = format!("{}/v1/cas/sha256/{}", h.base_url(), arbitrary_digest_hex());
     let resp = c
         .get(&url)
         .header("Authorization", "Bearer s3cret")
@@ -223,11 +214,7 @@ async fn valid_bearer_token_allowed() {
 async fn wrong_bearer_token_rejected() {
     let h = spawn_bearer_server().await;
     let c = http_client();
-    let url = format!(
-        "{}/v1/cas/sha256/{}",
-        h.base_url(),
-        arbitrary_digest_hex()
-    );
+    let url = format!("{}/v1/cas/sha256/{}", h.base_url(), arbitrary_digest_hex());
     let resp = c
         .get(&url)
         .header("Authorization", "Bearer wrong-token")
@@ -244,11 +231,7 @@ async fn wrong_bearer_token_rejected() {
 async fn malformed_authorization_header_rejected() {
     let h = spawn_bearer_server().await;
     let c = http_client();
-    let url = format!(
-        "{}/v1/cas/sha256/{}",
-        h.base_url(),
-        arbitrary_digest_hex()
-    );
+    let url = format!("{}/v1/cas/sha256/{}", h.base_url(), arbitrary_digest_hex());
     let resp = c
         .get(&url)
         .header("Authorization", "NotBearer foo")
@@ -314,7 +297,9 @@ fn server_refuses_to_start_with_non_loopback_bind_and_no_auth() {
         auth: AuthConfig::default(),
         upstream: UpstreamConfig::default(),
     };
-    let err = cfg.validate().expect_err("validate should reject non-loopback + no-auth");
+    let err = cfg
+        .validate()
+        .expect_err("validate should reject non-loopback + no-auth");
     let msg = format!("{err}");
     assert!(
         msg.contains("BAR-AUTH-005"),
@@ -332,7 +317,9 @@ fn server_refuses_to_start_with_non_loopback_bind_and_no_auth() {
         auth: AuthConfig::default(),
         upstream: UpstreamConfig::default(),
     };
-    cfg_ok.validate().expect("loopback + no-auth should validate");
+    cfg_ok
+        .validate()
+        .expect("loopback + no-auth should validate");
 }
 
 // ---------------------------------------------------------------------
@@ -431,10 +418,7 @@ async fn spawn_mtls_server(with_bearer: bool) -> MtlsHarness {
 /// Build a reqwest client that trusts the test CA, optionally
 /// presenting a client identity. `client_pem` is the PEM-encoded
 /// client cert (cert chain); `client_key_pem` is the matching key.
-fn https_client(
-    ca_pem: &str,
-    client_identity: Option<(&str, &str)>,
-) -> Client {
+fn https_client(ca_pem: &str, client_identity: Option<(&str, &str)>) -> Client {
     let mut root_store = rustls::RootCertStore::empty();
     for cert in rustls_pemfile::certs(&mut std::io::Cursor::new(ca_pem.as_bytes())) {
         let cert: CertificateDer<'_> = cert.unwrap();
@@ -463,17 +447,16 @@ fn https_client(
         .timeout(Duration::from_secs(10))
         // The test cert covers `localhost` + 127.0.0.1; reqwest's
         // default hostname verification is exactly what we want.
-        .resolve("localhost", SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+        .resolve(
+            "localhost",
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
         .build()
         .unwrap()
 }
 
 fn arbitrary_url(h: &MtlsHarness) -> String {
-    format!(
-        "{}/v1/cas/sha256/{}",
-        h.base_url(),
-        arbitrary_digest_hex()
-    )
+    format!("{}/v1/cas/sha256/{}", h.base_url(), arbitrary_digest_hex())
 }
 
 // ---------------------------------------------------------------------

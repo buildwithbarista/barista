@@ -45,11 +45,11 @@
     clippy::as_conversions
 )]
 
+use barista_lockfile::signature::ReactorModule;
 use barista_lockfile::{
     Lockfile, LockfileEntry, ValidationError, ValidationMode, ValidationOutcome, compute_signature,
     validate, validate_strict,
 };
-use barista_lockfile::signature::ReactorModule;
 use barista_pom::raw::{Properties, RawPom};
 
 // ---------------------------------------------------------------------------
@@ -287,8 +287,8 @@ sha256 = "abababababababababababababababababababababababababababababababab"
 size_bytes = 10
 source_url = "https://example.com/a.jar"
 "#;
-    let err = Lockfile::from_toml(toml)
-        .expect_err("a lockfile missing project_signature must not parse");
+    let err =
+        Lockfile::from_toml(toml).expect_err("a lockfile missing project_signature must not parse");
     // It's a TOML/serde error about the missing required field — the
     // exact variant is TomlParse; we just assert it did not silently
     // succeed with some default.

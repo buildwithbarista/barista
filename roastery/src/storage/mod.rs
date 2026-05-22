@@ -94,11 +94,7 @@ impl Digest {
     pub fn from_hex(s: &str) -> Result<Self> {
         if s.len() != Self::HEX_LEN {
             return Err(StorageError::InvalidDigest {
-                reason: format!(
-                    "expected {} hex chars, got {}",
-                    Self::HEX_LEN,
-                    s.len()
-                ),
+                reason: format!("expected {} hex chars, got {}", Self::HEX_LEN, s.len()),
             });
         }
         if !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
@@ -184,11 +180,7 @@ pub trait Cas: Send + Sync + 'static {
     /// discarded and [`StorageError::DigestMismatch`] is returned.
     /// If the digest already exists in the store the existing entry
     /// is kept; the put is treated as a no-op success.
-    async fn put(
-        &self,
-        expected_digest: Digest,
-        source: CasReader,
-    ) -> Result<Stat>;
+    async fn put(&self, expected_digest: Digest, source: CasReader) -> Result<Stat>;
 
     /// Remove the blob identified by `digest`. Returns `true` if a
     /// blob was present and removed, `false` if no blob was present
@@ -239,7 +231,9 @@ mod tests {
         assert!(matches!(err, StorageError::InvalidDigest { .. }));
 
         // Non-hex character (G).
-        let bad: String = std::iter::repeat_n('a', 63).chain(std::iter::once('G')).collect();
+        let bad: String = std::iter::repeat_n('a', 63)
+            .chain(std::iter::once('G'))
+            .collect();
         let err = Digest::from_hex(&bad).unwrap_err();
         assert!(matches!(err, StorageError::InvalidDigest { .. }));
 

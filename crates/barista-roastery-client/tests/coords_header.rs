@@ -27,11 +27,11 @@ use std::net::TcpListener as StdTcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::extract::{Path as AxPath, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use barista_roastery_client::{ClientConfig, Digest, RoasteryClient, TlsConfig};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;

@@ -363,9 +363,7 @@ async fn client_mtls_with_unrelated_cert_fails() {
 #[tokio::test]
 async fn client_plain_http_against_https_url_refuses_to_construct() {
     let url: Url = "https://example.com:8443".parse().unwrap();
-    let cfg = ClientConfig::builder(url)
-        .tls(TlsConfig::PlainHttp)
-        .build();
+    let cfg = ClientConfig::builder(url).tls(TlsConfig::PlainHttp).build();
     let err = RoasteryClient::new(cfg).expect_err("expected Config error");
     assert!(matches!(err, ClientError::Config { .. }));
 }
@@ -388,12 +386,7 @@ async fn client_streams_large_blob_without_oom() {
 
     // Build the blob deterministically so we can verify it round-trips.
     let pattern: Vec<u8> = (0..CHUNK).map(|i| (i % 251) as u8).collect();
-    let blob: Vec<u8> = pattern
-        .iter()
-        .cycle()
-        .take(SIZE)
-        .copied()
-        .collect();
+    let blob: Vec<u8> = pattern.iter().cycle().take(SIZE).copied().collect();
     let digest = Digest::of_bytes(&blob);
 
     let (reader, mut writer) = tokio::io::duplex(64 * 1024);

@@ -159,9 +159,7 @@ pub struct Origin {
 ///
 /// The default is [`Self::Upstream`] so a missing `tier` field on
 /// an older index entry deserialises to the pre-roastery semantics.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OriginTier {
     /// Fetched directly from a Maven repository (e.g. Maven Central,

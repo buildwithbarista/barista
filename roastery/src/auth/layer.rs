@@ -42,9 +42,9 @@ use rustls::pki_types::CertificateDer;
 use tower::{Layer, Service};
 use tracing::{debug, warn};
 
+use crate::auth::Principal;
 use crate::auth::bearer::{BearerVerifier, BearerVerifyError};
 use crate::auth::mtls::{MtlsVerifier, subject_from_cert};
-use crate::auth::Principal;
 use crate::error::ErrorBody;
 
 /// Per-connection client certificate chain attached as a request

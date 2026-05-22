@@ -61,10 +61,10 @@
 
 use std::pin::Pin;
 
-use tonic::{Request, Response, Status};
+use futures_util::Stream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::wrappers::ReceiverStream;
-use futures_util::Stream;
+use tonic::{Request, Response, Status};
 
 use crate::server::AppState;
 use crate::storage::Digest;
@@ -109,19 +109,22 @@ pub use generated::google::bytestream;
 /// responses.
 pub use generated::google::rpc as google_rpc;
 
+use bytestream::byte_stream_server::{ByteStream, ByteStreamServer};
+use bytestream::{
+    QueryWriteStatusRequest, QueryWriteStatusResponse, ReadRequest, ReadResponse, WriteRequest,
+    WriteResponse,
+};
+use reapi_v2::capabilities_server::{Capabilities, CapabilitiesServer};
 use reapi_v2::content_addressable_storage_server::{
     ContentAddressableStorage, ContentAddressableStorageServer,
 };
-use reapi_v2::capabilities_server::{Capabilities, CapabilitiesServer};
 use reapi_v2::{
     BatchReadBlobsRequest, BatchReadBlobsResponse, BatchUpdateBlobsRequest,
-    BatchUpdateBlobsResponse, CacheCapabilities, Digest as ReapiDigest,
-    FindMissingBlobsRequest, FindMissingBlobsResponse, GetCapabilitiesRequest, GetTreeRequest,
-    GetTreeResponse, ServerCapabilities, batch_read_blobs_response, batch_update_blobs_response,
-    digest_function, symlink_absolute_path_strategy,
+    BatchUpdateBlobsResponse, CacheCapabilities, Digest as ReapiDigest, FindMissingBlobsRequest,
+    FindMissingBlobsResponse, GetCapabilitiesRequest, GetTreeRequest, GetTreeResponse,
+    ServerCapabilities, batch_read_blobs_response, batch_update_blobs_response, digest_function,
+    symlink_absolute_path_strategy,
 };
-use bytestream::byte_stream_server::{ByteStream, ByteStreamServer};
-use bytestream::{ReadRequest, ReadResponse, WriteRequest, WriteResponse, QueryWriteStatusRequest, QueryWriteStatusResponse};
 
 pub mod auth;
 pub mod resource;
@@ -159,11 +162,15 @@ pub fn routes(state: AppState) -> axum::Router {
     let interceptor = ReapiAuth::from_state(&state);
 
     let cas = ContentAddressableStorageServer::with_interceptor(
-        CasService { state: state.clone() },
+        CasService {
+            state: state.clone(),
+        },
         interceptor.clone(),
     );
     let bs = ByteStreamServer::with_interceptor(
-        ByteStreamService { state: state.clone() },
+        ByteStreamService {
+            state: state.clone(),
+        },
         interceptor,
     );
     // Capabilities is the negotiation surface — unauthenticated, like
@@ -257,11 +264,7 @@ impl ContentAddressableStorage for CasService {
         // `u64` (lengths are `usize`) and compare against the cap; the
         // cap is small and positive so the `u64::try_from` of it never
         // fails.
-        let total: u64 = req
-            .requests
-            .iter()
-            .map(|r| len_u64(r.data.len()))
-            .sum();
+        let total: u64 = req.requests.iter().map(|r| len_u64(r.data.len())).sum();
         let cap = u64::try_from(MAX_BATCH_TOTAL_SIZE_BYTES).unwrap_or(u64::MAX);
         if total > cap {
             return Err(Status::invalid_argument(format!(
@@ -455,8 +458,7 @@ struct ByteStreamService {
 
 #[tonic::async_trait]
 impl ByteStream for ByteStreamService {
-    type ReadStream =
-        Pin<Box<dyn Stream<Item = Result<ReadResponse, Status>> + Send + 'static>>;
+    type ReadStream = Pin<Box<dyn Stream<Item = Result<ReadResponse, Status>> + Send + 'static>>;
 
     /// `Read` — stream a blob out by its resource name. The resource
     /// name follows the REAPI read grammar
@@ -556,7 +558,9 @@ impl ByteStream for ByteStreamService {
         // Spawn the put against the CAS; it consumes the read end of the
         // duplex pipe. We learn the digest from the first chunk, so the
         // put task is started lazily once we have it.
-        let mut put_handle: Option<tokio::task::JoinHandle<crate::storage::Result<crate::storage::Stat>>> = None;
+        let mut put_handle: Option<
+            tokio::task::JoinHandle<crate::storage::Result<crate::storage::Stat>>,
+        > = None;
 
         let mut next_offset: i64 = 0;
         let mut saw_finish = false;
@@ -578,9 +582,7 @@ impl ByteStream for ByteStreamService {
                 // given that guard, but we surface it as an INTERNAL
                 // status rather than panicking, per the no-panic policy.
                 let Some(read_half) = reader.take() else {
-                    return Err(Status::internal(
-                        "write pipe reader already consumed",
-                    ));
+                    return Err(Status::internal("write pipe reader already consumed"));
                 };
                 let cas = cas.clone();
                 put_handle = Some(tokio::spawn(async move {

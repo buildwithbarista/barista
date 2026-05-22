@@ -40,9 +40,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rustls::RootCertStore;
+use rustls::pki_types::CertificateDer;
 use rustls::server::WebPkiClientVerifier;
 use rustls::server::danger::ClientCertVerifier;
-use rustls::pki_types::CertificateDer;
 
 use crate::error::RoasteryError;
 
@@ -85,10 +85,7 @@ impl MtlsVerifier {
     pub fn load_ca<P: AsRef<Path>>(path: P) -> Result<Self, RoasteryError> {
         let path = path.as_ref();
         let pem = fs::read(path).map_err(|e| {
-            RoasteryError::Config(format!(
-                "cannot read mTLS CA file {}: {e}",
-                path.display()
-            ))
+            RoasteryError::Config(format!("cannot read mTLS CA file {}: {e}", path.display()))
         })?;
         let certs = parse_pem_certs(&pem, path)?;
         if certs.is_empty() {

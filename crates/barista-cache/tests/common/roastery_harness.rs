@@ -30,10 +30,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use axum::Router;
 use axum::extract::Path as AxPath;
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::Router;
 use roastery::{
     AppState, AuthConfig as RoasteryAuthConfig, AuthLayer, BearerAuthConfig, BearerVerifier, FsCas,
     ServerConfig, StorageBackend, UpstreamConfig,
@@ -224,15 +224,13 @@ pub async fn spawn_put_failing_roastery() -> RoasteryHarness {
 
     let app: Router = Router::new().route(
         "/v1/cas/sha256/{digest}",
-        get(|_: AxPath<String>| async { StatusCode::NOT_FOUND }).put(
-            |_: AxPath<String>| async {
-                let body = serde_json::json!({
-                    "code": "BAR-INTERNAL",
-                    "message": "synthetic PUT failure for push-after-build test",
-                });
-                (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(body))
-            },
-        ),
+        get(|_: AxPath<String>| async { StatusCode::NOT_FOUND }).put(|_: AxPath<String>| async {
+            let body = serde_json::json!({
+                "code": "BAR-INTERNAL",
+                "message": "synthetic PUT failure for push-after-build test",
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(body))
+        }),
     );
 
     let server = tokio::spawn(async move {

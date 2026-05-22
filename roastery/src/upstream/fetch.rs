@@ -169,11 +169,7 @@ impl UpstreamFetcher {
                     return Ok(Some(stat));
                 }
                 AttemptOutcome::DigestMismatch => {
-                    record_upstream_fetch(
-                        &repo_label,
-                        UpstreamResult::DigestMismatch,
-                        elapsed,
-                    );
+                    record_upstream_fetch(&repo_label, UpstreamResult::DigestMismatch, elapsed);
                     warn!(
                         repo = %repo,
                         digest = %digest,

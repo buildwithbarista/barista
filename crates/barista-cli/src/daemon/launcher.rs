@@ -590,8 +590,7 @@ fn write_pid(socket_dir: &Path, pid: u32) -> std::io::Result<()> {
 
 /// Strategies attempted in [`discover_jvm_entry`]. Documented as a
 /// type so error messages can list which paths were exercised.
-const TRIED_LIST: &str =
-    "$BARISTA_BARBACK_JAR, $BARISTA_BARBACK_CLASSPATH, $BARISTA_BARBACK_HOME/target/classes, <install-root>/share/barista/barback-uber.jar";
+const TRIED_LIST: &str = "$BARISTA_BARBACK_JAR, $BARISTA_BARBACK_CLASSPATH, $BARISTA_BARBACK_HOME/target/classes, <install-root>/share/barista/barback-uber.jar";
 
 /// Discover a [`JvmEntry`] to invoke barback with.
 ///
@@ -677,7 +676,10 @@ pub const BUNDLED_BARBACK_REL: [&str; 3] = ["share", "barista", "barback-uber.ja
 /// bundled, so a fresh `barista verify` finds it with no
 /// `BARISTA_BARBACK_JAR` configured. Returns `Some(<jar>)` only when the
 /// candidate file exists per `fs`. Pure with respect to `fs`.
-pub fn bundled_barback_jar(current_exe: &Path, fs: &impl super::maven_home::FsProbe) -> Option<PathBuf> {
+pub fn bundled_barback_jar(
+    current_exe: &Path,
+    fs: &impl super::maven_home::FsProbe,
+) -> Option<PathBuf> {
     // <install-root> = grandparent of the executable (`<root>/bin/barista`).
     let install_root = current_exe.parent()?.parent()?;
     let mut candidate = install_root.to_path_buf();

@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use roastery::{AppState, BearerVerifier, FsCas, ServerConfig};
 use roastery::proto::reapi;
+use roastery::{AppState, BearerVerifier, FsCas, ServerConfig};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio::net::{TcpListener, TcpStream};
@@ -47,9 +47,8 @@ use reapi::google_rpc;
 use reapi::reapi_v2::capabilities_client::CapabilitiesClient;
 use reapi::reapi_v2::content_addressable_storage_client::ContentAddressableStorageClient;
 use reapi::reapi_v2::{
-    BatchReadBlobsRequest, BatchUpdateBlobsRequest, Digest as ReapiDigest,
-    FindMissingBlobsRequest, GetCapabilitiesRequest, GetTreeRequest, batch_update_blobs_request,
-    digest_function,
+    BatchReadBlobsRequest, BatchUpdateBlobsRequest, Digest as ReapiDigest, FindMissingBlobsRequest,
+    GetCapabilitiesRequest, GetTreeRequest, batch_update_blobs_request, digest_function,
 };
 
 // -------------------------------------------------------------------
@@ -328,7 +327,10 @@ async fn reapi_batch_update_then_batch_read_round_trips() {
         .into_inner();
     assert_eq!(read.responses.len(), 1);
     assert_ok(read.responses[0].status.as_ref());
-    assert_eq!(read.responses[0].data, blob, "read bytes equal written bytes");
+    assert_eq!(
+        read.responses[0].data, blob,
+        "read bytes equal written bytes"
+    );
 }
 
 // -------------------------------------------------------------------
@@ -524,7 +526,11 @@ async fn reapi_and_barista_protocol_share_storage() {
         .send()
         .await
         .unwrap();
-    assert_eq!(put.status(), reqwest::StatusCode::CREATED, "HTTP PUT created");
+    assert_eq!(
+        put.status(),
+        reqwest::StatusCode::CREATED,
+        "HTTP PUT created"
+    );
 
     // Read it back via REAPI BatchReadBlobs.
     let mut cas = ContentAddressableStorageClient::new(h.channel().await);
@@ -587,13 +593,11 @@ async fn reapi_cas_requires_auth_when_configured() {
     // With a valid bearer token in the `authorization` metadata → OK.
     let channel = h.channel().await;
     let token: tonic::metadata::MetadataValue<_> = "Bearer s3cret-token".parse().unwrap();
-    let mut authed = ContentAddressableStorageClient::with_interceptor(
-        channel,
-        move |mut req: Request<()>| {
+    let mut authed =
+        ContentAddressableStorageClient::with_interceptor(channel, move |mut req: Request<()>| {
             req.metadata_mut().insert("authorization", token.clone());
             Ok(req)
-        },
-    );
+        });
     let resp = authed
         .batch_read_blobs(Request::new(BatchReadBlobsRequest {
             instance_name: String::new(),

@@ -42,8 +42,8 @@
 //! doesn't change.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use axum::extract::State;
@@ -702,10 +702,7 @@ mod tests {
         // hold for the TTL window.
         fs::write(tmp.path().join("cas").join("ab").join("blob-2"), b"world!").unwrap();
         let second = fs_bytes_cached(m, tmp.path().to_path_buf()).await;
-        assert_eq!(
-            second, 5,
-            "expected cached value within TTL, got {second}"
-        );
+        assert_eq!(second, 5, "expected cached value within TTL, got {second}");
 
         // After an explicit reset the next call should recompute.
         reset_storage_bytes_cache_for_tests();

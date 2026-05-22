@@ -264,8 +264,7 @@ impl IntoResponse for RoasteryError {
         match self {
             RoasteryError::Storage(s) => s.into_response(),
             other => {
-                let body =
-                    ErrorBody::new("BAR-CAS-099", format!("internal server error: {other}"));
+                let body = ErrorBody::new("BAR-CAS-099", format!("internal server error: {other}"));
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
             }
         }

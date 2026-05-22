@@ -53,11 +53,7 @@ impl Cas for GcsCas {
         Err(StorageError::NotImplemented { backend: "gcs" })
     }
 
-    async fn put(
-        &self,
-        _expected_digest: Digest,
-        _source: CasReader,
-    ) -> Result<Stat> {
+    async fn put(&self, _expected_digest: Digest, _source: CasReader) -> Result<Stat> {
         Err(StorageError::NotImplemented { backend: "gcs" })
     }
 
@@ -87,7 +83,10 @@ mod tests {
         let digest = Digest::of_bytes(b"x");
 
         let err = cas.stat(digest).await.unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "gcs" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "gcs" }
+        ));
 
         match cas.get(digest).await {
             Err(StorageError::NotImplemented { backend: "gcs" }) => {}
@@ -99,13 +98,22 @@ mod tests {
             .put(digest, Box::new(Cursor::new(b"x".to_vec())))
             .await
             .unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "gcs" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "gcs" }
+        ));
 
         let err = cas.delete(digest).await.unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "gcs" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "gcs" }
+        ));
 
         let err = cas.list(None).await.unwrap_err();
-        assert!(matches!(err, StorageError::NotImplemented { backend: "gcs" }));
+        assert!(matches!(
+            err,
+            StorageError::NotImplemented { backend: "gcs" }
+        ));
     }
 
     #[test]

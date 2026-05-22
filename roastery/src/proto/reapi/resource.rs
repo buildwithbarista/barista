@@ -103,14 +103,19 @@ pub fn parse_write_resource(name: &str) -> Result<WriteResource, Status> {
 
     // Locate `uploads`; the segment after it is the UUID, then `blobs`,
     // then {hash}/{size}.
-    let up = segments.iter().position(|s| *s == "uploads").ok_or_else(|| {
-        Status::invalid_argument(format!(
-            "write resource name {name:?} does not contain an 'uploads' segment"
-        ))
-    })?;
+    let up = segments
+        .iter()
+        .position(|s| *s == "uploads")
+        .ok_or_else(|| {
+            Status::invalid_argument(format!(
+                "write resource name {name:?} does not contain an 'uploads' segment"
+            ))
+        })?;
 
     let uuid = segments.get(up + 1).ok_or_else(|| {
-        Status::invalid_argument(format!("write resource name {name:?} is missing the upload uuid"))
+        Status::invalid_argument(format!(
+            "write resource name {name:?} is missing the upload uuid"
+        ))
     })?;
 
     // `blobs` must follow the uuid.
@@ -225,8 +230,7 @@ mod tests {
 
     #[test]
     fn write_rejects_blobs_not_after_uuid() {
-        let err =
-            parse_write_resource(&format!("uploads/the-uuid/notblobs/{HEX}/5")).unwrap_err();
+        let err = parse_write_resource(&format!("uploads/the-uuid/notblobs/{HEX}/5")).unwrap_err();
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 }

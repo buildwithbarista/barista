@@ -718,7 +718,10 @@ fn full_fetch_recovers_from_torn_journal_tail() {
         "expected journal at {journal_path:?} after warm-up pull"
     );
     let full_len = fs::metadata(&journal_path).unwrap().len();
-    assert!(full_len > 14, "journal must have at least a record beyond the 10-byte header; got {full_len}");
+    assert!(
+        full_len > 14,
+        "journal must have at least a record beyond the 10-byte header; got {full_len}"
+    );
     let truncated_to = full_len - 5;
     let f = fs::OpenOptions::new()
         .write(true)

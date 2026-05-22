@@ -328,7 +328,10 @@ impl TapRegistry {
     /// [`barista_config::save_taps`].
     #[must_use]
     pub fn to_decls(&self) -> Vec<barista_config::TapDecl> {
-        self.taps.iter().map(barista_config::TapDecl::from).collect()
+        self.taps
+            .iter()
+            .map(barista_config::TapDecl::from)
+            .collect()
     }
 }
 
@@ -562,7 +565,12 @@ mod tests {
 
     #[test]
     fn rejects_relative_and_non_http_urls() {
-        for bad in ["not a url", "ftp://r.example", "/relative/path", "file:///etc"] {
+        for bad in [
+            "not a url",
+            "ftp://r.example",
+            "/relative/path",
+            "file:///etc",
+        ] {
             let err = Tap::new("ok", bad, TapKind::Roastery).unwrap_err();
             assert!(matches!(err, TapError::InvalidUrl { .. }), "url {bad:?}");
         }

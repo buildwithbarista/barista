@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use barista_cache::{
-    Cas, CacheSource, ContentHash, FetchConfig, Fetcher, Index, IndexKey, OriginTier,
+    CacheSource, Cas, ContentHash, FetchConfig, Fetcher, Index, IndexKey, OriginTier,
     RoasteryOutcome, RoasteryOutcomeObserver,
 };
 use barista_config::UpdatePolicy;
@@ -301,7 +301,13 @@ async fn coordinated_upstream_swap_is_accepted_documented_tofu_residual() {
     // Both the artifact and its sidecar are the attacker's, and they
     // agree with each other: sidecar = sha256(POISON_POM).
     mount(&h.server, POM_PATH, 200, POISON_POM.as_bytes().to_vec()).await;
-    mount(&h.server, SHA256_PATH, 200, sha256_hex(POISON_POM.as_bytes())).await;
+    mount(
+        &h.server,
+        SHA256_PATH,
+        200,
+        sha256_hex(POISON_POM.as_bytes()),
+    )
+    .await;
     mount_status(&h.server, SHA1_PATH, 404).await;
 
     let result = h.source.fetch_pom(&coords(), VERSION).await;
@@ -530,7 +536,9 @@ async fn legit_refetch_succeeds_after_rejected_poison() {
     );
     let index = Index::open(&cache_root).expect("reopen index");
     let key = IndexKey::new(coords(), VERSION, "pom", None);
-    let entry = index.get(&key).expect("index entry present after legit fetch");
+    let entry = index
+        .get(&key)
+        .expect("index entry present after legit fetch");
     assert_eq!(entry.origin.tier, OriginTier::Upstream);
 
     // A second read of the now-cached coord is a clean disk hit.

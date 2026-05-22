@@ -713,10 +713,9 @@ mod tests {
         let err = parse_digest_loose("not-a-digest").unwrap_err();
         assert!(matches!(err, StorageError::InvalidDigest { .. }));
         // Uppercase is rejected on purpose (canonical form is lowercase).
-        let err = parse_digest_loose(
-            "B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9",
-        )
-        .unwrap_err();
+        let err =
+            parse_digest_loose("B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9")
+                .unwrap_err();
         assert!(matches!(err, StorageError::InvalidDigest { .. }));
     }
 

@@ -174,8 +174,8 @@ async fn spawn_roastery_with_upstream(upstream_cfg: UpstreamConfig) -> Harness {
     // test doesn't depend on env-var plumbing.
     let upstream = if upstream_cfg.fetch_missing && !upstream_cfg.repos.is_empty() {
         let timeout = Duration::from_secs(u64::from(upstream_cfg.timeout_secs));
-        let fetcher = UpstreamFetcher::new(upstream_cfg.repos.clone(), timeout, cas_arc.clone())
-            .unwrap();
+        let fetcher =
+            UpstreamFetcher::new(upstream_cfg.repos.clone(), timeout, cas_arc.clone()).unwrap();
         Some(Arc::new(fetcher))
     } else {
         None
@@ -298,8 +298,7 @@ async fn upstream_enabled_no_coords_header_returns_404() {
     let blob = test_blob();
     let digest_hex = sha256_hex(&blob);
 
-    let upstream_state =
-        MockUpstreamState::default().with(test_blob_path(), blob.clone());
+    let upstream_state = MockUpstreamState::default().with(test_blob_path(), blob.clone());
     let upstream = spawn_mock_upstream(upstream_state).await;
 
     let h = spawn_roastery_with_upstream(UpstreamConfig {
@@ -320,8 +319,7 @@ async fn upstream_fetch_hits_first_repo_and_serves_blob() {
     let blob = test_blob();
     let digest_hex = sha256_hex(&blob);
 
-    let upstream_state =
-        MockUpstreamState::default().with(test_blob_path(), blob.clone());
+    let upstream_state = MockUpstreamState::default().with(test_blob_path(), blob.clone());
     let upstream = spawn_mock_upstream(upstream_state).await;
 
     let h = spawn_roastery_with_upstream(UpstreamConfig {
@@ -349,7 +347,11 @@ async fn upstream_fetch_hits_first_repo_and_serves_blob() {
         &format!("sha256:{digest_hex}")
     );
     let body = resp.bytes().await.unwrap();
-    assert_eq!(body.as_ref(), blob.as_slice(), "body byte-equal to upstream");
+    assert_eq!(
+        body.as_ref(),
+        blob.as_slice(),
+        "body byte-equal to upstream"
+    );
 }
 
 #[tokio::test]
@@ -357,8 +359,7 @@ async fn upstream_fetch_persists_to_local_cas() {
     let blob = test_blob();
     let digest_hex = sha256_hex(&blob);
 
-    let upstream_state =
-        MockUpstreamState::default().with(test_blob_path(), blob.clone());
+    let upstream_state = MockUpstreamState::default().with(test_blob_path(), blob.clone());
     let upstream = spawn_mock_upstream(upstream_state).await;
 
     let h = spawn_roastery_with_upstream(UpstreamConfig {
@@ -459,15 +460,12 @@ async fn upstream_digest_mismatch_falls_through() {
 
     // First upstream: serves DIFFERENT bytes at the right path.
     let wrong_bytes = b"these bytes are not the requested digest's preimage".to_vec();
-    let bad_upstream = spawn_mock_upstream(
-        MockUpstreamState::default().with(test_blob_path(), wrong_bytes),
-    )
-    .await;
+    let bad_upstream =
+        spawn_mock_upstream(MockUpstreamState::default().with(test_blob_path(), wrong_bytes)).await;
     // Second upstream: serves the correct bytes.
-    let good_upstream = spawn_mock_upstream(
-        MockUpstreamState::default().with(test_blob_path(), blob.clone()),
-    )
-    .await;
+    let good_upstream =
+        spawn_mock_upstream(MockUpstreamState::default().with(test_blob_path(), blob.clone()))
+            .await;
 
     let h = spawn_roastery_with_upstream(UpstreamConfig {
         fetch_missing: true,
@@ -499,14 +497,11 @@ async fn upstream_digest_mismatch_metric_recorded() {
     let digest_hex = sha256_hex(&blob);
 
     let wrong_bytes = b"wrong bytes for metric test".to_vec();
-    let bad_upstream = spawn_mock_upstream(
-        MockUpstreamState::default().with(test_blob_path(), wrong_bytes),
-    )
-    .await;
-    let good_upstream = spawn_mock_upstream(
-        MockUpstreamState::default().with(test_blob_path(), blob.clone()),
-    )
-    .await;
+    let bad_upstream =
+        spawn_mock_upstream(MockUpstreamState::default().with(test_blob_path(), wrong_bytes)).await;
+    let good_upstream =
+        spawn_mock_upstream(MockUpstreamState::default().with(test_blob_path(), blob.clone()))
+            .await;
 
     let h = spawn_roastery_with_upstream(UpstreamConfig {
         fetch_missing: true,
@@ -554,10 +549,9 @@ async fn upstream_hit_metric_recorded() {
     let blob = test_blob();
     let digest_hex = sha256_hex(&blob);
 
-    let upstream = spawn_mock_upstream(
-        MockUpstreamState::default().with(test_blob_path(), blob.clone()),
-    )
-    .await;
+    let upstream =
+        spawn_mock_upstream(MockUpstreamState::default().with(test_blob_path(), blob.clone()))
+            .await;
 
     let h = spawn_roastery_with_upstream(UpstreamConfig {
         fetch_missing: true,
@@ -659,10 +653,9 @@ async fn upstream_only_fires_on_get_not_head_or_put() {
     let blob = test_blob();
     let digest_hex = sha256_hex(&blob);
 
-    let upstream = spawn_mock_upstream(
-        MockUpstreamState::default().with(test_blob_path(), blob.clone()),
-    )
-    .await;
+    let upstream =
+        spawn_mock_upstream(MockUpstreamState::default().with(test_blob_path(), blob.clone()))
+            .await;
     let h = spawn_roastery_with_upstream(UpstreamConfig {
         fetch_missing: true,
         repos: vec![upstream.base_url()],

@@ -62,11 +62,7 @@ impl Digest {
     pub fn from_hex(s: &str) -> Result<Self, ClientError> {
         if s.len() != Self::HEX_LEN {
             return Err(ClientError::InvalidDigest {
-                reason: format!(
-                    "expected {} hex chars, got {}",
-                    Self::HEX_LEN,
-                    s.len()
-                ),
+                reason: format!("expected {} hex chars, got {}", Self::HEX_LEN, s.len()),
             });
         }
         if !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
@@ -115,8 +111,7 @@ mod tests {
 
     use super::*;
 
-    const SAMPLE_HEX: &str =
-        "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+    const SAMPLE_HEX: &str = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
 
     #[test]
     fn from_hex_round_trip() {

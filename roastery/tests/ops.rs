@@ -77,7 +77,10 @@ fn fixture_config(addr: SocketAddr) -> (TempDir, ServerConfig) {
 
 /// Spawn a server with the supplied config on the supplied address.
 /// Returns the `JoinHandle` so the caller can abort it on teardown.
-async fn spawn_server(addr: SocketAddr, cfg: ServerConfig) -> tokio::task::JoinHandle<roastery::Result<()>> {
+async fn spawn_server(
+    addr: SocketAddr,
+    cfg: ServerConfig,
+) -> tokio::task::JoinHandle<roastery::Result<()>> {
     let handle = tokio::spawn(async move { run(cfg).await });
     wait_for_listener(addr, Duration::from_secs(4)).await;
     handle
@@ -300,12 +303,7 @@ async fn metrics_storage_bytes_reflects_filesystem_backend() {
         hex::encode(hasher.finalize())
     };
     let put_url = format!("http://{addr}/v1/cas/sha256/{digest}");
-    let resp = client
-        .put(&put_url)
-        .body(blob)
-        .send()
-        .await
-        .expect("PUT");
+    let resp = client.put(&put_url).body(blob).send().await.expect("PUT");
     assert_eq!(resp.status(), 201);
 
     // Bypass the 5-second TTL via the test hook so we don't have to
