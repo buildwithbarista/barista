@@ -220,15 +220,32 @@ class ServerTest {
             // The server should close the socket after it fails to
             // parse the 8 bytes as an Envelope. We read until EOF or a
             // short delay so the test does not depend on race-y timing.
+            //
+            // On Linux the kernel sends a TCP RST when the server closes a
+            // socket that still has unread data in its receive buffer, so
+            // the client read() throws SocketException("Connection reset")
+            // rather than returning -1.  On macOS the same scenario produces
+            // a graceful FIN and read() returns -1.  Both outcomes are
+            // correct for this test — the server terminated the connection.
             ByteBuffer drain = ByteBuffer.allocate(16);
             long deadlineMillis = System.currentTimeMillis()
                     + DEFAULT_WAIT.toMillis();
+            boolean connectionTerminated = false;
             while (System.currentTimeMillis() < deadlineMillis) {
-                int n = bad.read(drain);
-                if (n < 0) {
+                try {
+                    int n = bad.read(drain);
+                    if (n < 0) {
+                        // Graceful FIN (macOS / some Linux configs).
+                        connectionTerminated = true;
+                        break;
+                    }
+                    drain.clear();
+                } catch (java.net.SocketException se) {
+                    // TCP RST from the server (typical on Linux when the peer
+                    // closes with unread data in the receive buffer).
+                    connectionTerminated = true;
                     break;
                 }
-                drain.clear();
             }
         }
 
