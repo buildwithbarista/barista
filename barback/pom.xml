@@ -607,6 +607,15 @@
                 <configuration>
                     <skip>${dependency-check.skip}</skip>
                     <failBuildOnCVSS>7</failBuildOnCVSS>
+                    <!--
+                      Per-GAV + per-CVE false-positive suppressions (e.g.
+                      CPE collisions where a Python CVE matches the Java
+                      protobuf-java artifact). Each entry carries a rationale;
+                      real findings on shipped deps are still failed above.
+                    -->
+                    <suppressionFiles>
+                        <suppressionFile>${project.basedir}/dependency-check-suppressions.xml</suppressionFile>
+                    </suppressionFiles>
                     <formats>
                         <format>HTML</format>
                         <format>SARIF</format>
