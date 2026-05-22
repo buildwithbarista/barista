@@ -262,16 +262,13 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '1'
           ignore-unfixed: false
-          # trivy.yaml carries CVE-ID/misconfig-ID + path-scoped suppressions
-          # for confirmed false positives (offline resolver fixtures, frozen
-          # benchmark corpus, Helm golden test outputs, intentional distroless
-          # design). barback/pom.xml CVEs are deliberately NOT suppressed there.
-          # Without this config in the nightly run, suppressed FPs would bounce
-          # back every 24 h and reopen already-closed alerts.
-          trivy-config: trivy.yaml
-          # Skip the roastery Helm chart: its `{{ fail }}` guard (BAR-AUTH-005)
-          # aborts Trivy's Helm render and fails the scan. Mirrors sca.yml.
-          skip-dirs: roastery/deploy/helm
+          # Path-scoped FP suppression via skip-dirs/skip-files (mirrors
+          # sca.yml; the trivyignores input did not take). Helm chart (fail-
+          # guard render), resolver fixtures + frozen p01 bench corpus (static
+          # test POMs), and the distroless Dockerfile (DS-0026 by design).
+          # barback/pom.xml stays fully scanned.
+          skip-dirs: roastery/deploy/helm,crates/barista-resolver/tests/fixtures,bench/projects
+          skip-files: roastery/Dockerfile
       - name: Upload SARIF to code scanning
         if: always()
         uses: github/codeql-action/upload-sarif@7fd177fa680c9881b53cdab4d346d32574c9f7f4 # v3.35.4

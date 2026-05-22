@@ -286,20 +286,25 @@ jobs:
           # Fail the job on any finding at the configured severity.
           exit-code: '1'
           ignore-unfixed: false
-          # trivy.yaml carries CVE-ID/misconfig-ID + path-scoped suppressions
-          # for confirmed false positives (offline resolver fixtures, frozen
-          # benchmark corpus, Helm golden test outputs, intentional distroless
-          # design). barback/pom.xml CVEs are deliberately NOT suppressed there.
-          trivy-config: trivy.yaml
-          # Skip the roastery Helm chart: Trivy's misconfig Helm scanner
-          # renders it with default values and hits the chart's own
-          # `{{ fail }}` guard (BAR-AUTH-005: non-loopback bind without auth),
-          # which Trivy reports as a scan ERROR (job fails). The chart's guard
-          # already enforces secure config; rendered golden manifests are
-          # snapshot-tested under deploy/helm/fixtures/. The action's
-          # `skip-dirs` input is the effective mechanism (a `scan.skip-dirs`
-          # entry inside trivy.yaml does not suppress the render).
-          skip-dirs: roastery/deploy/helm
+          # .trivyignore.yaml carries CVE/advisory/misconfig-ID + path-scoped
+          # suppressions for confirmed false positives (offline resolver
+          # fixtures, frozen benchmark corpus, intentional distroless design).
+          # barback/pom.xml CVEs are deliberately NOT suppressed there.
+          # Path-scoped false-positive suppression via the action's skip-dirs/
+          # skip-files inputs (the `trivyignores:`/.trivyignore.yaml path did
+          # not take — INPUT_TRIVYIGNORES stayed empty; skip-dirs reliably
+          # populates and is what already fixed the Helm render):
+          #   - roastery/deploy/helm — the chart's own `{{ fail }}` guard
+          #     (BAR-AUTH-005) aborts Trivy's Helm render (scan error); the
+          #     guard enforces secure config and golden output is snapshot-
+          #     tested separately.
+          #   - resolver test fixtures + frozen p01 bench corpus — static test
+          #     POMs (commons-lang3/jackson CVEs), never compiled or shipped.
+          # barback/pom.xml (the real shipped deps) is still fully scanned.
+          skip-dirs: roastery/deploy/helm,crates/barista-resolver/tests/fixtures,bench/projects
+          # roastery/Dockerfile: HEALTHCHECK intentionally omitted (distroless,
+          # no shell; kube probes hit /healthz) — DS-0026 is by design.
+          skip-files: roastery/Dockerfile
       - name: Upload SARIF to code scanning
         # Always upload, even when the scan step failed, so reviewers can
         # inspect the findings in the Security tab.

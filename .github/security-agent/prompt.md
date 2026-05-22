@@ -75,7 +75,7 @@ these, **do not open a fix PR and do not revert the suppression**. Post a
 single comment on the issue explaining it is a documented, intentionally
 suppressed false positive, and close the issue as "not planned".
 
-### Trivy false positives suppressed in `trivy.yaml`
+### Trivy false positives suppressed via `skip-dirs`/`skip-files` in the SCA workflows
 
 | Finding ID | Suppressed path(s) | Rationale |
 |---|---|---|
