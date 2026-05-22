@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "barista-bench"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-netanalyze",
  "barista-netcap",
@@ -275,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "barista-cache"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "barista-cli"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-cache",
  "barista-config",
@@ -334,7 +334,7 @@ dependencies = [
 
 [[package]]
 name = "barista-config"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-test-fixtures",
  "criterion",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "barista-coords"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "criterion",
  "serde",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "barista-ipc"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "bytes",
  "dirs",
@@ -379,7 +379,7 @@ dependencies = [
 
 [[package]]
 name = "barista-lockfile"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-pom",
  "bincode",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "barista-netanalyze"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "clap",
  "serde",
@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "barista-netcap"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "barista-pom"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "ciborium",
  "criterion",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "barista-resolver"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "barista-config",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "barista-roastery-client"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "axum",
  "bytes",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "barista-tap"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-config",
  "reqwest",
@@ -488,7 +488,7 @@ dependencies = [
 
 [[package]]
 name = "barista-telemetry"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-config",
  "reqwest",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "barista-test-fixtures"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "serde",
  "toml",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "barista-version"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "barista-test-fixtures",
  "criterion",
@@ -2529,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "roastery"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -4035,7 +4035,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "clap",
  "tempfile",
