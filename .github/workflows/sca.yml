@@ -300,8 +300,10 @@ jobs:
           #     tested separately.
           #   - resolver test fixtures + frozen p01 bench corpus — static test
           #     POMs (commons-lang3/jackson CVEs), never compiled or shipped.
+          #     Scoped to bench/projects/p01 ONLY — the p03* checkouts pull
+          #     Spring Boot 3.3.5 and must stay scanned, never blanket-skipped.
           # barback/pom.xml (the real shipped deps) is still fully scanned.
-          skip-dirs: roastery/deploy/helm,crates/barista-resolver/tests/fixtures,bench/projects
+          skip-dirs: roastery/deploy/helm,crates/barista-resolver/tests/fixtures,bench/projects/p01
           # roastery/Dockerfile: HEALTHCHECK intentionally omitted (distroless,
           # no shell; kube probes hit /healthz) — DS-0026 is by design.
           skip-files: roastery/Dockerfile

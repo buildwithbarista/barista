@@ -266,8 +266,10 @@ jobs:
           # sca.yml; the trivyignores input did not take). Helm chart (fail-
           # guard render), resolver fixtures + frozen p01 bench corpus (static
           # test POMs), and the distroless Dockerfile (DS-0026 by design).
-          # barback/pom.xml stays fully scanned.
-          skip-dirs: roastery/deploy/helm,crates/barista-resolver/tests/fixtures,bench/projects
+          # Scoped to bench/projects/p01 ONLY — the p03* checkouts pull
+          # Spring Boot and must stay scanned. barback/pom.xml stays fully
+          # scanned.
+          skip-dirs: roastery/deploy/helm,crates/barista-resolver/tests/fixtures,bench/projects/p01
           skip-files: roastery/Dockerfile
       - name: Upload SARIF to code scanning
         if: always()
