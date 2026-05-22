@@ -235,7 +235,7 @@ async fn drain(mut blob: barista_roastery_client::BlobStream) -> Vec<u8> {
 // Mechanism demonstration: warm-roastery vs latency-injected upstream.
 // -------------------------------------------------------------------
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn warm_roastery_beats_latency_injected_upstream_by_at_least_5x() {
+async fn warm_roastery_beats_latency_injected_upstream() {
     let artifacts = synthetic_artifacts();
 
     // --- Set up the "warm roastery": a local in-process server,
