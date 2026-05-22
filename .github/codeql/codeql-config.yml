@@ -11,9 +11,10 @@
 # Note: for compiled languages (Java), `paths-ignore` is best-effort —
 # the CodeQL extractor processes whatever the build system compiles.
 # The broad globs below suppress the most common generated paths; if
-# any generated-code alerts survive a real run, switch to the Plan B
-# approach documented in the security remediation plan (compilation-root
-# profile or query-filters).
+# any generated-code alerts survive a real run, the fallback is to
+# disable the protobuf plugin's compilation-root registration during the
+# analysis build, or add CodeQL query-filters scoped to the generated
+# paths.
 
 paths-ignore:
   # Maven build output — every module's compiled classes, resources,

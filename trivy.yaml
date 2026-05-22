@@ -2,16 +2,16 @@
 #
 # Consumed by the `aquasecurity/trivy-action` via the `trivy-config:`
 # input in `.github/workflows/sca.yml` and `.github/workflows/sca-nightly.yml`
-# (both `trivy-fs` jobs). This is the single authoritative suppression file
-# for the repository (Decision D2 in the security remediation plan).
+# (both `trivy-fs` jobs). This is the single authoritative Trivy
+# suppression file for the repository.
 #
 # Suppression policy:
 #   - Every entry is scoped to a specific CVE/misconfig ID **and** one or
 #     more exact file paths. No directory-wide blanket skips.
 #   - Each entry carries a one-line rationale.
 #   - `barback/pom.xml` CVEs (CVE-2025-67030, CVE-2023-2976, CVE-2020-8908)
-#     are intentionally NOT suppressed here — they are real and tracked for
-#     remediation in the dependency bump milestones.
+#     are intentionally NOT suppressed here — they are real and are
+#     remediated separately by upgrading the affected dependencies.
 #   - Any future suppression for p02+/p03+ corpus entries requires
 #     explicit human sign-off and a new entry below.
 
