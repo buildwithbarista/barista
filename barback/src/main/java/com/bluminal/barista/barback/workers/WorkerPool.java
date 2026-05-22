@@ -313,6 +313,18 @@ public final class WorkerPool implements AutoCloseable {
      */
     public <T> Future<T> submit(Callable<T> task) {
         Objects.requireNonNull(task, "task");
+        // Explicit pre-check so the rejection is always deterministic.
+        // Without this, executors that use CallerRunsPolicy (the JDK-17
+        // ThreadPoolExecutor path) silently discard post-shutdown tasks
+        // instead of throwing, because CallerRunsPolicy.rejectedExecution
+        // checks isShutdown() and does nothing if true — no exception is
+        // raised and the Future returned by submit() hangs indefinitely.
+        // The JDK-21 virtual-thread executor does throw, but relying on
+        // that divergence would make the contract backend-dependent.
+        if (executor.isShutdown()) {
+            throw new RejectedExecutionException(
+                    "WorkerPool has been closed; rejecting submitted task");
+        }
         try {
             return executor.submit(wrap(task));
         } catch (RejectedExecutionException e) {
@@ -329,6 +341,11 @@ public final class WorkerPool implements AutoCloseable {
      */
     public Future<?> submit(Runnable task) {
         Objects.requireNonNull(task, "task");
+        // Same pre-check as submit(Callable) — see that method for rationale.
+        if (executor.isShutdown()) {
+            throw new RejectedExecutionException(
+                    "WorkerPool has been closed; rejecting submitted task");
+        }
         return executor.submit(wrap(task));
     }
 
@@ -338,6 +355,11 @@ public final class WorkerPool implements AutoCloseable {
      */
     public void execute(Runnable task) {
         Objects.requireNonNull(task, "task");
+        // Same pre-check as submit(Callable) — see that method for rationale.
+        if (executor.isShutdown()) {
+            throw new RejectedExecutionException(
+                    "WorkerPool has been closed; rejecting execute() task");
+        }
         executor.execute(wrap(task));
     }
 
