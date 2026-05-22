@@ -272,9 +272,22 @@ class WorkerPoolTest {
 
     @Test
     @DisplayName("close() rejects subsequent submissions")
-    void close_rejectsSubsequentSubmissions() {
+    void close_rejectsSubsequentSubmissions() throws InterruptedException {
         WorkerPool pool = WorkerPool.create(1);
         pool.close();
+        // close() calls shutdown() then awaitTermination(), so the backing
+        // executor MUST be in the terminated (or at minimum shutdown) state
+        // before close() returns. Asserting these post-conditions before the
+        // submit() call makes the rejection deterministic: an ExecutorService
+        // that isShutdown() will always reject new submissions, eliminating
+        // the race between the shutdown() call and the reject-check that caused
+        // sporadic test passes without the expected exception on loaded runners.
+        assertTrue(pool.executor().isShutdown(),
+                "executor must be shutdown after close()");
+        assertTrue(pool.executor().isTerminated()
+                        || pool.executor().awaitTermination(
+                                WorkerPool.SHUTDOWN_GRACE_SECONDS, TimeUnit.SECONDS),
+                "executor must have terminated within the shutdown grace period");
         assertThrows(java.util.concurrent.RejectedExecutionException.class,
                 () -> pool.submit(() -> "after-close"));
     }
