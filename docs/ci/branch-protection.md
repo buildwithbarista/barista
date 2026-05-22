@@ -210,3 +210,85 @@ the auto-remediation workflow on `main`:
 
 When every box is checked, the `[H]`-gated enabling of
 auto-remediation on `main` may proceed.
+
+## 7. Code-scanning alert severity gate (rulesets API)
+
+The `required_status_checks` above include the CodeQL `Analyze (rust)`
+and `Analyze (java-kotlin)` jobs. Those checks only prove the **analysis
+ran** — `github/codeql-action/analyze` uploads SARIF and exits `0` even
+when it discovers alerts, so a green CodeQL status check does **not**
+mean the PR is free of High/Critical findings. Blocking a merge on the
+**severity of new code-scanning alerts** is a separate gate, expressed
+through a repository **ruleset** with a `code_scanning` rule (the classic
+`/branches/main/protection` API has no equivalent field).
+
+The live ruleset on the default branch:
+
+| Field | Value | Why |
+|---|---|---|
+| `target` / `conditions.ref_name.include` | `branch` / `~DEFAULT_BRANCH` | Applies to `main` (tracks the default branch by symbolic ref, so a default-branch rename carries it along). |
+| `enforcement` | `active` | Enforced, not "evaluate" (dry-run). |
+| `code_scanning_tools[].tool` | `CodeQL` | The analysis tool whose alerts gate the merge. |
+| `code_scanning_tools[].security_alerts_threshold` | `high_or_higher` | A new **security** alert at High or Critical blocks the PR check. This is the HIGH+ merge gate. |
+| `code_scanning_tools[].alerts_threshold` | `errors` | A new non-security (quality) alert at `error` level also blocks; warnings/notes do not. |
+
+Create (or recreate) it via the rulesets API:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+
+gh api "/repos/${REPO}/rulesets" \
+  --method POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  --input - <<'EOF'
+{
+  "name": "main: code-scanning HIGH+ merge gate",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "rules": [
+    {
+      "type": "code_scanning",
+      "parameters": {
+        "code_scanning_tools": [
+          {
+            "tool": "CodeQL",
+            "alerts_threshold": "errors",
+            "security_alerts_threshold": "high_or_higher"
+          }
+        ]
+      }
+    }
+  ]
+}
+EOF
+```
+
+Verify:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+RULESET_ID=$(gh api "/repos/${REPO}/rulesets" \
+  --jq '.[] | select(.name=="main: code-scanning HIGH+ merge gate") | .id')
+
+gh api "/repos/${REPO}/rulesets/${RULESET_ID}" --jq '
+  {
+    enforcement,
+    refs: .conditions.ref_name.include,
+    tools: .rules[].parameters.code_scanning_tools
+  }
+'
+```
+
+Expected: `enforcement` is `active`, `refs` is `["~DEFAULT_BRANCH"]`, and
+the `CodeQL` tool entry shows `security_alerts_threshold:
+high_or_higher`.
+
+This ruleset is **not** idempotent the way the `PUT
+.../protection` payload is: a second `POST` creates a *duplicate*
+ruleset. To change thresholds, `PUT
+/repos/${REPO}/rulesets/${RULESET_ID}` against the existing id instead
+of re-`POST`ing. If you need to raise or lower the gate (e.g.
+`security_alerts_threshold: critical` to block only Critical, or
+`medium_or_higher` to tighten it), edit that one field and re-`PUT`.
