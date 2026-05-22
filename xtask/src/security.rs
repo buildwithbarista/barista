@@ -398,7 +398,12 @@ fn print_summary(results: &[(&Check, Outcome)]) {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+// ExitStatusExt::from_raw uses the POSIX wait(2) encoding (exit code in
+// the high byte) which is a Unix-only API.  The Windows equivalent lives
+// in std::os::windows::process::ExitStatusExt and has a different
+// signature (u32, not i32) with no bit-shift convention.  FakeEnv only
+// makes sense on Unix, so gate the entire test module accordingly.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::cell::RefCell;
