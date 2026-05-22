@@ -98,6 +98,18 @@
         -->
         <plexus-classworlds.version>2.8.0</plexus-classworlds.version>
         <!--
+          plexus-utils arrives transitively from the embedded Maven 4 core
+          at 4.0.1, which is affected by CVE-2025-67030 (HIGH). Pin to 4.0.3
+          (the fix version) via dependencyManagement below. plexus-utils is
+          a leaf utility lib (path/string/IO helpers), not part of the
+          ClassWorld realm layout, so pinning it ahead of the embedded Maven
+          version is low-risk; the integration suite re-validates.
+          Sonatype MCP was unavailable (credit-exhausted) when this was set;
+          fallback per policy: NVD/OSV fix version 4.0.3 + the CI Trivy/OWASP
+          gate confirms CVE-2025-67030 clears.
+        -->
+        <plexus-utils.version>4.0.3</plexus-utils.version>
+        <!--
           maven-shade-plugin builds the runnable `barback-uber.jar`
           consumed by the Rust-side daemon launcher (the `BARISTA_BARBACK_JAR`
           discovery path in `crates/barista-cli/src/daemon/launcher.rs`).
@@ -165,6 +177,18 @@
                 <version>${junit.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!--
+              Force plexus-utils to 4.0.3 (fixes CVE-2025-67030, HIGH). The
+              embedded Maven 4 core pulls it transitively at 4.0.1; this
+              nearest-wins override pins the fixed version throughout the tree
+              (including the shaded barback-uber.jar) without changing the
+              embedded Maven version. See the version property above.
+            -->
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-utils</artifactId>
+                <version>${plexus-utils.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
