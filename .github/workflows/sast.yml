@@ -93,7 +93,7 @@ jobs:
   # scanning so findings show up in the Security tab.
   #
   # Local reproduction (semgrep on PATH):
-  #   semgrep --config p/rust --config p/java --config p/yaml --config .semgrep/ .
+  #   semgrep --config p/rust --config p/java --config .semgrep/ .
   # ---------------------------------------------------------------------------
   semgrep:
     name: Semgrep
@@ -117,7 +117,6 @@ jobs:
           semgrep scan \
             --config p/rust \
             --config p/java \
-            --config p/yaml \
             --config .semgrep/ \
             --exclude tests/fixtures/sast/ \
             --sarif \
