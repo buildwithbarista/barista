@@ -85,15 +85,26 @@ jobs:
           python3 scripts/count-unsafe.py --check
 
   # ---------------------------------------------------------------------------
-  # Semgrep OSS — rule packs `r/rust`, `r/java`, `r/yaml` from the
-  # registry, plus the Barista-specific custom rules in `.semgrep/`.
+  # Semgrep — the Barista-specific custom rules in `.semgrep/` (e.g. the
+  # command-injection `Command::new` gate). This is the curated, hard-gating
+  # Semgrep surface.
+  #
+  # The generic community registry packs (p/rust, p/java) were deliberately
+  # dropped: on this codebase they produced only false positives / noise —
+  # `unsafe-usage` (every block, already gated by the unsafe-line ratchet +
+  # CodeQL), `insecure-hashes` (SHA-1 used for Maven `.sha1` checksum
+  # compatibility and for filesystem-safe lock filenames — neither
+  # adversarial), and `temp-dir`/`current-exe`/`args` (normal daemon/CLI
+  # patterns) — with zero true positives. Broad Rust/Java SAST is covered by
+  # CodeQL (security-extended) and SpotBugs+FindSecBugs; Semgrep here enforces
+  # the project-specific rules the registry packs can't express.
   #
   # The job runs inside the official `semgrep/semgrep` container so the
-  # binary version is pinned by digest. SARIF is uploaded to code
-  # scanning so findings show up in the Security tab.
+  # binary version is pinned by digest. SARIF is uploaded to code scanning
+  # so findings show up in the Security tab.
   #
   # Local reproduction (semgrep on PATH):
-  #   semgrep --config p/rust --config p/java --config .semgrep/ .
+  #   semgrep --config .semgrep/ .
   # ---------------------------------------------------------------------------
   semgrep:
     name: Semgrep
@@ -110,13 +121,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Run Semgrep (SARIF)
-        # `--config` accepts multiple values; we combine the registry
-        # rule packs with the local `.semgrep/` directory so custom
-        # rules and pack rules run in one pass.
+        # Run the curated Barista rules in `.semgrep/`. `--error` makes a
+        # real violation fail the job; vetted call sites are suppressed
+        # inline with `// nosemgrep: <rule-id>` + a rationale comment.
         run: |
           semgrep scan \
-            --config p/rust \
-            --config p/java \
             --config .semgrep/ \
             --exclude tests/fixtures/sast/ \
             --sarif \
