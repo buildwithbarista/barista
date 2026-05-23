@@ -206,6 +206,12 @@ jobs:
   barback-owasp-dc:
     name: OWASP Dependency-Check (barback)
     runs-on: ubuntu-latest
+    # Soft gate: OWASP DC depends on a live NVD-data update that flakes
+    # (HTTP/feed errors) even with an NVD_API_KEY, and it is redundant with
+    # the hard advisory gates here — OSV-Scanner + cargo-deny + Trivy. Keep
+    # its SARIF upload (findings still surface in the Security tab) but don't
+    # let NVD-side flakiness fail the workflow / flood notifications.
+    continue-on-error: true
     permissions:
       contents: read
       security-events: write
