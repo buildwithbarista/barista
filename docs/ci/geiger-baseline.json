@@ -3,6 +3,9 @@
   "tool": "count-unsafe.py",
   "totals": {
     "barista-cache": 1,
-    "barista-pom": 2
+    "barista-cli": 12,
+    "barista-ipc": 27,
+    "barista-pom": 2,
+    "roastery": 1
   }
 }

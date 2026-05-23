@@ -144,6 +144,8 @@ impl PipeDacl {
         //
         // The DACL needs: ACL header + per-ACE { ACCESS_ALLOWED_ACE
         // header + SID body }. We have two ACEs (user + SYSTEM).
+        // SAFETY: GetLengthSid reads the length of a valid SID; both
+        // `user_sid` and `system_sid` are valid SIDs constructed above.
         let sid_user_len = unsafe { GetLengthSid(user_sid.as_ptr().cast::<c_void>().cast_mut()) };
         let sid_sys_len = unsafe { GetLengthSid(system_sid) };
 
@@ -203,6 +205,8 @@ impl PipeDacl {
             return Err(AuthError::Io(io::Error::last_os_error()));
         }
 
+        // SAFETY: `dacl_ptr` points to the initialized ACL sized above;
+        // `system_sid` is a valid SID. AddAccessAllowedAce appends one ACE.
         let ok =
             unsafe { AddAccessAllowedAce(dacl_ptr, ACL_REVISION, PIPE_ACCESS_MASK, system_sid) };
         if ok == 0 {
@@ -319,6 +323,9 @@ fn current_user_sid() -> Result<Vec<u8>> {
     // First call: ask for the required size (`return_length` out;
     // returns 0 + `ERROR_INSUFFICIENT_BUFFER`).
     let mut required: u32 = 0;
+    // SAFETY: sizing call — `token` is a live handle; a null buffer with
+    // length 0 is the documented way to ask for the required size via
+    // `&raw mut required` (an owned stack-local out-ptr).
     let _ = unsafe { GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &raw mut required) };
     if required == 0 {
         return Err(AuthError::Io(io::Error::last_os_error()));
@@ -353,6 +360,8 @@ fn current_user_sid() -> Result<Vec<u8>> {
             "TOKEN_USER.User.Sid was NULL",
         )));
     }
+    // SAFETY: `sid_ptr` was just null-checked and points into `buf`'s
+    // valid TOKEN_USER; GetLengthSid only reads the SID header.
     let sid_len = unsafe { GetLengthSid(sid_ptr) };
     let mut out = vec![0u8; sid_len as usize];
     // SAFETY: src points to `sid_len` valid bytes inside `buf`; dst
