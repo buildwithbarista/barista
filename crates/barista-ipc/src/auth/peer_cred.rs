@@ -269,6 +269,9 @@ mod tests {
     #[tokio::test]
     async fn our_uid_matches_geteuid() {
         // Sanity: our wrapper agrees with libc directly.
+        // SAFETY: `geteuid` is async-signal-safe, never fails, and never
+        // touches errno (same contract as `our_uid` above).
+        #[allow(clippy::as_conversions)]
         let direct = unsafe { libc::geteuid() } as u32;
         assert_eq!(our_uid(), direct);
     }
