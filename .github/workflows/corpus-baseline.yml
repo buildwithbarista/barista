@@ -54,18 +54,26 @@ jobs:
           set -euo pipefail
           LOCK="test-corpus/${{ matrix.project }}/corpus.lock.toml"
           read_key() {
+            # Split on the FIRST `=` only (via index), so an `=` inside the
+            # value — e.g. `build_cmd = "mvn -DskipTests=false verify"` — is
+            # preserved. (A naive `FS="="` rebuild turns the in-value `=`
+            # into a space, mangling `-DskipTests=false` into a stray `false`
+            # lifecycle phase.)
             awk -v k="$1" '
-              BEGIN { FS="="; in_multi=0 }
+              BEGIN { in_multi=0 }
               {
                 if (in_multi) { if ($0 ~ /"""[[:space:]]*$/) in_multi=0; next }
                 if ($0 ~ /=[[:space:]]*"""/ && $0 !~ /""".*"""/) { in_multi=1; next }
                 if ($0 ~ /^[[:space:]]*#/) next
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1)
-                if ($1 != k) next
-                $1=""; v=$0; sub(/^=/, "", v)
-                gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
-                if (v ~ /^".*"$/) { v=substr(v, 2, length(v)-2) }
-                print v; exit
+                eq = index($0, "=")
+                if (eq == 0) next
+                key = substr($0, 1, eq-1)
+                val = substr($0, eq+1)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+                if (key != k) next
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+                if (val ~ /^".*"$/) { val = substr(val, 2, length(val)-2) }
+                print val; exit
               }' "$LOCK"
           }
           JDK="$(read_key jdk)"
