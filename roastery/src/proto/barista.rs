@@ -534,7 +534,10 @@ async fn cas_missing(
     // for the response so clients can correlate by position if they
     // want to — the JSON shape doesn't require it, but it's the
     // less-surprising behaviour.
-    let mut parsed: Vec<Digest> = Vec::with_capacity(req.digests.len());
+    // The MAX_BATCH_MISSING guard above already 413s an oversized batch; the
+    // explicit .min keeps the capacity bound local so it holds even if that
+    // guard is ever moved or removed (defense-in-depth).
+    let mut parsed: Vec<Digest> = Vec::with_capacity(req.digests.len().min(MAX_BATCH_MISSING));
     for raw in &req.digests {
         parsed.push(parse_digest_loose(raw)?);
     }
