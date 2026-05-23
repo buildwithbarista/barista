@@ -202,6 +202,11 @@ jobs:
   barback-owasp-dc:
     name: OWASP Dependency-Check (barback, fresh NVD)
     runs-on: ubuntu-latest
+    # Soft gate (matches sca.yml): the fresh-NVD update flakes (HTTP/feed
+    # errors) even with an NVD_API_KEY, and OWASP DC is redundant with the
+    # hard advisory gates (OSV-Scanner + cargo-deny + Trivy). SARIF still
+    # uploads; NVD-side flakiness must not fail the nightly run.
+    continue-on-error: true
     permissions:
       contents: read
       security-events: write
