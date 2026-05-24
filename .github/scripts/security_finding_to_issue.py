@@ -59,6 +59,19 @@ from typing import Iterable
 # groups every security issue in the tracker.
 LABELS_ALWAYS = ("security", "security-bot")
 
+# Colour + description for any label this script may have to create on
+# the fly. `gh issue create --label X` hard-fails when X is undefined, so
+# the per-scanner short-name labels (gitleaks, semgrep, trufflehog, …)
+# must be created before the first issue that needs them. Scanner labels
+# default to a neutral grey; known labels keep their canonical styling so
+# we don't clobber a hand-tuned colour on an existing label.
+DEFAULT_LABEL_COLOR = "ededed"
+LABEL_SPECS: dict[str, tuple[str, str]] = {
+    "security": ("d73a4a", "Security finding or fix"),
+    "security-bot": ("fbca04", "Filed by the security automation"),
+    "rate-limited": ("fbca04", "Security findings deferred by the per-run issue cap"),
+}
+
 # Pattern matching the fingerprint HTML comment in an issue body.
 FINGERPRINT_RE = re.compile(
     r"<!--\s*sec-fingerprint:\s*([0-9a-f]{64})\s*-->",
@@ -151,9 +164,21 @@ class GhClient:
 
     dry_run: bool = False
     seen_calls: list[list[str]] = field(default_factory=list)
+    _label_cache: set[str] | None = field(default=None, repr=False)
 
-    def _run(self, args: list[str], stdin: str | None = None) -> str:
-        """Invoke `gh` and return stdout. Surfaces stderr on failure."""
+    def _run(
+        self,
+        args: list[str],
+        stdin: str | None = None,
+        tolerate: tuple[str, ...] = (),
+    ) -> str:
+        """Invoke `gh` and return stdout. Surfaces stderr on failure.
+
+        `tolerate` lists stderr substrings that should not count as a
+        failure (e.g. racing another run to create the same label); on a
+        tolerated non-zero exit we return stdout unchanged instead of
+        raising.
+        """
         self.seen_calls.append(["gh", *args])
         if self.dry_run and args and args[0] in {"issue"} and len(args) > 1 and args[1] in {"create", "comment", "close", "edit"}:
             return ""
@@ -165,6 +190,8 @@ class GhClient:
             check=False,
         )
         if proc.returncode != 0:
+            if tolerate and any(t in (proc.stderr or "") for t in tolerate):
+                return proc.stdout
             sys.stderr.write(
                 f"gh {' '.join(args)} failed (rc={proc.returncode})\n"
                 f"stdout: {proc.stdout}\n"
@@ -207,6 +234,45 @@ class GhClient:
             return []
         return json.loads(out)
 
+    def existing_label_names(self) -> set[str]:
+        """Label names already defined in the repo (cached per run)."""
+        if self._label_cache is not None:
+            return self._label_cache
+        out = self._run([
+            "label", "list",
+            "--limit", "500",
+            "--json", "name",
+        ])
+        names = {row.get("name", "") for row in json.loads(out)} if out.strip() else set()
+        self._label_cache = names
+        return names
+
+    def ensure_labels(self, labels: Iterable[str]) -> None:
+        """Create any of `labels` that the repo doesn't define yet.
+
+        `gh issue create --label X` hard-fails when X is undefined, so we
+        materialize every needed label first. Only missing labels are
+        created (existing ones keep their hand-tuned colour/description),
+        and a concurrent creator is tolerated via the `already exists`
+        guard.
+        """
+        if self.dry_run:
+            return
+        existing = self.existing_label_names()
+        for label in labels:
+            if not label or label in existing:
+                continue
+            color, description = _label_spec(label)
+            self._run(
+                [
+                    "label", "create", label,
+                    "--color", color,
+                    "--description", description,
+                ],
+                tolerate=("already exists", "Name has already been taken"),
+            )
+            existing.add(label)
+
     def create_issue(self, title: str, body: str, labels: Iterable[str]) -> str:
         """Open a new issue and return its URL/number string."""
         args = ["issue", "create", "--title", title, "--body-file", "-"]
@@ -223,6 +289,13 @@ class GhClient:
 
 # ---------------------------------------------------------------------------
 # Helpers
+
+
+def _label_spec(name: str) -> tuple[str, str]:
+    """Return the (color, description) to create label `name` with."""
+    if name in LABEL_SPECS:
+        return LABEL_SPECS[name]
+    return (DEFAULT_LABEL_COLOR, f"Security finding from the {name} scanner")
 
 
 def _concat_json_arrays(blob: str) -> list[dict]:
@@ -432,6 +505,15 @@ def run() -> int:
 
     to_open = new_findings[:max_per_run]
     deferred = new_findings[max_per_run:]
+
+    # `gh issue create --label X` fails hard on an undefined label, so
+    # materialize every label we're about to attach before filing.
+    needed_labels: set[str] = set(LABELS_ALWAYS)
+    for finding in to_open:
+        needed_labels.update(finding.labels())
+    if deferred:
+        needed_labels.add("rate-limited")
+    gh.ensure_labels(sorted(needed_labels))
 
     opened = 0
     for finding in to_open:

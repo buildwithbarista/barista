@@ -26,6 +26,16 @@ emits):
       → reads body from stdin; appends {comment_on: N, body} to
         $GH_SHIM_ISSUES_OUT.
 
+  gh label list --limit <N> --json name
+      → prints the existing labels as `[{"name": ...}, ...]`. The set is
+        sourced from $GH_SHIM_LABELS (comma-separated names), defaulting
+        to empty so every needed label looks missing.
+
+  gh label create <name> --color <C> --description <D>
+      → records {action: "label", name} to $GH_SHIM_ISSUES_OUT and
+        returns success. Lets the test assert which labels the filer
+        created vs. skipped.
+
 Anything else is logged and exits non-zero so a regression in the
 production script that introduces a new `gh` call surfaces loudly.
 """
@@ -153,6 +163,27 @@ def cmd_issue(args: list[str]) -> int:
     return die(f"unhandled `gh issue {sub}` call: {rest}")
 
 
+def cmd_label(args: list[str]) -> int:
+    if not args:
+        return die("`gh label` with no subcommand")
+    sub = args[0]
+    rest = args[1:]
+    if sub == "list":
+        names = [
+            n.strip()
+            for n in (os.environ.get("GH_SHIM_LABELS") or "").split(",")
+            if n.strip()
+        ]
+        sys.stdout.write(json.dumps([{"name": n} for n in names]))
+        return 0
+    if sub == "create":
+        # First positional after `create` is the label name.
+        name = next((a for a in rest if not a.startswith("--")), "")
+        append_record({"action": "label", "name": name})
+        return 0
+    return die(f"unhandled `gh label {sub}` call: {rest}")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         return die("expected subcommand")
@@ -167,6 +198,8 @@ def main(argv: list[str]) -> int:
         return cmd_api(rest)
     if sub == "issue":
         return cmd_issue(rest)
+    if sub == "label":
+        return cmd_label(rest)
     return die(f"unhandled gh subcommand: {sub}")
 
 

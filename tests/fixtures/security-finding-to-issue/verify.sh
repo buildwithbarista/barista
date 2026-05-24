@@ -80,6 +80,7 @@ run_test() {
   GH_SHIM_ISSUES="$issues_in" \
   GH_SHIM_ISSUES_OUT="$out" \
   GH_SHIM_TRACE="$tdir/trace.log" \
+  GH_SHIM_LABELS="security,security-bot" \
   MAX_ISSUES_PER_RUN="$max_per_run" \
   UPSTREAM_WORKFLOW="SAST — static analysis" \
   UPSTREAM_RUN_ID="123456" \
@@ -250,6 +251,38 @@ run_test "D-distinct"     "$ALERTS_SINGLE" "$ISSUES_DIFF"  25 1 0 0 "security;se
 
 # Test E — 30 alerts, cap=25 → 25 creates + 1 tracker issue (no prior tracker).
 run_test "E-rate-limit"   "$THIRTY"        "$ISSUES_EMPTY" 25 25 0 1 "security;security-bot;semgrep"
+
+# Test F — missing scanner label auto-created; existing labels skipped.
+# Reuses Test B's recorded calls: GH_SHIM_LABELS reported security +
+# security-bot as existing, so the filer must create only `semgrep`.
+F_OUT="$TMPROOT/B-single-new/calls.jsonl"
+python3 - "$F_OUT" <<'PY'
+import json, sys
+created = set()
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line:
+        continue
+    rec = json.loads(line)
+    if rec.get("action") == "label":
+        created.add(rec.get("name"))
+errs = []
+if "semgrep" not in created:
+    errs.append("expected the missing 'semgrep' label to be created")
+if "security" in created or "security-bot" in created:
+    errs.append(f"existing labels should not be re-created; got {sorted(created)}")
+if errs:
+    for e in errs:
+        print(e)
+    sys.exit(1)
+PY
+if [ $? -eq 0 ]; then
+  echo "[F-label-autocreate] PASS"
+  PASS=$((PASS + 1))
+else
+  echo "[F-label-autocreate] FAIL: see above"
+  FAIL=$((FAIL + 1))
+fi
 
 echo
 echo "=========================="
