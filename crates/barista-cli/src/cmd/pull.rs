@@ -189,9 +189,85 @@ pub fn run_inner(
         return Ok(report);
     }
 
+    // Ensure the reactor-root marker exists before we resolve/fetch.
+    // Maven 4 needs either a `.mvn/` directory in the project root or
+    // a `root="true"` attribute on the root `<project>` to identify
+    // the reactor root; without one, mojo dispatch fails with
+    // "Unable to find the root directory...". We honor an explicit
+    // `root="true"` (do nothing) and otherwise create an empty
+    // `.mvn/` marker — idempotent, and the directory itself is the
+    // marker (no `maven.config` / `jvm.config` written).
+    ensure_root_marker(&root.root, &pom_text)?;
+
     let report = run_full_fetch(&root.root, raw_pom, &config, global, args, sink)?;
     sink.completed("pull");
     Ok(report)
+}
+
+/// Whether the project's root `pom.xml` declares `root="true"` on its
+/// root `<project>` element.
+///
+/// Maven 4 treats this attribute as an explicit reactor-root marker.
+/// We do a tolerant string scan rather than a full XML parse: the
+/// `RawPom` model doesn't capture attributes, and this is only a
+/// bootstrap heuristic. We accept the common spellings
+/// (`root="true"`, `root='true'`, and a space around the `=`); the
+/// attribute only carries meaning on the root element, which is the
+/// first (and only) `<project>` open tag in a well-formed POM.
+fn pom_declares_root_true(pom_text: &str) -> bool {
+    // Restrict the scan to the opening `<project ...>` tag so we don't
+    // accidentally match an unrelated `root="true"` elsewhere in the
+    // document. Find the first `<project` and the `>` that closes it.
+    let Some(start) = pom_text.find("<project") else {
+        return false;
+    };
+    let rest = &pom_text[start..];
+    let tag_end = rest.find('>').map_or(rest.len(), |i| i + 1);
+    let open_tag = &rest[..tag_end];
+    attr_root_is_true(open_tag)
+}
+
+/// True iff `tag` carries a `root` attribute whose value is `true`,
+/// tolerating single/double quotes and optional whitespace around the
+/// `=`.
+fn attr_root_is_true(tag: &str) -> bool {
+    let mut search_from = 0;
+    while let Some(idx) = tag[search_from..].find("root") {
+        let abs = search_from + idx;
+        // Require a word boundary before `root` so we don't match a
+        // longer attribute name that ends in `root`.
+        let preceded_ok = abs == 0
+            || tag[..abs]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_whitespace() || c == '<');
+        let after = tag[abs + "root".len()..].trim_start();
+        if preceded_ok && let Some(eq_rest) = after.strip_prefix('=') {
+            let val = eq_rest.trim_start();
+            if val.starts_with("\"true\"") || val.starts_with("'true'") {
+                return true;
+            }
+        }
+        search_from = abs + "root".len();
+    }
+    false
+}
+
+/// Create an empty `.mvn/` reactor-root marker in `project_root`
+/// unless the POM already opts into `root="true"`.
+///
+/// Idempotent: if `.mvn/` already exists this is a no-op. We never
+/// write `maven.config` / `jvm.config` — the empty directory is the
+/// marker Maven 4 looks for.
+fn ensure_root_marker(project_root: &Path, pom_text: &str) -> Result<(), PullError> {
+    if pom_declares_root_true(pom_text) {
+        return Ok(());
+    }
+    let mvn_dir = project_root.join(".mvn");
+    std::fs::create_dir_all(&mvn_dir).map_err(|source| PullError::Io {
+        path: mvn_dir,
+        source,
+    })
 }
 
 /// Full-fetch path: resolve, fetch, materialize ~/.m2, write lockfile.
@@ -907,5 +983,108 @@ impl ParentResolver for CacheSourceParentResolver<'_> {
                 parent.group_id, parent.artifact_id, parent.version, e
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod root_marker_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    const POM_NO_ROOT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+</project>"#;
+
+    const POM_ROOT_TRUE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" root="true">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+</project>"#;
+
+    #[test]
+    fn detects_absence_of_root_attribute() {
+        assert!(!pom_declares_root_true(POM_NO_ROOT));
+    }
+
+    #[test]
+    fn detects_root_true_double_quoted() {
+        assert!(pom_declares_root_true(POM_ROOT_TRUE));
+    }
+
+    #[test]
+    fn detects_root_true_single_quoted_and_spaced() {
+        let pom = r#"<project root = 'true'>
+  <artifactId>demo</artifactId>
+</project>"#;
+        assert!(pom_declares_root_true(pom));
+    }
+
+    #[test]
+    fn ignores_root_false() {
+        let pom = r#"<project root="false">
+  <artifactId>demo</artifactId>
+</project>"#;
+        assert!(!pom_declares_root_true(pom));
+    }
+
+    #[test]
+    fn does_not_match_attribute_ending_in_root() {
+        // A made-up attribute whose name ends in `root` must not be
+        // mistaken for the reactor-root marker.
+        let pom = r#"<project xroot="true">
+  <artifactId>demo</artifactId>
+</project>"#;
+        assert!(!pom_declares_root_true(pom));
+    }
+
+    #[test]
+    fn does_not_match_root_true_outside_project_tag() {
+        // `root="true"` buried in a child element must not count: the
+        // marker is only meaningful on the root `<project>` element.
+        let pom = r#"<project>
+  <properties><root>true</root></properties>
+  <somechild root="true"/>
+  <artifactId>demo</artifactId>
+</project>"#;
+        assert!(!pom_declares_root_true(pom));
+    }
+
+    #[test]
+    fn ensure_root_marker_creates_mvn_when_absent() {
+        let td = tempfile::tempdir().unwrap();
+        ensure_root_marker(td.path(), POM_NO_ROOT).unwrap();
+        assert!(
+            td.path().join(".mvn").is_dir(),
+            ".mvn/ must be created when the pom does not declare root=\"true\""
+        );
+        // No files inside — the empty dir is the marker.
+        let count = std::fs::read_dir(td.path().join(".mvn")).unwrap().count();
+        assert_eq!(count, 0, ".mvn/ marker must be empty");
+    }
+
+    #[test]
+    fn ensure_root_marker_is_idempotent() {
+        let td = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(td.path().join(".mvn")).unwrap();
+        // Re-running must not error even though `.mvn/` already exists.
+        ensure_root_marker(td.path(), POM_NO_ROOT).unwrap();
+        assert!(td.path().join(".mvn").is_dir());
+    }
+
+    #[test]
+    fn ensure_root_marker_skips_when_root_true_declared() {
+        let td = tempfile::tempdir().unwrap();
+        ensure_root_marker(td.path(), POM_ROOT_TRUE).unwrap();
+        assert!(
+            !td.path().join(".mvn").exists(),
+            ".mvn/ must NOT be created when the pom declares root=\"true\""
+        );
     }
 }

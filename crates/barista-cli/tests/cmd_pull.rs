@@ -93,6 +93,16 @@ fn run_dispatch(argv: &[&str]) -> i32 {
     dispatch(cli)
 }
 
+/// Process-wide mutex serializing the tests that mutate the global
+/// `BARISTA_PATHS__*` env vars. The CLI reads process env, which is
+/// shared state; running these in parallel races on the cache/m2
+/// overrides (and intermittently fails opening the cache journal).
+fn env_lock() -> &'static std::sync::Mutex<()> {
+    use std::sync::OnceLock;
+    static LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 fn fresh_project(td: &TempDir) -> &Path {
     let root = td.path();
     write_minimal_pom(root);
@@ -155,6 +165,7 @@ fn full_fetch_empty_deps_succeeds_offline() {
     let td = tempfile::tempdir().unwrap();
     let root = fresh_project(&td);
     // Point the cache_dir + m2 at the tempdir so the test is hermetic.
+    let _guard = env_lock().lock().expect("env_lock poisoned");
     let cache = td.path().join("cache");
     let m2 = td.path().join("m2");
     let prev_cache = std::env::var_os("BARISTA_PATHS__CACHE_DIR");
@@ -181,6 +192,89 @@ fn full_fetch_empty_deps_succeeds_offline() {
     assert!(lock_path.exists(), "lockfile must be written");
     let lf = Lockfile::read(&lock_path).unwrap();
     assert_eq!(lf.entries.len(), 0, "no deps → no entries");
+}
+
+// ---- .mvn/ reactor-root marker (Maven 4 requirement) -------------------
+
+/// Run `barista pull` (full-fetch path) against a hermetic offline
+/// project: empty-deps POM means the graph is empty and the network
+/// is never touched. Cache + m2 are redirected at tempdirs.
+fn run_offline_pull(td: &TempDir, root: &Path) -> i32 {
+    let _guard = env_lock().lock().expect("env_lock poisoned");
+    let cache = td.path().join("cache");
+    let m2 = td.path().join("m2");
+    let prev_cache = std::env::var_os("BARISTA_PATHS__CACHE_DIR");
+    let prev_m2 = std::env::var_os("BARISTA_PATHS__M2_REPOSITORY");
+    // SAFETY: env mutation; restored before return.
+    unsafe {
+        std::env::set_var("BARISTA_PATHS__CACHE_DIR", &cache);
+        std::env::set_var("BARISTA_PATHS__M2_REPOSITORY", &m2);
+    }
+    let code = run_dispatch(&["barista", "--root", root.to_str().unwrap(), "pull"]);
+    // SAFETY: restore env.
+    unsafe {
+        match prev_cache {
+            Some(v) => std::env::set_var("BARISTA_PATHS__CACHE_DIR", v),
+            None => std::env::remove_var("BARISTA_PATHS__CACHE_DIR"),
+        }
+        match prev_m2 {
+            Some(v) => std::env::set_var("BARISTA_PATHS__M2_REPOSITORY", v),
+            None => std::env::remove_var("BARISTA_PATHS__M2_REPOSITORY"),
+        }
+    }
+    code
+}
+
+/// `[T]` `barista pull` on a fresh single-module project that lacks
+/// BOTH `.mvn/` and `root="true"` creates the empty `.mvn/` marker so
+/// Maven 4 can identify the reactor root.
+#[test]
+fn pull_creates_mvn_marker_when_absent() {
+    let td = tempfile::tempdir().unwrap();
+    let root = fresh_project(&td);
+    assert!(
+        !root.join(".mvn").exists(),
+        "precondition: .mvn/ must not exist yet"
+    );
+
+    let code = run_offline_pull(&td, root);
+    assert_eq!(code, 0, "empty-deps offline pull must succeed");
+
+    let mvn = root.join(".mvn");
+    assert!(mvn.is_dir(), ".mvn/ marker must be created by pull");
+    let count = fs::read_dir(&mvn).unwrap().count();
+    assert_eq!(
+        count, 0,
+        ".mvn/ must be an empty directory (the dir itself is the marker)"
+    );
+}
+
+/// `[T]` `barista pull` on a project that already declares
+/// `root="true"` on its root `<project>` element does NOT create a
+/// `.mvn/` directory — we honor the user's explicit reactor-root
+/// choice.
+#[test]
+fn pull_skips_mvn_marker_when_root_true_declared() {
+    let td = tempfile::tempdir().unwrap();
+    let root = td.path();
+    let pom_root_true = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" root="true">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>demo</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+</project>
+"#;
+    fs::write(root.join("pom.xml"), pom_root_true).unwrap();
+
+    let code = run_offline_pull(&td, root);
+    assert_eq!(code, 0, "empty-deps offline pull must succeed");
+
+    assert!(
+        !root.join(".mvn").exists(),
+        ".mvn/ must NOT be created when the pom declares root=\"true\""
+    );
 }
 
 // ---- bad project root --------------------------------------------------
