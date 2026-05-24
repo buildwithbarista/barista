@@ -40,6 +40,13 @@ on:
 # Default-deny at the workflow level; each job opts in explicitly.
 permissions: {}
 
+# Cancel superseded in-flight runs on the same ref for PR pushes; never
+# cancels main-branch or scheduled runs. Saves CI minutes — the final PR
+# push still has to pass before merge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})

@@ -28,11 +28,19 @@ on:
   # NOTE: the nightly fresh-DB scan lives in `sca-nightly.yml`. This
   # workflow runs only on PR + push to `main` — those are the gates
   # that must block merges. The nightly cadence (catching CVEs
-  # published between PRs) is owned by `sca-nightly.yml` and the
-  # issue-filing path that fires off its `workflow_run` completion.
+  # published between PRs) is owned by `sca-nightly.yml`; net-new
+  # findings are turned into issues by the daily `Security finding →
+  # issue` run, which re-reads the code-scanning alert set.
 
 # Default-deny at the workflow level; each job opts in explicitly.
 permissions: {}
+
+# Cancel superseded in-flight runs on the same ref for PR pushes; never
+# cancels main-branch runs. Saves CI minutes — the final PR push still
+# has to pass before merge.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
 
