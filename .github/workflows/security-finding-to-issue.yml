@@ -1,13 +1,13 @@
 # Security finding → GitHub issue.
 #
-# Watches every security scanner that runs on `push: main` and, after a
-# scanner completes (success OR failure — code scanning surfaces findings
-# even when a job exits 0 because the SARIF upload happened in an
-# `if: always()` step), opens a structured GitHub issue for each net-new
-# finding so it can be triaged, auto-remediated, or dismissed.
+# Once a day, reads the aggregated code-scanning alert set (every scanner
+# uploads SARIF into the same alerts list, even when a job exits 0 because
+# the upload ran in an `if: always()` step) and opens a structured GitHub
+# issue for each net-new finding so it can be triaged, auto-remediated, or
+# dismissed.
 #
 # Triggers:
-#   - workflow_run on the security suite below, filtered to `main`.
+#   - schedule: once daily, after the nightly scans refresh the alerts.
 #   - workflow_dispatch for ad-hoc runs.
 #
 # Source of truth: the GitHub code scanning REST API
@@ -33,39 +33,33 @@
 
 name: Security finding → issue
 
-# zizmor's `dangerous-triggers` audit flags `workflow_run` by default.
-# The pwn-request pattern requires (a) running PR-controlled code in
-# the base-repo context AND (b) using secrets/write tokens. This
-# workflow does neither: it gates on `head_branch == 'main'` so fork
-# PR runs can't trigger it, doesn't check out PR-controlled code, and
-# only consumes the upstream run's metadata (id, URL, head sha) as
-# data — never interpolated into shell. The trigger is the right
-# shape for "another workflow finished"; we accept the audit finding.
-on:  # zizmor: ignore[dangerous-triggers]
-  workflow_run:
-    # The upstream security suite. Adding a new security workflow that
-    # uploads SARIF means appending its `name:` here. Each entry must
-    # match the upstream workflow's top-level `name:` exactly.
-    workflows:
-      - "SCA — dependency vulnerability scanning"
-      - "SCA nightly — fresh-DB dependency scan"
-      - "Secret scan — gitleaks + trufflehog"
-      - "SAST — static analysis"
-      - "CodeQL"
-      - "Workflow lint"
-    types: [completed]
-  # Manual trigger for re-running the issue-creation logic without
-  # waiting for an upstream scan to fire. Handy after the dedup cache
-  # gets out of sync or after a manual triage pass.
+on:
+  # Once a day, after the nightly SCA + secret scans have refreshed the
+  # code-scanning alert set. A single batched run replaces the old
+  # per-scanner `workflow_run` fan-out: every scanner uploads into the
+  # same code-scanning alerts list, so re-reading it once a day catches
+  # every finding without spawning a redundant run on each scanner's
+  # completion. Findings are filed within 24h, which is ample for an
+  # async triage queue.
+  schedule:
+    # 05:40 UTC — comfortably after the nightly secret-scan (04:19) and
+    # sca-nightly (04:37) have finished uploading SARIF, so the alert set
+    # is fresh. Off-the-hour to dodge the top-of-hour cron storm. A scan
+    # still running at this point just defers its findings to tomorrow's
+    # run (the script is idempotent), so an exact handoff isn't required.
+    - cron: "40 5 * * *"
+  # Manual trigger for re-running the issue-creation logic on demand —
+  # after a push that added findings, after the dedup cache gets out of
+  # sync, or after a manual triage pass.
   workflow_dispatch:
 
 # Default-deny at the workflow level; each job opts in explicitly.
 permissions: {}
 
-# Cancel an older in-flight run of this workflow if another scanner
-# completes while we're still processing the previous batch. The
-# workflow is idempotent (it always re-reads the alerts list), so
-# discarding an in-flight run never loses findings.
+# Serialize runs of this workflow (e.g. a manual dispatch overlapping the
+# scheduled run) so two invocations don't race to file the same finding.
+# The workflow is idempotent — it always re-reads the alerts list — so
+# queuing rather than cancelling never loses findings.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -75,22 +69,16 @@ jobs:
   # ---------------------------------------------------------------------------
   # File issues for net-new code-scanning alerts.
   #
-  # Skipped unless the upstream workflow ran on the default branch.
-  # PR runs from forks would otherwise let an attacker spam the issue
-  # tracker by submitting a PR that fires a scanner; gating on
-  # `head_branch == main` blocks that.
+  # Scheduled runs (and manual dispatches) only ever execute against the
+  # default branch, so there's no fork-PR spam vector to gate against.
   # ---------------------------------------------------------------------------
   file-issues:
     name: File issues for net-new findings
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.head_branch == 'main'
     permissions:
       contents: read  # check out the in-tree filer script
       issues: write  # create finding-issues + comment on tracker issue
       security-events: read  # query the code-scanning alerts API
-      actions: read  # read upstream workflow_run metadata for provenance
     env:
       # Cap on new issues opened per run. A sudden spike beyond this is
       # consolidated into a single tracker issue rather than spamming
@@ -99,11 +87,6 @@ jobs:
       MAX_ISSUES_PER_RUN: "25"
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
-      # Provenance for the issue body: which upstream run triggered us.
-      UPSTREAM_WORKFLOW: ${{ github.event.workflow_run.name }}
-      UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
-      UPSTREAM_RUN_URL: ${{ github.event.workflow_run.html_url }}
-      UPSTREAM_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Checkout (workflow + filer script)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
