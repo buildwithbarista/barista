@@ -89,6 +89,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Default leaf-name for the daemon's UDS, under
@@ -112,6 +113,76 @@ pub const ERR_CODE_JAR_NOT_FOUND: &str = "BAR-DAEMON-JAR-NOT-FOUND";
 /// daemon crashed mid-action — see the IPC mux layer): this code means
 /// the spawn-ready handshake itself never landed.
 pub const ERR_CODE_SPAWN_TIMEOUT: &str = "BAR-DAEMON-SPAWN-TIMEOUT";
+
+/// Stable error code returned when the spawned barback JVM exits
+/// during the spawn-ready wait — i.e. it crashed before it ever bound
+/// the socket (e.g. a missing `BARISTA_MAVEN_HOME`). Distinct from
+/// [`ERR_CODE_SPAWN_TIMEOUT`] (the JVM is still alive but never became
+/// ready) and from the mux-layer `BAR-DAEMON-CRASHED` (the daemon
+/// crashed mid-action). This code lets the launcher fail fast — within
+/// a poll interval of the exit — instead of waiting out the full
+/// `spawn_timeout`, and carries the captured stderr tail.
+pub const ERR_CODE_CRASHED_AT_STARTUP: &str = "BAR-DAEMON-CRASHED-AT-STARTUP";
+
+/// Cap on the in-memory stderr ring captured during daemon startup:
+/// roughly the last 64 KiB. Bounds memory regardless of how chatty the
+/// JVM is on its way down.
+const STDERR_TAIL_CAP_BYTES: usize = 64 * 1024;
+
+/// Shared handle to the bounded, in-memory tail of the barback child's
+/// stderr, captured during startup. The drain thread appends into it;
+/// the spawn-wait path reads the captured tail to enrich crash /
+/// timeout errors. Cheap to clone (it's an `Arc`).
+#[derive(Debug, Clone, Default)]
+pub struct StderrTail {
+    inner: Arc<Mutex<StderrRing>>,
+}
+
+#[derive(Debug, Default)]
+struct StderrRing {
+    /// Bounded buffer holding at most [`STDERR_TAIL_CAP_BYTES`] of the
+    /// most-recent stderr bytes (older bytes are dropped from the
+    /// front).
+    buf: Vec<u8>,
+}
+
+impl StderrTail {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append `chunk` to the ring, evicting from the front so the
+    /// buffer never exceeds [`STDERR_TAIL_CAP_BYTES`].
+    fn append(&self, chunk: &[u8]) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.buf.extend_from_slice(chunk);
+            let len = g.buf.len();
+            if len > STDERR_TAIL_CAP_BYTES {
+                let drop_n = len - STDERR_TAIL_CAP_BYTES;
+                g.buf.drain(..drop_n);
+            }
+        }
+    }
+
+    /// Snapshot the captured tail as a lossy UTF-8 string, trimmed.
+    /// Empty string when nothing was captured.
+    pub fn snapshot(&self) -> String {
+        match self.inner.lock() {
+            Ok(g) => String::from_utf8_lossy(&g.buf).trim().to_string(),
+            Err(_) => String::new(),
+        }
+    }
+}
+
+/// Render the captured stderr tail as a trailing diagnostic clause for
+/// an error message, or an empty string when nothing was captured.
+fn stderr_clause(tail: &str) -> String {
+    if tail.is_empty() {
+        String::new()
+    } else {
+        format!("\n--- barback stderr (tail) ---\n{tail}")
+    }
+}
 
 /// Errors surfaced by [`LaunchPlan::spawn`] and [`discover_or_spawn`].
 #[derive(Debug, thiserror::Error)]
@@ -156,13 +227,37 @@ pub enum LauncherError {
     /// [`ERR_CODE_SPAWN_TIMEOUT`].
     #[error(
         "{ERR_CODE_SPAWN_TIMEOUT}: barback did not become ready at {socket:?} \
-         within {timeout:?}; the daemon's stderr may have more detail."
+         within {timeout:?}; the daemon's stderr may have more detail.{}",
+        stderr_clause(stderr_tail)
     )]
     SpawnTimeout {
         /// Socket path we polled.
         socket: PathBuf,
         /// Deadline we waited for.
         timeout: Duration,
+        /// Captured tail (~64 KiB) of the daemon's stderr at the time
+        /// of the timeout. Empty when nothing was captured.
+        stderr_tail: String,
+    },
+
+    /// The spawned barback JVM exited during the spawn-ready wait — it
+    /// crashed before binding the socket. Wire code
+    /// [`ERR_CODE_CRASHED_AT_STARTUP`]. Carries the captured stderr
+    /// tail so the real cause (e.g. a missing `BARISTA_MAVEN_HOME`)
+    /// surfaces instead of a generic timeout.
+    #[error(
+        "{ERR_CODE_CRASHED_AT_STARTUP}: barback exited during startup \
+         (status: {status}) before binding {socket:?}.{}",
+        stderr_clause(stderr_tail)
+    )]
+    CrashedAtStartup {
+        /// Socket path we were waiting on.
+        socket: PathBuf,
+        /// Human-readable exit status of the child (code or signal).
+        status: String,
+        /// Captured tail (~64 KiB) of the daemon's stderr. Empty when
+        /// nothing was captured.
+        stderr_tail: String,
     },
 
     /// `mvn dependency:build-classpath` failed when the launcher tried
@@ -282,7 +377,7 @@ pub fn discover_or_spawn(
     reap_stale_daemon(plan);
 
     let entry = classpath()?;
-    let child = spawn_daemon(plan, &entry)?;
+    let (mut child, stderr_tail) = spawn_daemon(plan, &entry)?;
 
     // Write the PID file so the auto-respawn path can reach the
     // previous daemon if it crashes mid-action and the OS hasn't
@@ -296,7 +391,12 @@ pub fn discover_or_spawn(
         );
     }
 
-    wait_for_ready(&plan.socket_path, plan.spawn_timeout)?;
+    wait_for_ready(
+        &plan.socket_path,
+        plan.spawn_timeout,
+        &mut child,
+        &stderr_tail,
+    )?;
 
     Ok(DaemonHandle {
         socket_path: plan.socket_path.clone(),
@@ -324,7 +424,18 @@ pub enum JvmEntry {
 /// Spawn the daemon using `entry`'s JVM-entry spec, attaching stdout /
 /// stderr piped to threads that drain them so the JVM never blocks on
 /// a full pipe.
-pub fn spawn_daemon(plan: &LaunchPlan, entry: &JvmEntry) -> Result<Child, LauncherError> {
+///
+/// Returns the spawned [`Child`] plus a [`StderrTail`] handle: the
+/// stderr drain thread always mirrors the child's stderr into a
+/// bounded (~64 KiB) in-memory ring — regardless of
+/// `BARISTA_BARBACK_VERBOSE` — so the spawn-wait path can surface the
+/// real cause when the JVM crashes at startup or never becomes ready.
+/// The `VERBOSE` flag still independently controls live forwarding to
+/// the parent's stderr.
+pub fn spawn_daemon(
+    plan: &LaunchPlan,
+    entry: &JvmEntry,
+) -> Result<(Child, StderrTail), LauncherError> {
     let java = locate_java()?;
 
     let mut argv_for_diag: Vec<String> = vec![java.to_string_lossy().into_owned()];
@@ -423,35 +534,59 @@ pub fn spawn_daemon(plan: &LaunchPlan, entry: &JvmEntry) -> Result<Child, Launch
     // lines on the crash-after path produce non-trivial output that
     // would otherwise deadlock a `Stdio::piped` JVM under load.
     if let Some(out) = child.stdout.take() {
-        std::thread::spawn(move || drain_stream(out, "barback stdout"));
+        std::thread::spawn(move || drain_stdout(out));
     }
+    let stderr_tail = StderrTail::new();
     if let Some(err) = child.stderr.take() {
-        std::thread::spawn(move || drain_stream(err, "barback stderr"));
+        let tail = stderr_tail.clone();
+        std::thread::spawn(move || drain_stderr(err, tail));
     }
 
-    Ok(child)
+    Ok((child, stderr_tail))
 }
 
-fn drain_stream<R: std::io::Read>(mut r: R, label: &str) {
-    let mut buf = Vec::with_capacity(4096);
-    // Read until EOF. We always swallow the bytes silently in
-    // production — the JVM's logs are best-effort diagnostic and
-    // surfacing them on every barista invocation would clutter user
-    // output. Set `BARISTA_BARBACK_VERBOSE=1` to forward.
-    if std::env::var("BARISTA_BARBACK_VERBOSE").is_ok() {
-        let mut chunk = [0u8; 4096];
-        loop {
-            match r.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => {
+/// Drain the child's stdout to EOF. In `VERBOSE` mode the bytes are
+/// forwarded to the parent's stderr (prefixed); otherwise they're
+/// swallowed. stdout is not captured into the ring — only stderr
+/// carries the actionable crash detail.
+fn drain_stdout<R: std::io::Read>(mut r: R) {
+    let verbose = std::env::var("BARISTA_BARBACK_VERBOSE").is_ok();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match r.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                if verbose {
                     let s = String::from_utf8_lossy(&chunk[..n]);
-                    eprint!("[{label}] {s}");
+                    eprint!("[barback stdout] {s}");
                 }
-                Err(_) => break,
             }
+            Err(_) => break,
         }
-    } else {
-        let _ = r.read_to_end(&mut buf);
+    }
+}
+
+/// Drain the child's stderr to EOF, mirroring every chunk into the
+/// bounded `tail` ring (always — independent of `VERBOSE`) so the
+/// spawn-wait path can attach the real cause to a crash / timeout
+/// error. When `BARISTA_BARBACK_VERBOSE` is set the bytes are *also*
+/// forwarded live to the parent's stderr, preserving the existing
+/// passthrough behavior.
+fn drain_stderr<R: std::io::Read>(mut r: R, tail: StderrTail) {
+    let verbose = std::env::var("BARISTA_BARBACK_VERBOSE").is_ok();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match r.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                tail.append(&chunk[..n]);
+                if verbose {
+                    let s = String::from_utf8_lossy(&chunk[..n]);
+                    eprint!("[barback stderr] {s}");
+                }
+            }
+            Err(_) => break,
+        }
     }
 }
 
@@ -492,19 +627,49 @@ pub fn socket_is_live(path: &Path, timeout: Duration) -> bool {
     }
 }
 
-/// Block until the socket at `path` accepts a `connect(2)` (the
-/// daemon is ready) or `timeout` elapses. Returns
-/// [`LauncherError::SpawnTimeout`] on timeout.
-pub fn wait_for_ready(path: &Path, timeout: Duration) -> Result<(), LauncherError> {
+/// Block until the spawned daemon `child` accepts a `connect(2)` at
+/// `path` (it's ready) or fails.
+///
+/// Two failure modes, distinguished so the user sees the real cause:
+///
+/// - **Fast-fail crash:** each poll iteration calls
+///   [`Child::try_wait`]. If the JVM has already exited, we return
+///   [`LauncherError::CrashedAtStartup`] *immediately* (within a poll
+///   interval) carrying the captured stderr tail — rather than waiting
+///   out the full `timeout` for a socket that will never appear.
+/// - **Timeout:** if the JVM is still alive but hasn't bound the
+///   socket by the deadline, we return [`LauncherError::SpawnTimeout`],
+///   also carrying the captured stderr tail.
+pub fn wait_for_ready(
+    path: &Path,
+    timeout: Duration,
+    child: &mut Child,
+    stderr_tail: &StderrTail,
+) -> Result<(), LauncherError> {
     let deadline = Instant::now() + timeout;
     loop {
         if socket_is_live(path, Duration::from_millis(100)) {
             return Ok(());
         }
+        // Fast-fail: if the JVM already exited it will never bind the
+        // socket. Surface the crash now with its stderr instead of
+        // burning the whole `timeout`.
+        if let Ok(Some(status)) = child.try_wait() {
+            // Give the stderr drain thread a brief moment to flush the
+            // final chunk after the pipe closed, so the captured tail
+            // includes the JVM's parting words.
+            std::thread::sleep(Duration::from_millis(50));
+            return Err(LauncherError::CrashedAtStartup {
+                socket: path.to_path_buf(),
+                status: status.to_string(),
+                stderr_tail: stderr_tail.snapshot(),
+            });
+        }
         if Instant::now() >= deadline {
             return Err(LauncherError::SpawnTimeout {
                 socket: path.to_path_buf(),
                 timeout,
+                stderr_tail: stderr_tail.snapshot(),
             });
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -819,6 +984,142 @@ mod tests {
         let td = tempfile::tempdir().unwrap();
         let p = td.path().join("never-bound.sock");
         assert!(!socket_is_live(&p, Duration::from_millis(50)));
+    }
+
+    // ----- stderr ring buffer -------------------------------------------
+
+    #[test]
+    fn stderr_tail_captures_recent_bytes() {
+        let tail = StderrTail::new();
+        tail.append(b"hello ");
+        tail.append(b"world\n");
+        assert_eq!(tail.snapshot(), "hello world");
+    }
+
+    #[test]
+    fn stderr_tail_is_bounded_to_cap() {
+        let tail = StderrTail::new();
+        // Push well past the cap; only the most-recent ~64 KiB survive.
+        let big = vec![b'a'; STDERR_TAIL_CAP_BYTES + 4096];
+        tail.append(&big);
+        tail.append(b"TAIL-MARKER");
+        let snap = tail.snapshot();
+        assert!(
+            snap.len() <= STDERR_TAIL_CAP_BYTES,
+            "ring must not exceed the cap; got {} bytes",
+            snap.len()
+        );
+        assert!(
+            snap.ends_with("TAIL-MARKER"),
+            "the most-recent bytes must be retained"
+        );
+    }
+
+    // ----- fast-fail on crash-at-startup --------------------------------
+
+    /// Spawn a short-lived child that prints `sentinel` to stderr and
+    /// exits non-zero, wiring its stderr into a `StderrTail` exactly
+    /// the way `spawn_daemon` does (always-capture drain thread).
+    /// Returns the `Child` + tail handle. Unix-only (uses `sh`).
+    #[cfg(unix)]
+    fn spawn_fake_crashing_child(sentinel: &str) -> (Child, StderrTail) {
+        let script = format!("echo '{sentinel}' >&2; exit 1");
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn fake child");
+        if let Some(out) = child.stdout.take() {
+            std::thread::spawn(move || drain_stdout(out));
+        }
+        let tail = StderrTail::new();
+        if let Some(err) = child.stderr.take() {
+            let t = tail.clone();
+            std::thread::spawn(move || drain_stderr(err, t));
+        }
+        (child, tail)
+    }
+
+    /// `[T]` `wait_for_ready` must fast-fail when the spawned child
+    /// exits before binding the socket: it returns within ~5 s (NOT
+    /// the full 30 s `spawn_timeout`) with
+    /// [`LauncherError::CrashedAtStartup`] whose message contains the
+    /// captured stderr tail.
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_ready_fast_fails_on_crash_with_captured_stderr() {
+        let td = tempfile::tempdir().unwrap();
+        let socket = td.path().join("barback.sock"); // never bound
+        let sentinel = "BARBACK-FAKE-CRASH-SENTINEL-no-embedded-maven";
+        let (mut child, tail) = spawn_fake_crashing_child(sentinel);
+
+        // A deliberately long timeout: a non-fast-failing implementation
+        // would block for the full 30 s. We assert the call returns far
+        // sooner.
+        let timeout = Duration::from_secs(30);
+        let start = Instant::now();
+        let res = wait_for_ready(&socket, timeout, &mut child, &tail);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "wait_for_ready must fast-fail well under the 30s timeout; took {elapsed:?}"
+        );
+        let err = res.expect_err("a crashing child must produce an error");
+        assert!(
+            matches!(err, LauncherError::CrashedAtStartup { .. }),
+            "expected CrashedAtStartup, got: {err:?}"
+        );
+        let msg = err.to_string();
+        assert!(
+            msg.contains(ERR_CODE_CRASHED_AT_STARTUP),
+            "error must carry the wire code; got: {msg}"
+        );
+        assert!(
+            msg.contains(sentinel),
+            "error must include the captured stderr tail (sentinel); got: {msg}"
+        );
+    }
+
+    /// The happy path's timeout branch is unchanged in shape: when the
+    /// child stays alive but never binds the socket, `wait_for_ready`
+    /// still returns `SpawnTimeout` once the deadline elapses. We use a
+    /// tiny timeout + a long-lived child so the test is fast.
+    #[cfg(unix)]
+    #[test]
+    fn wait_for_ready_times_out_when_child_alive_but_socket_never_binds() {
+        let td = tempfile::tempdir().unwrap();
+        let socket = td.path().join("barback.sock"); // never bound
+        // A child that sleeps well past the test's tiny timeout — it
+        // stays alive, so try_wait() returns None and the deadline
+        // path fires.
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn sleeper");
+        let tail = StderrTail::new();
+        if let Some(err) = child.stderr.take() {
+            let t = tail.clone();
+            std::thread::spawn(move || drain_stderr(err, t));
+        }
+
+        let res = wait_for_ready(&socket, Duration::from_millis(300), &mut child, &tail);
+        // Clean up the sleeper.
+        let _ = child.kill();
+        let _ = child.wait();
+
+        let err = res.expect_err("never-binding socket must time out");
+        assert!(
+            matches!(err, LauncherError::SpawnTimeout { .. }),
+            "expected SpawnTimeout, got: {err:?}"
+        );
     }
 
     #[test]

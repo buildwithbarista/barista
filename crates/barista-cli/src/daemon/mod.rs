@@ -57,8 +57,8 @@ pub mod respawn;
 
 #[cfg(unix)]
 pub use launcher::{
-    DaemonHandle, ERR_CODE_JAR_NOT_FOUND, ERR_CODE_SPAWN_TIMEOUT, JvmEntry, LaunchPlan,
-    LauncherError, discover_jvm_entry, discover_or_spawn,
+    DaemonHandle, ERR_CODE_CRASHED_AT_STARTUP, ERR_CODE_JAR_NOT_FOUND, ERR_CODE_SPAWN_TIMEOUT,
+    JvmEntry, LaunchPlan, LauncherError, discover_jvm_entry, discover_or_spawn,
 };
 
 #[cfg(unix)]

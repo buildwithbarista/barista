@@ -198,8 +198,13 @@ fn submit_with_respawn_inner(
             // kernel hasn't reaped the listener yet, masking the
             // crash. Instead, unlink the inode and spawn directly.
             let _ = std::fs::remove_file(&plan.socket_path);
-            let child = super::launcher::spawn_daemon(plan, jvm_entry)?;
-            wait_for_ready(&plan.socket_path, plan.spawn_timeout)?;
+            let (mut child, stderr_tail) = super::launcher::spawn_daemon(plan, jvm_entry)?;
+            wait_for_ready(
+                &plan.socket_path,
+                plan.spawn_timeout,
+                &mut child,
+                &stderr_tail,
+            )?;
             let new_handle = DaemonHandle {
                 socket_path: plan.socket_path.clone(),
                 child: Some(child),
