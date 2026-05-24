@@ -1,6 +1,14 @@
 # CI workflow for Barista.
 #
 # Jobs:
+#   detect        Path filter deciding which jobs below run. Compile/test/
+#                 lint are deterministic on the code, so each is gated to
+#                 the paths that can actually break it (Rust jobs ← Rust
+#                 sources; barback/mvnd ← barback/**; a change to this file
+#                 re-runs everything). Security scanning is deliberately NOT
+#                 gated this way — new signatures/CVEs surface findings on
+#                 unchanged code — and lives in the sast/sca/secret-scan/
+#                 codeql workflows, which run on every PR.
 #   rust-check    Fast feedback on every PR: cargo check + fmt + clippy.
 #   rust-test     cargo test --workspace; split out so the slow tests don't
 #                 gate the fast lint feedback.
@@ -43,9 +51,56 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decide which downstream jobs are relevant to this change. Each job
+  # below `needs: detect` and gates on the matching output; a job whose
+  # inputs didn't change is skipped (cheap, non-blocking — no CI check is
+  # required by branch rules). Changing this workflow file flips every
+  # filter so the whole suite re-runs and validates the change.
+  detect:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      java: ${{ steps.filter.outputs.java }}
+      source: ${{ steps.filter.outputs.source }}
+      workflows: ${{ steps.filter.outputs.workflows }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - id: filter
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'roastery/**'
+              - 'xtask/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/ci.yml'
+            java:
+              - 'barback/**'
+              - '.github/workflows/ci.yml'
+            source:
+              - 'crates/**'
+              - 'roastery/**'
+              - 'xtask/**'
+              - 'barback/**'
+              - 'scripts/**'
+              - '.github/scripts/**'
+              - '.github/workflows/ci.yml'
+            workflows:
+              - '.github/workflows/**'
+
   rust-check:
     name: Rust check + fmt + clippy
     runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
     permissions:
       contents: read
     steps:
@@ -71,6 +126,8 @@ jobs:
   rust-test:
     name: Rust test
     runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
     permissions:
       contents: read
     steps:
@@ -92,6 +149,8 @@ jobs:
   rust-windows:
     name: Rust check + named-pipe conformance + verify smoke (windows)
     runs-on: windows-latest
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
     permissions:
       contents: read
     steps:
@@ -172,6 +231,8 @@ jobs:
   barback:
     name: barback (JDK ${{ matrix.java-version }}, Maven ${{ matrix.maven-version }})
     runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.java == 'true'
     permissions:
       contents: read
     strategy:
@@ -250,6 +311,8 @@ jobs:
   mvnd:
     name: mvnd smoke (2.x)
     runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.java == 'true'
     permissions:
       contents: read
     env:
@@ -282,6 +345,8 @@ jobs:
   spdx-headers:
     name: SPDX header lint
     runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.source == 'true'
     permissions:
       contents: read
     steps:
@@ -299,6 +364,8 @@ jobs:
   actionlint:
     name: actionlint
     runs-on: ubuntu-latest
+    needs: detect
+    if: needs.detect.outputs.workflows == 'true'
     permissions:
       contents: read
     steps:
