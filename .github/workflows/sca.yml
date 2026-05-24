@@ -189,9 +189,27 @@ jobs:
       # `-r ./` recurses from the repo root, picking up both Cargo.lock and
       # barback/pom.xml automatically. OSV-Scanner identifies lockfile types
       # by filename.
+      #
+      # `--experimental-exclude` (v2's directory-exclusion mechanism; glob
+      # via the `g:` prefix, repeatable) drops the non-shipped POM trees so
+      # their deliberately-pinned, often-stale dependency versions don't
+      # surface as code-scanning alerts:
+      #   **/tests/fixtures/**  resolver + CLI test-fixture POMs
+      #   **/test-fixtures/**   parity-check baseline POM
+      #   **/bench/**           JMH harness (barback/bench) + frozen
+      #                         benchmark checkouts (bench/projects/*)
+      #   **/spike/**           throwaway m40 spike reactors
+      #   **/test-corpus/**     corpus baseline vendor POM
+      # Only the shipped manifests (Cargo.lock, barback/pom.xml) drive
+      # findings. Mirrors the Dependabot exclusions in `.github/dependabot.yml`.
       scan-args: |-
         -r
         --skip-git
+        --experimental-exclude=g:**/tests/fixtures/**
+        --experimental-exclude=g:**/test-fixtures/**
+        --experimental-exclude=g:**/bench/**
+        --experimental-exclude=g:**/spike/**
+        --experimental-exclude=g:**/test-corpus/**
         ./
 
   # ---------------------------------------------------------------------------
