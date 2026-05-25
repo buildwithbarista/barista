@@ -18,7 +18,7 @@ publish = false
 # HTTP/2 — its framing, multiplexing, and HTTP semantics are wasted overhead
 # for a single-host, owner-only socket, and pulling it in would force a
 # tokio + hyper dep tree we don't need on the CLI hot path.
-prost = "0.13"
+prost = "0.14"
 
 # `zeroize` lets us mark credential-bearing types with `ZeroizeOnDrop` so
 # decrypted secrets are wiped from memory when the message is dropped. The
@@ -75,7 +75,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # from `HOMEPATH` on Windows); `dirs` already handles them. Pinned to the
 # current stable 5.x line. Sonatype version-check deferred (MCP credits
 # exhausted at task execution time); revisit at M6.1 dependency audit.
-dirs = "5"
+dirs = "6"
 
 # `uuid` provides the v7 generator used by the multiplexer (`src/mux/`)
 # for client-side action IDs. UUIDv7 (RFC 9562 §5.7) is a 128-bit
@@ -116,7 +116,7 @@ libc = "0.2"
 # `Win32_System_SystemServices` carries `SECURITY_DESCRIPTOR_REVISION`
 # (the revision constant passed to `InitializeSecurityDescriptor`).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -136,7 +136,7 @@ windows-sys = { version = "0.59", features = [
 # generated Rust doc-comments don't break `cargo test` (proto comments use
 # `*` bullets + backticked tokens that rustdoc would otherwise try to
 # parse as indented code blocks, producing spurious lex errors).
-prost-build = { version = "0.13", features = ["cleanup-markdown"] }
+prost-build = { version = "0.14", features = ["cleanup-markdown"] }
 # Vendored `protoc` binary so no system protoc install is needed anywhere
 # (CI, the cross-platform release matrix, local dev). build.rs points
 # `PROTOC` at it when unset. Mirrors roastery's build dependency.

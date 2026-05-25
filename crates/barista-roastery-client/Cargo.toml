@@ -71,7 +71,7 @@ hex = "0.4"
 # digest-in-URL convention, but a hash-as-you-read helper is cheap
 # to provide and matches what M5.2 T2 will want when it ingests
 # bytes into the local CAS.
-sha2 = "0.10"
+sha2 = "0.11"
 # `bytes::Bytes` is the chunk type both `ReaderStream` and the
 # response-side `bytes_stream` emit. Already in the transitive
 # graph; declared here so the streaming adapters can name the type.
