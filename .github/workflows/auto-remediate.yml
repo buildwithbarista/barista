@@ -217,7 +217,7 @@ jobs:
         # v1.0.122 (latest at time of authoring). Bump SHA and tag
         # comment together. Action manifest:
         # https://github.com/anthropics/claude-code-action/releases/tag/v1.0.122
-        uses: anthropics/claude-code-action@4481e6d3c7bbb88db2a928ca3444c536f589c7c1 # v1.0.131
+        uses: anthropics/claude-code-action@787c5a0ce96a9a6cfb050ea0c8f4c05f2447c251 # v1.0.133
         with:
           # API key for the agent. The action also supports OAuth and
           # cloud-provider auth; we use direct API for now and revisit
