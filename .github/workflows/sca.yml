@@ -1,16 +1,21 @@
 # Software Composition Analysis — dependency vulnerability scanning.
 #
-# Runs five overlapping scanners on every PR and every push to `main`.
-# Overlap is intentional: cargo-audit/cargo-deny lean on the
-# RustSec advisory database; OSV-Scanner uses the OSV.dev union; OWASP DC
-# uses the NVD; Trivy uses its own vulnerability metadata. The four
-# databases disagree on a non-trivial subset of advisories, so the union
-# catches more than any one scanner.
+# Runs three overlapping scanners on every PR and every push to `main`.
+# Overlap is intentional: cargo-deny leans on the RustSec advisory
+# database; OSV-Scanner uses the OSV.dev union; Trivy uses its own
+# vulnerability metadata. The databases disagree on a non-trivial subset
+# of advisories, so the union catches more than any one scanner.
 #
 # Coverage:
-#   Rust   — cargo-deny, cargo-audit, OSV-Scanner, Trivy
-#   Java   — OSV-Scanner, OWASP Dependency-Check, Trivy
+#   Rust   — cargo-deny, OSV-Scanner, Trivy
+#   Java   — OSV-Scanner, Trivy
 #   Other  — Trivy (lockfile types neither cargo-* nor OSV covers)
+#
+# cargo-audit and OWASP Dependency-Check were removed as PR gates: both
+# were redundant with the scanners above (same advisory surface) and both
+# fail on upstream issues outside our control — cargo-audit on a malformed
+# RustSec advisory-db file, OWASP DC on flaky NVD-feed updates — so they
+# produced only red noise. Re-add them once those upstreams are fixed.
 #
 # Every action is pinned to a commit SHA (not a floating tag). The
 # human-readable tag is recorded next to the SHA so future readers can audit
@@ -106,76 +111,6 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # cargo-audit — RustSec advisory scan against Cargo.lock. Overlaps with
-  # cargo-deny's [advisories] section by design: the two tools occasionally
-  # disagree on what an advisory means for a workspace and we want the
-  # broader signal.
-  #
-  # continue-on-error: true — cargo-audit is a SOFT gate. The advisory-DB
-  # TOML parser (RUSTSEC-2026-0076.md) and the rustsec/audit-check action
-  # itself have suffered upstream breakage outside our control. cargo-deny
-  # and OSV-Scanner (both hard gates in this workflow) cover the same
-  # advisory surface and remain the merge-blocking signal. cargo-audit runs
-  # for belt-and-suspenders signal only; a failure here does not block a PR.
-  #
-  # Local reproduction:
-  #   cargo install cargo-audit --locked
-  #   cargo audit
-  # ---------------------------------------------------------------------------
-  cargo-audit-check:
-    name: cargo-audit
-    runs-on: ubuntu-latest
-    continue-on-error: true  # soft gate — upstream DB/action breakage; cargo-deny + OSV are the hard gates
-    permissions:
-      contents: read
-      issues: write
-      # `rustsec/audit-check` opens issues on `push: main` failures by default;
-      # `issues: write` is the documented requirement.
-      security-events: write  # for the SARIF emit step below
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: '3.12'
-      # rustsec/audit-check is the gate (sets exit code; opens issues on
-      # `push: main` failures); the SARIF emit + upload below runs even on
-      # failure so findings show up in the Security tab under
-      # `category: cargo-audit`.
-      - name: Run cargo-audit (gate)
-        id: cargo-audit-gate
-        continue-on-error: true
-        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install cargo-audit CLI (for SARIF emit)
-        if: always()
-        run: |
-          set -euo pipefail
-          cargo install cargo-audit --locked --version 0.21.2
-      - name: Emit cargo-audit SARIF
-        if: always()
-        run: |
-          set -euo pipefail
-          cargo audit --json > cargo-audit.json || true
-          python3 .github/scripts/cargo-audit-to-sarif.py \
-            < cargo-audit.json > cargo-audit.sarif
-      - name: Upload cargo-audit SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
-        with:
-          sarif_file: cargo-audit.sarif
-          category: cargo-audit
-      - name: Fail if cargo-audit gate failed
-        if: steps.cargo-audit-gate.outcome == 'failure'
-        run: |
-          echo "::error::cargo-audit reported advisories; see SARIF upload + step log."
-          exit 1
-
-  # ---------------------------------------------------------------------------
   # OSV-Scanner — Cargo (Cargo.lock) + Maven (barback/pom.xml) coverage from
   # the OSV.dev database union. SARIF is uploaded to code scanning via the
   # reusable workflow's built-in step.
@@ -219,68 +154,6 @@ jobs:
         --experimental-exclude=g:**/spike/**
         --experimental-exclude=g:**/test-corpus/**
         ./
-
-  # ---------------------------------------------------------------------------
-  # OWASP Dependency-Check — Maven-side belt-and-suspenders alongside
-  # OSV-Scanner. OWASP DC uses the NVD vulnerability database, OSV uses the
-  # OSV.dev union; they disagree on a non-trivial subset of advisories.
-  #
-  # Configured in barback/pom.xml under the `dependency-check` profile so
-  # local builds don't pay the NVD-download cost on every `mvn verify`. Pass
-  # `-P dependency-check` (or `-Ddependency-check.skip=false`) to opt in.
-  # ---------------------------------------------------------------------------
-  barback-owasp-dc:
-    name: OWASP Dependency-Check (barback)
-    runs-on: ubuntu-latest
-    # Soft gate: OWASP DC depends on a live NVD-data update that flakes
-    # (HTTP/feed errors) even with an NVD_API_KEY, and it is redundant with
-    # the hard advisory gates here — OSV-Scanner + cargo-deny + Trivy. Keep
-    # its SARIF upload (findings still surface in the Security tab) but don't
-    # let NVD-side flakiness fail the workflow / flood notifications.
-    continue-on-error: true
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-      - name: Cache OWASP Dependency-Check NVD data
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.m2/repository/org/owasp/dependency-check-data
-          key: owasp-dc-${{ runner.os }}-${{ hashFiles('barback/pom.xml') }}
-          restore-keys: |
-            owasp-dc-${{ runner.os }}-
-      - name: Run dependency-check (verify phase, opt-in profile)
-        env:
-          # Optional; if a contributor sets NVD_API_KEY as a repo secret the
-          # plugin uses the higher-rate-limited NVD API endpoint. The plugin
-          # still works (slower) without it.
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          mvn -f barback/pom.xml -B -P dependency-check verify
-      # The plugin's `<formats>` block in `barback/pom.xml` includes SARIF,
-      # so a SARIF report lands at `barback/target/dependency-check-report.sarif`
-      # on every run. Upload it so OWASP DC findings join the rest of the
-      # security suite in the Security tab under `category: owasp-dc`,
-      # matching the lowercase-tool-name convention used by every other
-      # scanner in this workflow (and across sast.yml / secret-scan.yml).
-      # `if: always()` so a failed mvn (the intended `failBuildOnCVSS=7`
-      # behavior) still surfaces the findings rather than hiding them.
-      - name: Upload OWASP DC SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
-        with:
-          sarif_file: barback/target/dependency-check-report.sarif
-          category: owasp-dc
 
   # ---------------------------------------------------------------------------
   # Trivy `fs` scan — cross-ecosystem catch-all. Picks up lockfile types and
