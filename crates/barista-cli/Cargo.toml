@@ -23,7 +23,7 @@ serde_json = "1"
 # Same major already pulled in by `barista-lockfile` / `barista-
 # cache`, so this doesn't widen the dep graph.
 sha2 = "0.10"
-toml = "0.8"
+toml = "1.1"
 # `which` locates `mvn` on the user's `$PATH` for the `--no-daemon`
 # escape hatch, which forks an upstream Maven process instead of
 # dispatching to the barback daemon. Same major as elsewhere in the
@@ -68,7 +68,7 @@ tracing = "0.1"
 insta = { version = "1.47", features = ["filters"] }
 jsonschema = { version = "0.46", default-features = false }
 tempfile = "3"
-toml = "0.8"
+toml = "1.1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 # Mock HTTP server for the `barista pull` full-fetch integration
 # tests (M4.3 T8). Pinned to the same `=0.6.2` the cache crate uses
