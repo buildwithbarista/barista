@@ -69,9 +69,16 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
-      # Everything else batches into one weekly PR.
+      # Minor + patch version-updates batch into one weekly PR. Major
+      # bumps are intentionally excluded so they fall out into their own
+      # individual PRs — a single breaking major (e.g. a crate's API or
+      # codegen change) shouldn't block the whole routine batch from
+      # landing, and majors warrant individual review anyway.
       cargo-routine:
         applies-to: version-updates
+        update-types:
+          - minor
+          - patch
         patterns:
           - "*"
 
@@ -97,8 +104,16 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+      # Minor + patch batch weekly; majors break out into individual PRs
+      # (see the cargo-routine rationale). This matters acutely for the
+      # embedder: the guice 6->7 / sisu 0.9->1.0 / Maven-4 jakarta majors
+      # require a coordinated javax.inject -> jakarta.inject migration, so
+      # they must not ride in with routine minor/patch bumps.
       maven-routine:
         applies-to: version-updates
+        update-types:
+          - minor
+          - patch
         patterns:
           - "*"
 
