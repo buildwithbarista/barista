@@ -74,9 +74,12 @@ fn main() -> Result<()> {
     // ---- per-type attributes ----------------------------------------------
     //
     // `Mojo` is a natural map key (group:artifact:version:goal pin -> action
-    // metadata in caches and progress aggregators). Make it `Eq + Hash` so
-    // downstream crates can use it directly as a HashMap key.
-    config.type_attribute("barista.v1.Mojo", "#[derive(Eq, Hash)]");
+    // metadata in caches and progress aggregators) and is used directly as a
+    // HashMap key downstream, so it needs `Eq + Hash`. prost 0.14 derives
+    // both automatically for messages whose fields all support them (as
+    // Mojo's all-scalar fields do), so an explicit `type_attribute` is no
+    // longer needed — adding one duplicates prost's derive and fails to
+    // compile (E0119: conflicting implementations of `Eq`/`Hash`).
 
     // Credential-bearing types get `ZeroizeOnDrop` so decrypted secrets are
     // wiped from memory when the message is dropped, plus a `#[doc(...)]`

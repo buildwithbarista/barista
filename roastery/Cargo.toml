@@ -71,7 +71,7 @@ url = "2"
 # the digest the caller claimed. SHA-256 is the digest function the
 # REAPI gRPC surface (M5.1 T4) negotiates by default and the one the
 # barista-protocol handler (M5.1 T3) commits to in its URL scheme.
-sha2 = "0.10"
+sha2 = "0.11"
 # `tempfile::NamedTempFile` powers the atomic-write path for the
 # filesystem CAS backend: write to `<root>/tmp/<random>.tmp`, hash as
 # bytes flow, then `persist` (rename) into the final
@@ -257,7 +257,7 @@ serde_json = "1"
 # without going through the library's `Digest::of_bytes` helper (the
 # tests deliberately spell out the round-trip path the library is
 # verifying).
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 # `axum` lets the integration tests assemble a router by hand against
 # the public sub-router constructor; same version the library depends

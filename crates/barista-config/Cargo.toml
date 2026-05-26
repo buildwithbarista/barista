@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1.1"
 thiserror = "2"
 quick-xml = "0.40"
 tracing = "0.1"
