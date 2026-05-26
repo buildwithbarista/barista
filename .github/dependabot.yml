@@ -69,11 +69,34 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
-      # Minor + patch version-updates batch into one weekly PR. Major
-      # bumps are intentionally excluded so they fall out into their own
-      # individual PRs — a single breaking major (e.g. a crate's API or
-      # codegen change) shouldn't block the whole routine batch from
-      # landing, and majors warrant individual review anyway.
+      # Coupled crate families — these share a transitive version and MUST
+      # bump together or they fail to compile, so group ALL their updates
+      # (not just majors) into one coordinated PR. Listed before
+      # cargo-routine because Dependabot assigns a dependency to the first
+      # group it matches.
+      #   - prost + prost-build (+ -types/-derive) must be the same version.
+      #   - the RustCrypto hashes share the `digest` crate; bumping one
+      #     alone (e.g. sha1 0.11 while sha2 stays 0.10) splits `digest`
+      #     and breaks the build.
+      cargo-prost:
+        applies-to: version-updates
+        patterns:
+          - "prost"
+          - "prost-*"
+      cargo-rustcrypto:
+        applies-to: version-updates
+        patterns:
+          - "sha1"
+          - "sha2"
+          - "sha3"
+          - "digest"
+          - "hmac"
+          - "md-5"
+      # Minor + patch batch into one weekly PR. Unrelated major bumps fall
+      # out into their own individual PRs — a single breaking major
+      # shouldn't block the whole routine batch, and majors warrant
+      # individual review. (Coupled-family bumps are grouped above so they
+      # don't split into individually-failing PRs.)
       cargo-routine:
         applies-to: version-updates
         update-types:
@@ -104,11 +127,21 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
-      # Minor + patch batch weekly; majors break out into individual PRs
-      # (see the cargo-routine rationale). This matters acutely for the
-      # embedder: the guice 6->7 / sisu 0.9->1.0 / Maven-4 jakarta majors
-      # require a coordinated javax.inject -> jakarta.inject migration, so
-      # they must not ride in with routine minor/patch bumps.
+      # Coupled jakarta-era stack: the embedded Maven 4 core and its DI
+      # layer (Sisu + Guice) all migrated from javax.inject to
+      # jakarta.inject together, so group ALL their updates into one
+      # coordinated PR (listed first; Dependabot first-match wins). That
+      # PR rides with the javax->jakarta migration (#39) instead of
+      # splitting into individually-failing bumps like guice 7 / sisu 1.0 /
+      # Maven-4 rc-5 did.
+      maven-jakarta-stack:
+        applies-to: version-updates
+        patterns:
+          - "org.apache.maven:*"
+          - "org.eclipse.sisu:*"
+          - "com.google.inject:guice"
+      # Minor + patch batch weekly; other (unrelated) major bumps break
+      # out into their own individual PRs.
       maven-routine:
         applies-to: version-updates
         update-types:
