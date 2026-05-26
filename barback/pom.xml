@@ -88,7 +88,7 @@
           Floor: 4.0.0-rc-3 (the version the M4.0 embedding spike
           validated end-to-end). Anything earlier is unsupported.
         -->
-        <embedded.maven.version>4.0.0-rc-3</embedded.maven.version>
+        <embedded.maven.version>4.0.0-rc-5</embedded.maven.version>
         <!--
           plexus-classworlds is the classloader container Maven 4
           ships in its boot/ directory; we mirror the exact version
