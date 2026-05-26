@@ -136,7 +136,7 @@ windows-sys = { version = "0.59", features = [
 # generated Rust doc-comments don't break `cargo test` (proto comments use
 # `*` bullets + backticked tokens that rustdoc would otherwise try to
 # parse as indented code blocks, producing spurious lex errors).
-prost-build = { version = "0.13", features = ["cleanup-markdown"] }
+prost-build = { version = "0.14", features = ["cleanup-markdown"] }
 # Vendored `protoc` binary so no system protoc install is needed anywhere
 # (CI, the cross-platform release matrix, local dev). build.rs points
 # `PROTOC` at it when unset. Mirrors roastery's build dependency.
