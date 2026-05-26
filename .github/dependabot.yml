@@ -102,31 +102,17 @@ updates:
         patterns:
           - "*"
 
-  # ---------------------------------------------------------------------------
-  # Maven (barback-bench) — the JMH benchmark harness at
-  # barback/bench/pom.xml. Standalone POM (no parent) so Dependabot needs
-  # its own entry.
-  # ---------------------------------------------------------------------------
-  - package-ecosystem: maven
-    directory: /barback/bench
-    schedule:
-      interval: weekly
-      day: monday
-      time: "06:00"
-      timezone: Etc/UTC
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - java
-    commit-message:
-      prefix: "deps"
-      include: scope
-    groups:
-      maven-bench-security:
-        applies-to: security-updates
-        patterns:
-          - "*"
-      maven-bench-routine:
-        applies-to: version-updates
-        patterns:
-          - "*"
+  # Deliberately NOT tracked by Dependabot:
+  #   - barback/bench/pom.xml          (JMH benchmark harness)
+  #   - barback/spike/**/pom.xml       (throwaway m40 spikes)
+  #   - bench/projects/**/pom.xml      (frozen benchmark checkouts)
+  #   - crates/**/tests/fixtures/**    (resolver/CLI test-fixture POMs)
+  #   - test-corpus/**                 (corpus baseline vendor POM)
+  # None of these are shipped artifacts. Their dependency versions are
+  # pinned on purpose — the resolver fixtures encode exact versions the
+  # tests assert against, and the bench/corpus POMs freeze a baseline — so
+  # a Dependabot bump would only create churn (and break the tests).
+  # Dependabot version updates run only for the directories listed above,
+  # so leaving these unlisted is what keeps them out of the PR stream;
+  # do not add entries for them. (Their *vulnerability* findings are
+  # likewise excluded from the SCA scanners in `sca.yml`.)
