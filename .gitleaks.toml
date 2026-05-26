@@ -77,3 +77,37 @@ description = "Materialized test corpus: external Maven projects checked out by 
 paths = [
     '''(^|/)test-corpus/''',
 ]
+
+# ---------------------------------------------------------------------------
+# Synthetic credentials in test sources, chart fixtures, and docs.
+#
+# These paths embed deliberately-shaped FAKE credentials as test/illustrative
+# inputs. They are not real secrets and real credentials must never be
+# committed to them. Threat-model trade-off: a real secret accidentally
+# committed to one of these paths would NOT be caught by secret scanning —
+# accepted because these are test/fixture/doc trees (no production secrets
+# belong here) and PR review covers the rest.
+#
+# NOTE: this does NOT cover `tests/fixtures/secrets/` — those fixtures must
+# keep tripping gitleaks so the secret-scan round-trip test stays honest;
+# their waivers live per-fingerprint in `.gitleaksignore`.
+# ---------------------------------------------------------------------------
+
+[[allowlists]]
+description = "Test sources with synthetic keys/tokens: the barista-ipc auth/zeroize/conformance tests exercise credential zeroization + SSH-key round-trips, and the barback proto smoke test asserts on credential message fields. The embedded PEM keys / API-key-shaped strings are fixtures, not live secrets."
+paths = [
+    '''(^|/)crates/barista-ipc/tests/''',
+    '''(^|/)barback/src/test/''',
+]
+
+[[allowlists]]
+description = "Roastery Helm chart test fixtures: golden-rendered manifests and sample values files (mTLS, S3) carry synthetic TLS keys / bearer tokens used to snapshot-test the chart's templating. Not real secrets."
+paths = [
+    '''(^|/)roastery/deploy/helm/fixtures/''',
+]
+
+[[allowlists]]
+description = "Documentation example: roastery/README.md shows a sample curl invocation with an Authorization-header placeholder. It is illustrative, not a live credential."
+paths = [
+    '''(^|/)roastery/README\.md$''',
+]
