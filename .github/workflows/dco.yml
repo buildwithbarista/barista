@@ -63,6 +63,14 @@ jobs:
   dco:
     name: dco
     runs-on: ubuntu-latest
+    # Dependabot commits are authored by `dependabot[bot]`, which cannot
+    # add a `Signed-off-by:` trailer, so DCO can never pass on its PRs.
+    # Skip the check for Dependabot-authored PRs. A job skipped via a
+    # job-level `if:` reports a neutral conclusion that GitHub counts as
+    # success when `dco` is a required status check — so this stays safe if
+    # the operator later adds `dco` to branch protection. Human-authored
+    # PRs are unaffected and must still carry a sign-off.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       # Read-only — the check inspects commit metadata and never writes
       # anything back. Branch-protection enforces the gate; this job
