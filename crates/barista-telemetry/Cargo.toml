@@ -36,7 +36,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 
 [dev-dependencies]
 barista-config = { path = "../barista-config" }
-toml = "0.8"
+toml = "1.1"
 
 [lints]
 workspace = true
