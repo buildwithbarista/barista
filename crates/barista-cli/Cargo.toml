@@ -73,7 +73,7 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", 
 # Mock HTTP server for the `barista pull` full-fetch integration
 # tests (M4.3 T8). Pinned to the same `=0.6.2` the cache crate uses
 # so the workspace doesn't drift across two majors.
-wiremock = "=0.6.2"
+wiremock = "=0.6.5"
 # For hand-rolling Maven-Central-style sha256/sha1 sidecar bodies
 # in the wiremock fixtures.
 sha2 = "0.10"
