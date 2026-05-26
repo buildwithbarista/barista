@@ -75,7 +75,7 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # from `HOMEPATH` on Windows); `dirs` already handles them. Pinned to the
 # current stable 5.x line. Sonatype version-check deferred (MCP credits
 # exhausted at task execution time); revisit at M6.1 dependency audit.
-dirs = "5"
+dirs = "6"
 
 # `uuid` provides the v7 generator used by the multiplexer (`src/mux/`)
 # for client-side action IDs. UUIDv7 (RFC 9562 §5.7) is a 128-bit
