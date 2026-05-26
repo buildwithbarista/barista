@@ -29,6 +29,12 @@ use reqwest::header::{
 use reqwest::{Client, ClientBuilder};
 use tokio::sync::Semaphore;
 
+/// How long an idle pooled connection is kept alive for reuse. Sized to
+/// comfortably outlast a single build's resolve burst so the many
+/// fetches of a cold build reuse one connection per host instead of
+/// churning fresh TCP/TLS handshakes (PRD §18.5 O-PROTO-01).
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// Tunable knobs for the fetcher. These map 1:1 onto the network
 /// section of the user-facing config; the cache crate keeps its own
 /// struct so the fetcher does not depend on `barista-config`.
@@ -39,8 +45,12 @@ pub struct FetchConfig {
     pub max_concurrent_connections: u32,
     /// Per-request timeout applied by the HTTP client.
     pub request_timeout: Duration,
-    /// If `true`, force HTTP/2 (prior knowledge). Tests against
-    /// legacy HTTP/1.1 mocks set this to `false`.
+    /// If `true` (the default), prefer HTTP/2: the client negotiates
+    /// `h2` via ALPN over TLS and falls back to HTTP/1.1 only when the
+    /// host declines it (PRD §18.5 O-PROTO-01). This is ALPN-negotiated,
+    /// not prior-knowledge, so it is safe against HTTP/1.1-only hosts.
+    /// If `false`, the client is pinned to HTTP/1.1 — tests against
+    /// legacy HTTP/1.1 mocks set this.
     pub http2_enabled: bool,
     /// User-Agent header sent with every request.
     pub user_agent: String,
@@ -140,8 +150,17 @@ impl Fetcher {
             .gzip(true)
             // Honor pool size in the same ballpark as the semaphore;
             // the semaphore is the source of truth for the ceiling.
-            .pool_max_idle_per_host(config.max_concurrent_connections as usize);
+            .pool_max_idle_per_host(config.max_concurrent_connections as usize)
+            // Keep idle connections warm across the resolve burst so a
+            // cold build reuses connections instead of churning new
+            // handshakes (O-PROTO-01 persistent connections).
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT);
         if config.http2_enabled {
+            // O-PROTO-01 (PRD §18.5): prefer HTTP/2. `reqwest` negotiates
+            // `h2` via ALPN over TLS and falls back to HTTP/1.1 when the
+            // host declines, so this is safe against HTTP/1.1-only hosts
+            // (no prior-knowledge forcing). The adaptive window lets a
+            // single multiplexed connection carry the whole fetch fan-out.
             builder = builder.http2_adaptive_window(true);
         } else {
             builder = builder.http1_only();
@@ -325,6 +344,39 @@ mod tests {
     async fn new_with_default_config_succeeds() {
         let f = Fetcher::new(FetchConfig::default());
         assert!(f.is_ok());
+    }
+
+    #[tokio::test]
+    async fn default_config_prefers_http2() {
+        // O-PROTO-01: HTTP/2 is the default preference (ALPN-negotiated).
+        assert!(FetchConfig::default().http2_enabled);
+    }
+
+    #[tokio::test]
+    async fn sequential_fetches_reuse_pooled_client() {
+        // O-PROTO-01 persistent connections: a burst of fetches through
+        // one Fetcher rides the shared, pooled client. wiremock can't
+        // surface the OS-level connection count, so this exercises the
+        // reuse path by confirming a multi-fetch burst all succeeds; the
+        // bound on *simultaneous* connections is proven separately by
+        // `concurrent_connection_ceiling_is_enforced`.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/a"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes("x"))
+            .mount(&server)
+            .await;
+        let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
+        for _ in 0..3 {
+            let out = f
+                .fetch(
+                    &format!("{}/a", server.uri()),
+                    &ConditionalHeaders::default(),
+                )
+                .await
+                .unwrap();
+            assert!(matches!(out, FetchOutcome::Fresh { .. }));
+        }
     }
 
     #[tokio::test]
