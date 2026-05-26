@@ -128,6 +128,16 @@ impl Fetcher {
         let mut builder = ClientBuilder::new()
             .timeout(config.request_timeout)
             .user_agent(config.user_agent.clone())
+            // O-XFER-02 (PRD §18.4): negotiate content compression so
+            // text resources (POMs, maven-metadata.xml, repo-manager
+            // JSON) come down compressed. `reqwest`'s `gzip` feature
+            // advertises `Accept-Encoding: gzip` on every request that
+            // doesn't set the header itself and transparently inflates
+            // the response, so callers still see a plain byte stream.
+            // gzip is the universally-supported codec and matches the
+            // Maven 3.9.x baseline; zstd/brotli negotiation is sequenced
+            // after the HTTP/2-default work (see EFF-2026-003).
+            .gzip(true)
             // Honor pool size in the same ballpark as the semaphore;
             // the semaphore is the source of truth for the ceiling.
             .pool_max_idle_per_host(config.max_concurrent_connections as usize);
@@ -338,6 +348,100 @@ mod tests {
             FetchOutcome::Fresh { bytes, .. } => assert_eq!(bytes.as_ref(), b"hello"),
             _ => panic!("expected Fresh"),
         }
+    }
+
+    // --- O-XFER-02 compression negotiation (PRD §18.4, EFF-2026-003) ---
+
+    #[tokio::test]
+    async fn gzip_response_is_transparently_decompressed() {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write as _;
+
+        // A repetitive maven-metadata-shaped payload so gzip genuinely
+        // shrinks the wire bytes (the whole point of O-XFER-02).
+        let plaintext = "<metadata><versioning><versions>".to_string()
+            + &"<version>1.0.0</version>".repeat(200)
+            + "</versions></versioning></metadata>";
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(plaintext.as_bytes()).unwrap();
+        let gzipped = enc.finish().unwrap();
+        assert!(
+            gzipped.len() < plaintext.len(),
+            "fixture should compress: {} gz vs {} raw",
+            gzipped.len(),
+            plaintext.len()
+        );
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/meta"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Encoding", "gzip")
+                    .set_body_bytes(gzipped),
+            )
+            .mount(&server)
+            .await;
+
+        let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
+        let out = f
+            .fetch(
+                &format!("{}/meta", server.uri()),
+                &ConditionalHeaders::default(),
+            )
+            .await
+            .unwrap();
+        // The caller sees the inflated plaintext, with no awareness of
+        // the transport encoding.
+        match out {
+            FetchOutcome::Fresh { bytes, .. } => {
+                assert_eq!(bytes.as_ref(), plaintext.as_bytes())
+            }
+            _ => panic!("expected Fresh"),
+        }
+    }
+
+    #[tokio::test]
+    async fn requests_advertise_gzip_accept_encoding() {
+        struct CaptureAccept(StdArc<std::sync::Mutex<Option<String>>>);
+        impl Respond for CaptureAccept {
+            fn respond(&self, req: &Request) -> ResponseTemplate {
+                let ae = req
+                    .headers
+                    .get("accept-encoding")
+                    .and_then(|v| v.to_str().ok())
+                    .map(String::from);
+                *self.0.lock().unwrap() = ae;
+                ResponseTemplate::new(200).set_body_bytes("ok")
+            }
+        }
+
+        let captured = StdArc::new(std::sync::Mutex::new(None));
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .respond_with(CaptureAccept(captured.clone()))
+            .mount(&server)
+            .await;
+
+        let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
+        f.fetch(
+            &format!("{}/x", server.uri()),
+            &ConditionalHeaders::default(),
+        )
+        .await
+        .unwrap();
+
+        let ae = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request must carry an Accept-Encoding header");
+        assert!(
+            ae.contains("gzip"),
+            "Accept-Encoding should advertise gzip, got {ae:?}"
+        );
     }
 
     #[tokio::test]
