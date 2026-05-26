@@ -18,7 +18,7 @@ publish = false
 # HTTP/2 — its framing, multiplexing, and HTTP semantics are wasted overhead
 # for a single-host, owner-only socket, and pulling it in would force a
 # tokio + hyper dep tree we don't need on the CLI hot path.
-prost = "0.13"
+prost = "0.14"
 
 # `zeroize` lets us mark credential-bearing types with `ZeroizeOnDrop` so
 # decrypted secrets are wiped from memory when the message is dropped. The

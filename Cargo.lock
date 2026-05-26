@@ -365,7 +365,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "libc",
- "prost 0.13.5",
+ "prost 0.14.3",
  "prost-build 0.13.5",
  "protoc-bin-vendored",
  "tempfile",
