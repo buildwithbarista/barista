@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-05-26
+
+Second public alpha. Still early-stage: exercised on a limited set of projects and not yet
+hardened against the diversity of real-world Maven builds. Not recommended for production.
+Surfaces and formats may still change. Feedback and bug reports are welcome.
+
+### Added
+
+- HTTP content-compression negotiation: the upstream fetcher now advertises `Accept-Encoding:
+  gzip` and transparently inflates POM, `maven-metadata.xml`, and repo-manager responses.
+- HTTP/2 is the default for upstream fetches (ALPN-negotiated, with HTTP/1.1 fallback) with
+  explicit connection-pool persistence, reducing connection churn across a resolve burst.
+- Dual-format SBOMs: every published artifact now ships both a CycloneDX and an SPDX SBOM
+  (release archives and the container image), signed/attested.
+- Benchmark methodology + reference-hardware specification (`docs/perf/methodology.md`).
+- Ecosystem-change proposals catalog (`docs/efficiency/ecosystem-proposals/`).
+
+### Fixed
+
+- Cache index journal: serialize writes across processes with an advisory lock to prevent a
+  torn journal tail when concurrent processes share a cache.
+- Daemon launcher fast-fails on a startup crash with actionable stderr.
+- `barista pull` auto-creates the `.mvn/` reactor-root marker.
+- Numerous build, clippy, and CI-correctness fixes.
+
+### Changed
+
+- Dependency refreshes across the Rust workspace and the barback Java module.
+- Hardened CI/security scanning (secret scanning, SCA, SAST, SBOM, workflow linting).
+
 ## [0.1.0-alpha.1] - 2026-05-21
 
 First public alpha. Barista is a fast, Maven-compatible build tool for the JVM — a drop-in
