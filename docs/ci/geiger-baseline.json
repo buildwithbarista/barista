@@ -2,7 +2,7 @@
   "schema": 1,
   "tool": "count-unsafe.py",
   "totals": {
-    "barista-cache": 1,
+    "barista-cache": 2,
     "barista-cli": 14,
     "barista-ipc": 27,
     "barista-pom": 2,
