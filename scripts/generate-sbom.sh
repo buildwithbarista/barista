@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
-# CycloneDX SBOM generation + validation for the Barista product.
+# Dual-format (CycloneDX + SPDX) SBOM generation + validation for the
+# Barista product.
+#
+# CycloneDX is the precise per-dependency-graph format (cargo-cyclonedx +
+# cyclonedx-maven-plugin, merged); SPDX is added via syft so every
+# published artifact carries BOTH formats (C.4 T7 / PRD §19). The
+# CycloneDX SBOMs are schema-validated by the CycloneDX CLI; the SPDX
+# SBOM is structure-validated here (full schema validation is a documented
+# follow-up — see validate_spdx_sbom).
 #
 # This is the single source of truth for the supply-chain SBOM: the
 # same script runs locally (to let a maintainer reproduce the published
@@ -24,6 +32,10 @@
 #                      a copy of the Rust SBOM.
 #   --no-merge         Skip the product merge; co-publish the per-language
 #                      SBOMs side by side only.
+#   --no-spdx          Skip the SPDX SBOM step (needs `syft` on PATH or
+#                      $SYFT). Use for a CycloneDX-only local run when
+#                      syft is unavailable; the CI pipeline always emits
+#                      both formats.
 #   --self-test        Run the testable contract instead of a normal
 #                      generation: (a) generate + validate the real SBOM
 #                      and assert it is VALID; (b) feed a deliberately
@@ -83,6 +95,7 @@ OUT_DIR="dist"
 RUST_ONLY=0
 DO_MERGE=1
 SELF_TEST=0
+DO_SPDX=1
 
 die() {
     echo "generate-sbom: error: $1" >&2
@@ -99,6 +112,7 @@ while [[ $# -gt 0 ]]; do
         --out-dir)   OUT_DIR="${2:-}"; shift 2 ;;
         --rust-only) RUST_ONLY=1; shift ;;
         --no-merge)  DO_MERGE=0; shift ;;
+        --no-spdx)   DO_SPDX=0; shift ;;
         --self-test) SELF_TEST=1; shift ;;
         -h|--help)   usage; exit 0 ;;
         *)           die "unknown argument: $1 (try --help)" ;;
@@ -140,6 +154,29 @@ mkdir -p "$OUT_DIR"
 PRODUCT_SBOM="${OUT_DIR}/barista-${VERSION}-sbom.cdx.json"
 RUST_SBOM="${OUT_DIR}/barista-${VERSION}-sbom-rust.cdx.json"
 JAVA_SBOM="${OUT_DIR}/barista-${VERSION}-sbom-java.cdx.json"
+# SPDX product SBOM (syft scan of the source tree). Co-published with the
+# CycloneDX set so every release artifact carries both formats.
+SPDX_SBOM="${OUT_DIR}/barista-${VERSION}-sbom.spdx.json"
+
+# ---------------------------------------------------------------------
+# Locate syft (the SPDX generator), unless --no-spdx was passed.
+#
+# Order: explicit $SYFT, then `syft` on PATH. The CI pipeline installs a
+# pinned, sha256-verified syft binary; a local run without syft can pass
+# --no-spdx to emit CycloneDX only.
+# ---------------------------------------------------------------------
+SYFT_BIN=""
+if [[ "$DO_SPDX" -eq 1 ]]; then
+    SYFT_BIN="${SYFT:-}"
+    if [[ -z "$SYFT_BIN" ]]; then
+        if command -v syft >/dev/null 2>&1; then
+            SYFT_BIN="syft"
+        else
+            die "syft not found (set \$SYFT or put 'syft' on PATH), or pass --no-spdx. \
+Install the pinned anchore/syft v1.44.0 release binary."
+        fi
+    fi
+fi
 
 # ---------------------------------------------------------------------
 # validate_sbom <path> — run the external-tool validation gate.
@@ -260,6 +297,48 @@ merge_product_sbom() {
 }
 
 # ---------------------------------------------------------------------
+# validate_spdx_sbom <path> — structural validation of an SPDX-JSON SBOM.
+#
+# syft emits schema-valid SPDX by construction; this gate guards against
+# an empty/garbled document (a silent syft failure, a truncated write)
+# rather than full SPDX schema conformance. It asserts: parseable JSON,
+# an `SPDX-*` spdxVersion, a document SPDXID, a non-empty packages list,
+# and a creationInfo block. Full JSON-schema validation (e.g. via
+# `sbom-utility`) is a documented follow-up — it would add another pinned
+# tool, which this v0.1 gate deliberately avoids by reusing python3.
+# ---------------------------------------------------------------------
+validate_spdx_sbom() {
+    local path="$1"
+    [[ -f "$path" ]] || die "expected SPDX SBOM not found: $path"
+    echo "=== validate (SPDX, structural): ${path} ==="
+    python3 - "$path" <<'PY' || die "SPDX structural validation rejected $1"
+import json, sys
+with open(sys.argv[1]) as f:
+    doc = json.load(f)
+ver = doc.get("spdxVersion", "")
+assert isinstance(ver, str) and ver.startswith("SPDX-"), f"bad spdxVersion: {ver!r}"
+assert doc.get("SPDXID"), "missing document SPDXID"
+assert isinstance(doc.get("packages"), list) and doc["packages"], "missing/empty packages[]"
+assert isinstance(doc.get("creationInfo"), dict) and doc["creationInfo"], "missing creationInfo"
+print(f"SPDX ok: {ver}, {len(doc['packages'])} packages")
+PY
+}
+
+# ---------------------------------------------------------------------
+# generate_spdx_sbom — syft scan of the source tree -> SPDX-JSON.
+#
+# Scans `dir:.` so the SPDX SBOM reflects the same locked source the
+# CycloneDX SBOMs describe. The CycloneDX set stays the precise
+# dependency-graph SBOM; SPDX is the second format every artifact ships.
+# ---------------------------------------------------------------------
+generate_spdx_sbom() {
+    echo "=== syft scan dir:. -o spdx-json -> ${SPDX_SBOM} ==="
+    "$SYFT_BIN" scan dir:. -o "spdx-json=${SPDX_SBOM}" \
+        || die "syft SPDX generation failed"
+    validate_spdx_sbom "$SPDX_SBOM"
+}
+
+# ---------------------------------------------------------------------
 # run_generation — the normal path.
 # ---------------------------------------------------------------------
 run_generation() {
@@ -270,10 +349,15 @@ run_generation() {
         echo "=== --rust-only: skipping the Java SBOM step ==="
     fi
     merge_product_sbom
+    if [[ "$DO_SPDX" -eq 1 ]]; then
+        generate_spdx_sbom
+    else
+        echo "=== --no-spdx: skipping the SPDX SBOM step ==="
+    fi
 
     echo ""
     echo "=== SBOM artifacts written to ${OUT_DIR}/ ==="
-    ls -1 "$OUT_DIR"/barista-"${VERSION}"-sbom*.cdx.json
+    ls -1 "$OUT_DIR"/barista-"${VERSION}"-sbom*.json
 }
 
 # ---------------------------------------------------------------------
@@ -282,8 +366,10 @@ run_generation() {
 #   (a) generate + validate the real SBOM(s) -> assert VALID.
 #   (b) feed a deliberately-corrupted CycloneDX fixture to
 #       `cyclonedx validate` -> assert REJECTED (non-zero).
+#   (c) feed a corrupted SPDX fixture to the structural validator ->
+#       assert REJECTED (skipped under --no-spdx).
 #
-# Honors --rust-only for (a).
+# Honors --rust-only for (a) and --no-spdx for (a) + (c).
 # ---------------------------------------------------------------------
 run_self_test() {
     echo "########################################################"
@@ -331,6 +417,35 @@ PY
 The validation gate is broken (missing --fail-on-errors?)."
     fi
     echo "self-test (b) PASS: corrupted SBOM was rejected."
+
+    if [[ "$DO_SPDX" -eq 1 ]]; then
+        echo ""
+        echo "########################################################"
+        echo "# SBOM self-test (c): corrupted SPDX is REJECTED       #"
+        echo "########################################################"
+        local spdx_corrupt="${tmp}/corrupt.spdx.json"
+        # Derive from the real, just-validated SPDX so the only fault is
+        # the broken spec identity + emptied packages.
+        python3 - "$SPDX_SBOM" "$spdx_corrupt" <<'PY'
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+with open(src) as f:
+    doc = json.load(f)
+doc["spdxVersion"] = "NOPE"
+doc["packages"] = []
+with open(dst, "w") as f:
+    json.dump(doc, f)
+PY
+        set +e
+        ( validate_spdx_sbom "$spdx_corrupt" ) >/dev/null 2>&1
+        rc=$?
+        set -e
+        echo "SPDX structural validation exit on corrupted fixture: ${rc} (expect non-zero)"
+        if [[ "$rc" -eq 0 ]]; then
+            die "self-test (c) FAILED: SPDX validation accepted a corrupted document."
+        fi
+        echo "self-test (c) PASS: corrupted SPDX was rejected."
+    fi
 
     echo ""
     echo "=== SBOM self-test PASS: valid accepted, corrupted rejected ==="
