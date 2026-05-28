@@ -29,6 +29,12 @@ use reqwest::header::{
 use reqwest::{Client, ClientBuilder};
 use tokio::sync::Semaphore;
 
+/// How long an idle pooled connection is kept alive for reuse. Sized to
+/// comfortably outlast a single build's resolve burst so the many
+/// fetches of a cold build reuse one connection per host instead of
+/// churning fresh TCP/TLS handshakes (PRD §18.5 O-PROTO-01).
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// Tunable knobs for the fetcher. These map 1:1 onto the network
 /// section of the user-facing config; the cache crate keeps its own
 /// struct so the fetcher does not depend on `barista-config`.
@@ -39,8 +45,12 @@ pub struct FetchConfig {
     pub max_concurrent_connections: u32,
     /// Per-request timeout applied by the HTTP client.
     pub request_timeout: Duration,
-    /// If `true`, force HTTP/2 (prior knowledge). Tests against
-    /// legacy HTTP/1.1 mocks set this to `false`.
+    /// If `true` (the default), prefer HTTP/2: the client negotiates
+    /// `h2` via ALPN over TLS and falls back to HTTP/1.1 only when the
+    /// host declines it (PRD §18.5 O-PROTO-01). This is ALPN-negotiated,
+    /// not prior-knowledge, so it is safe against HTTP/1.1-only hosts.
+    /// If `false`, the client is pinned to HTTP/1.1 — tests against
+    /// legacy HTTP/1.1 mocks set this.
     pub http2_enabled: bool,
     /// User-Agent header sent with every request.
     pub user_agent: String,
@@ -128,10 +138,29 @@ impl Fetcher {
         let mut builder = ClientBuilder::new()
             .timeout(config.request_timeout)
             .user_agent(config.user_agent.clone())
+            // O-XFER-02 (PRD §18.4): negotiate content compression so
+            // text resources (POMs, maven-metadata.xml, repo-manager
+            // JSON) come down compressed. `reqwest`'s `gzip` feature
+            // advertises `Accept-Encoding: gzip` on every request that
+            // doesn't set the header itself and transparently inflates
+            // the response, so callers still see a plain byte stream.
+            // gzip is the universally-supported codec and matches the
+            // Maven 3.9.x baseline; zstd/brotli negotiation is sequenced
+            // after the HTTP/2-default work (see EFF-2026-003).
+            .gzip(true)
             // Honor pool size in the same ballpark as the semaphore;
             // the semaphore is the source of truth for the ceiling.
-            .pool_max_idle_per_host(config.max_concurrent_connections as usize);
+            .pool_max_idle_per_host(config.max_concurrent_connections as usize)
+            // Keep idle connections warm across the resolve burst so a
+            // cold build reuses connections instead of churning new
+            // handshakes (O-PROTO-01 persistent connections).
+            .pool_idle_timeout(POOL_IDLE_TIMEOUT);
         if config.http2_enabled {
+            // O-PROTO-01 (PRD §18.5): prefer HTTP/2. `reqwest` negotiates
+            // `h2` via ALPN over TLS and falls back to HTTP/1.1 when the
+            // host declines, so this is safe against HTTP/1.1-only hosts
+            // (no prior-knowledge forcing). The adaptive window lets a
+            // single multiplexed connection carry the whole fetch fan-out.
             builder = builder.http2_adaptive_window(true);
         } else {
             builder = builder.http1_only();
@@ -318,6 +347,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn default_config_prefers_http2() {
+        // O-PROTO-01: HTTP/2 is the default preference (ALPN-negotiated).
+        assert!(FetchConfig::default().http2_enabled);
+    }
+
+    #[tokio::test]
+    async fn sequential_fetches_reuse_pooled_client() {
+        // O-PROTO-01 persistent connections: a burst of fetches through
+        // one Fetcher rides the shared, pooled client. wiremock can't
+        // surface the OS-level connection count, so this exercises the
+        // reuse path by confirming a multi-fetch burst all succeeds; the
+        // bound on *simultaneous* connections is proven separately by
+        // `concurrent_connection_ceiling_is_enforced`.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/a"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes("x"))
+            .mount(&server)
+            .await;
+        let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
+        for _ in 0..3 {
+            let out = f
+                .fetch(
+                    &format!("{}/a", server.uri()),
+                    &ConditionalHeaders::default(),
+                )
+                .await
+                .unwrap();
+            assert!(matches!(out, FetchOutcome::Fresh { .. }));
+        }
+    }
+
+    #[tokio::test]
     async fn fetch_200_returns_fresh_bytes() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -338,6 +400,100 @@ mod tests {
             FetchOutcome::Fresh { bytes, .. } => assert_eq!(bytes.as_ref(), b"hello"),
             _ => panic!("expected Fresh"),
         }
+    }
+
+    // --- O-XFER-02 compression negotiation (PRD §18.4, EFF-2026-003) ---
+
+    #[tokio::test]
+    async fn gzip_response_is_transparently_decompressed() {
+        use flate2::Compression;
+        use flate2::write::GzEncoder;
+        use std::io::Write as _;
+
+        // A repetitive maven-metadata-shaped payload so gzip genuinely
+        // shrinks the wire bytes (the whole point of O-XFER-02).
+        let plaintext = "<metadata><versioning><versions>".to_string()
+            + &"<version>1.0.0</version>".repeat(200)
+            + "</versions></versioning></metadata>";
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(plaintext.as_bytes()).unwrap();
+        let gzipped = enc.finish().unwrap();
+        assert!(
+            gzipped.len() < plaintext.len(),
+            "fixture should compress: {} gz vs {} raw",
+            gzipped.len(),
+            plaintext.len()
+        );
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/meta"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Encoding", "gzip")
+                    .set_body_bytes(gzipped),
+            )
+            .mount(&server)
+            .await;
+
+        let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
+        let out = f
+            .fetch(
+                &format!("{}/meta", server.uri()),
+                &ConditionalHeaders::default(),
+            )
+            .await
+            .unwrap();
+        // The caller sees the inflated plaintext, with no awareness of
+        // the transport encoding.
+        match out {
+            FetchOutcome::Fresh { bytes, .. } => {
+                assert_eq!(bytes.as_ref(), plaintext.as_bytes())
+            }
+            _ => panic!("expected Fresh"),
+        }
+    }
+
+    #[tokio::test]
+    async fn requests_advertise_gzip_accept_encoding() {
+        struct CaptureAccept(StdArc<std::sync::Mutex<Option<String>>>);
+        impl Respond for CaptureAccept {
+            fn respond(&self, req: &Request) -> ResponseTemplate {
+                let ae = req
+                    .headers
+                    .get("accept-encoding")
+                    .and_then(|v| v.to_str().ok())
+                    .map(String::from);
+                *self.0.lock().unwrap() = ae;
+                ResponseTemplate::new(200).set_body_bytes("ok")
+            }
+        }
+
+        let captured = StdArc::new(std::sync::Mutex::new(None));
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/x"))
+            .respond_with(CaptureAccept(captured.clone()))
+            .mount(&server)
+            .await;
+
+        let f = Fetcher::new(test_config(&server, 4, 5_000)).unwrap();
+        f.fetch(
+            &format!("{}/x", server.uri()),
+            &ConditionalHeaders::default(),
+        )
+        .await
+        .unwrap();
+
+        let ae = captured
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request must carry an Accept-Encoding header");
+        assert!(
+            ae.contains("gzip"),
+            "Accept-Encoding should advertise gzip, got {ae:?}"
+        );
     }
 
     #[tokio::test]

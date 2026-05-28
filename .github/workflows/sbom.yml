@@ -107,6 +107,12 @@ jobs:
       CYCLONEDX_CLI_VERSION: '0.32.0'
       CYCLONEDX_CLI_SHA256: '454879e6a4a405c8a13bff49b8982adcb0596f3019b26b0811c66e4d7f0783e1'
       CARGO_CYCLONEDX_VERSION: '0.5.9'
+      # syft — the SPDX generator (C.4 T7 dual-format SBOMs). Pinned
+      # release + the linux-amd64 tarball sha256 from the release's signed
+      # checksums.txt. When bumping SYFT_VERSION, refresh SYFT_AMD64_SHA256
+      # from `syft_<ver>_checksums.txt`.
+      SYFT_VERSION: '1.44.0'
+      SYFT_AMD64_SHA256: '0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -141,12 +147,26 @@ jobs:
           chmod 0755 "${HOME}/.local/bin/cyclonedx"
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Install syft (pinned release, sha256-verified)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.local/bin"
+          TARBALL="syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          URL="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/${TARBALL}"
+          curl -fsSL "$URL" -o "/tmp/${TARBALL}"
+          echo "${SYFT_AMD64_SHA256}  /tmp/${TARBALL}" | sha256sum -c -
+          tar -xzf "/tmp/${TARBALL}" -C "${HOME}/.local/bin" syft
+          chmod 0755 "${HOME}/.local/bin/syft"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
       - name: Verify tool versions
         shell: bash
         run: |
           set -euo pipefail
           cargo cyclonedx --version
           cyclonedx --version
+          syft version
           mvn -v | head -1
           java -version
 
@@ -163,7 +183,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom
-          path: dist/barista-*-sbom*.cdx.json
+          # Both formats: CycloneDX (*.cdx.json) + SPDX (*.spdx.json).
+          path: dist/barista-*-sbom*.json
           if-no-files-found: error
           retention-days: 7
 
@@ -202,8 +223,8 @@ jobs:
 
       - name: Sign SBOMs (keyless, Sigstore)
         shell: bash
-        # cosign keyless `sign-blob` over each CycloneDX SBOM proves the
-        # SBOM was produced by this repo's release workflow. The
+        # cosign keyless `sign-blob` over each SBOM (CycloneDX + SPDX)
+        # proves the SBOM was produced by this repo's release workflow. The
         # self-contained `*.cosign.bundle` verifies on a clean machine:
         #   cosign verify-blob --bundle <sbom>.cosign.bundle \
         #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
@@ -217,7 +238,7 @@ jobs:
           cd dist
           shopt -s nullglob
           signed=0
-          for f in barista-*-sbom*.cdx.json; do
+          for f in barista-*-sbom*.json; do
             cosign sign-blob --yes --bundle "${f}.cosign.bundle" "${f}"
             signed=$((signed + 1))
           done
@@ -234,7 +255,7 @@ jobs:
           # the release the `release.yml` pipeline created for this tag.
           # Other assets (binaries, build manifest) are left untouched.
           files: |
-            dist/barista-*-sbom*.cdx.json
-            dist/barista-*-sbom*.cdx.json.cosign.bundle
+            dist/barista-*-sbom*.json
+            dist/barista-*-sbom*.json.cosign.bundle
           prerelease: ${{ contains(github.ref_name, '-rc.') || contains(github.ref_name, '-alpha.') || contains(github.ref_name, '-beta.') }}
           fail_on_unmatched_files: true

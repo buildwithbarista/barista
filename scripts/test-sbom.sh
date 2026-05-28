@@ -23,6 +23,10 @@
 #                           half of (a)). Set this when no JDK / Maven is
 #                           available; the corrupted-fixture half (b)
 #                           still runs against the Rust/product SBOM.
+#   SBOM_TEST_NO_SPDX=1     Skip the SPDX half (generation + the
+#                           corrupted-SPDX case (c)). Set this when `syft`
+#                           is unavailable locally; the CI pipeline always
+#                           runs the SPDX path.
 #   SBOM_TEST_OUT_DIR=<dir> Output directory for the generated SBOMs.
 #                           Default: a throwaway temp dir (cleaned up).
 #   CYCLONEDX_CLI=<path>    Path to the cyclonedx CLI binary if not on
@@ -57,6 +61,9 @@ trap cleanup EXIT
 ARGS=(--self-test --out-dir "$OUT_DIR")
 if [[ "${SBOM_TEST_RUST_ONLY:-0}" == "1" ]]; then
     ARGS+=(--rust-only)
+fi
+if [[ "${SBOM_TEST_NO_SPDX:-0}" == "1" ]]; then
+    ARGS+=(--no-spdx)
 fi
 
 echo "=== scripts/test-sbom.sh: running generate-sbom.sh ${ARGS[*]} ==="

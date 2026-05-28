@@ -44,6 +44,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -116,6 +117,15 @@ pub enum JournalError {
         /// Decoder/encoder diagnostic message.
         detail: String,
     },
+    /// The cross-process journal lock could not be acquired within the
+    /// timeout — another process is holding it for longer than expected.
+    #[error("timed out after {seconds}s acquiring journal lock at {path:?}")]
+    LockTimeout {
+        /// Path of the `.lock` file that is contended.
+        path: PathBuf,
+        /// Number of seconds waited before giving up.
+        seconds: u64,
+    },
 }
 
 /// A single mutation of the cache index.
@@ -142,14 +152,131 @@ pub enum JournalEntry {
     },
 }
 
+/// Default time to wait for the cross-process journal lock before
+/// giving up with [`JournalError::LockTimeout`]. Generous enough to sit
+/// behind another process finishing a full `barista pull`, short enough
+/// that a genuinely wedged (not crashed) holder can't hang us forever.
+/// A *crashed* holder never reaches this: `flock` releases automatically
+/// when the owning process dies.
+const LOCK_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Cross-process exclusive lock guarding a single journal write or
+/// truncation. Acquired transiently at the start of each mutating
+/// operation and released when this RAII guard drops at the end of it.
+///
+/// `barista pull` is a one-shot process and the cache journal has no
+/// other cross-process serialization. Two unsynchronized writers against
+/// the same cache otherwise race on the file offset and interleave each
+/// other's `len|payload|crc` triples, leaving a tail that doesn't parse.
+/// Taking this lock around every append + truncate serializes the actual
+/// file mutations across processes so that can't happen. The lock lives
+/// on a sibling `.lock` file (never the journal itself) so reader fds
+/// opened for iteration are never blocked.
+///
+/// Locking per-operation (rather than for the journal's whole lifetime)
+/// is deliberate: it mirrors the per-fetch locking in [`crate::lock`] and
+/// lets a single process legitimately hold more than one read-mostly
+/// [`Index`](crate::index::Index) handle on the same cache without
+/// self-deadlocking — only the brief mutation windows contend.
+///
+/// Implemented on top of [`fd_lock::RwLock`], mirroring the
+/// self-referential held-lock pattern in [`crate::lock`].
+struct JournalLock {
+    // Drop order matters: `_guard` must drop (release the flock) before
+    // `_lock` frees the `RwLock` it borrows from and the file closes.
+    _guard: fd_lock::RwLockWriteGuard<'static, File>,
+    _lock: Box<fd_lock::RwLock<File>>,
+}
+
+impl std::fmt::Debug for JournalLock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JournalLock").finish_non_exhaustive()
+    }
+}
+
+impl JournalLock {
+    /// Acquire the exclusive lock at `lock_path`, polling a non-blocking
+    /// `try_write` with sleep-backoff until it frees or `timeout` elapses.
+    ///
+    /// Polling (rather than a blocking `flock`) keeps the timeout
+    /// truthful: when the deadline passes there is no thread parked in
+    /// `flock(2)` still fighting for the lock.
+    fn acquire(lock_path: &Path, timeout: Duration) -> Result<Self, JournalError> {
+        let deadline = Instant::now() + timeout;
+        let mut backoff = Duration::from_millis(5);
+        loop {
+            if let Some(lock) = Self::try_acquire_once(lock_path)? {
+                return Ok(lock);
+            }
+            if Instant::now() >= deadline {
+                return Err(JournalError::LockTimeout {
+                    path: lock_path.to_path_buf(),
+                    seconds: timeout.as_secs(),
+                });
+            }
+            std::thread::sleep(backoff);
+            backoff = (backoff * 2).min(Duration::from_millis(100));
+        }
+    }
+
+    /// A single non-blocking acquisition attempt. Returns `Ok(Some)` on
+    /// success, `Ok(None)` if another holder currently has the lock, or
+    /// `Err` on a genuine I/O failure.
+    ///
+    /// Each attempt opens a fresh lock-file handle (matching the
+    /// single-attempt design in [`crate::lock`]) so the retry loop in
+    /// [`Self::acquire`] never re-borrows a live `RwLock` — that would
+    /// not satisfy the borrow checker with the `'static` guard below.
+    fn try_acquire_once(lock_path: &Path) -> Result<Option<Self>, JournalError> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)
+            .map_err(|e| JournalError::Io {
+                path: lock_path.to_path_buf(),
+                source: e,
+            })?;
+
+        let mut boxed: Box<fd_lock::RwLock<File>> = Box::new(fd_lock::RwLock::new(file));
+        // SAFETY: `boxed` is heap-allocated and stored in the returned
+        // struct alongside the guard. The guard borrows the `RwLock`,
+        // which outlives it because `Drop` runs fields in declaration
+        // order (`_guard` before `_lock`). The `RwLock` is never exposed,
+        // so no other reference can outlive the guard.
+        let lock_ref: &'static mut fd_lock::RwLock<File> = unsafe {
+            let ptr: *mut fd_lock::RwLock<File> = &mut *boxed;
+            &mut *ptr
+        };
+        match lock_ref.try_write() {
+            Ok(guard) => Ok(Some(Self {
+                _guard: guard,
+                _lock: boxed,
+            })),
+            // `fd-lock` 4.x maps a contended non-blocking
+            // `flock`/`LockFileEx` to `WouldBlock` on Unix + Windows.
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(e) => Err(JournalError::Io {
+                path: lock_path.to_path_buf(),
+                source: e,
+            }),
+        }
+    }
+}
+
 /// The append-only journal file.
 ///
 /// Multiple [`Index`](crate::index::Index) handles can share one
 /// `Journal` through an `Arc`; concurrent appenders serialize through
-/// the internal `Mutex`.
+/// the internal `Mutex`. Across *processes*, each mutation takes a
+/// transient [`JournalLock`] on the sibling `.lock` file so writers
+/// cannot corrupt the tail.
 #[derive(Debug)]
 pub struct Journal {
     path: PathBuf,
+    /// Sibling `.lock` file the cross-process [`JournalLock`] is taken on.
+    lock_path: PathBuf,
     write_handle: Mutex<BufWriter<File>>,
 }
 
@@ -160,10 +287,23 @@ impl Journal {
     /// `fsync`ed before the call returns. Otherwise the magic and
     /// version word are validated; mismatches surface as
     /// [`JournalError::BadMagic`] / [`JournalError::UnsupportedVersion`].
+    ///
+    /// The fresh-file header initialization is serialized across
+    /// processes via a transient [`JournalLock`] on a sibling `.lock`
+    /// file, so two processes racing to create the same cache can't both
+    /// write a header. Subsequent mutations re-take that lock per
+    /// operation (see [`Self::append`]).
     pub fn open(path: &Path) -> Result<Self, JournalError> {
+        let lock_path = lock_path_for(path);
+
+        // Open in append mode: O_APPEND makes every write land at the
+        // current EOF, so even if the advisory lock is ever unenforced
+        // (e.g. NFS), records are never written over a stale cached
+        // offset. Combined with the single-`write_all` record assembly in
+        // `append`, each record reaches the file as one write at EOF.
         let mut file = OpenOptions::new()
             .read(true)
-            .write(true)
+            .append(true)
             .create(true)
             .truncate(false)
             .open(path)
@@ -172,6 +312,9 @@ impl Journal {
                 source: e,
             })?;
 
+        // Hold the cross-process lock across the empty-file check + header
+        // write so the initialization is atomic between racing creators.
+        let _init_lock = JournalLock::acquire(&lock_path, LOCK_ACQUIRE_TIMEOUT)?;
         let len = file
             .metadata()
             .map_err(|e| JournalError::Io {
@@ -197,9 +340,11 @@ impl Journal {
             path: path.to_path_buf(),
             source: e,
         })?;
+        drop(_init_lock);
 
         Ok(Self {
             path: path.to_path_buf(),
+            lock_path,
             write_handle: Mutex::new(BufWriter::new(file)),
         })
     }
@@ -207,9 +352,12 @@ impl Journal {
     /// Append one entry. Returns the file offset at which the record's
     /// length prefix landed.
     ///
-    /// The append is flushed and `fsync`ed before return so an
-    /// in-progress write cannot be observed as committed by a later
-    /// reader.
+    /// Takes the cross-process [`JournalLock`] for the duration of the
+    /// write, then re-seeks to the true end of file under that lock so
+    /// the recorded offset and the written bytes agree even if another
+    /// process appended since this handle last wrote. The append is
+    /// flushed and `fsync`ed before return so an in-progress write cannot
+    /// be observed as committed by a later reader.
     pub fn append(&self, entry: &JournalEntry) -> Result<u64, JournalError> {
         let payload = encode_payload(entry, 0)?;
         let crc = crc32fast::hash(&payload);
@@ -218,25 +366,37 @@ impl Journal {
             detail: "payload exceeds u32::MAX bytes".to_string(),
         })?;
 
+        // Acquire the cross-process lock first, then the in-process mutex.
+        // This ordering is consistent across every mutating method so the
+        // two locks never deadlock against each other.
+        let _xlock = JournalLock::acquire(&self.lock_path, LOCK_ACQUIRE_TIMEOUT)?;
         let mut guard = self.write_handle.lock().expect("journal mutex poisoned");
-        // Flush any buffered writes so we know our true file position
-        // before recording it.
+        // Flush any buffered writes, then re-seek to the real EOF. Under
+        // O_APPEND the bytes always land at EOF regardless, but another
+        // process may have grown the file since our cached offset was
+        // last updated — re-seeking makes the offset we *return* truthful.
         guard.flush().map_err(|e| JournalError::Io {
             path: self.path.clone(),
             source: e,
         })?;
         let offset = guard
-            .get_ref()
-            .stream_position()
+            .get_mut()
+            .seek(SeekFrom::End(0))
             .map_err(|e| JournalError::Io {
                 path: self.path.clone(),
                 source: e,
             })?;
 
+        // Assemble the whole record into one buffer and emit it with a
+        // single `write_all`, so a record reaches the file as one
+        // contiguous append rather than three separate writes that a
+        // concurrent (or crash-interrupted) writer could interleave.
+        let mut record = Vec::with_capacity(4 + payload.len() + 4);
+        record.extend_from_slice(&len.to_le_bytes());
+        record.extend_from_slice(&payload);
+        record.extend_from_slice(&crc.to_le_bytes());
         guard
-            .write_all(&len.to_le_bytes())
-            .and_then(|()| guard.write_all(&payload))
-            .and_then(|()| guard.write_all(&crc.to_le_bytes()))
+            .write_all(&record)
             .and_then(|()| guard.flush())
             .map_err(|e| JournalError::Io {
                 path: self.path.clone(),
@@ -303,6 +463,7 @@ impl Journal {
     /// clamped up so the file header is never destroyed.
     pub fn truncate_to(&self, offset: u64) -> Result<(), JournalError> {
         let target = offset.max(HEADER_LEN);
+        let _xlock = JournalLock::acquire(&self.lock_path, LOCK_ACQUIRE_TIMEOUT)?;
         let mut guard = self.write_handle.lock().expect("journal mutex poisoned");
         guard.flush().map_err(|e| JournalError::Io {
             path: self.path.clone(),
@@ -327,6 +488,7 @@ impl Journal {
     /// Truncate the file back to a bare header. Called after a
     /// successful snapshot rewrite.
     pub fn truncate(&self) -> Result<(), JournalError> {
+        let _xlock = JournalLock::acquire(&self.lock_path, LOCK_ACQUIRE_TIMEOUT)?;
         let mut guard = self.write_handle.lock().expect("journal mutex poisoned");
         guard.flush().map_err(|e| JournalError::Io {
             path: self.path.clone(),
@@ -357,6 +519,16 @@ impl Journal {
     /// Path this journal was opened at.
     pub fn path(&self) -> &Path {
         &self.path
+    }
+}
+
+/// Sibling lock-file path for a journal at `path`: `<dir>/.lock`. The
+/// lock is deliberately a separate file from the journal so iteration's
+/// read fds are never blocked by the writer's advisory lock.
+fn lock_path_for(path: &Path) -> PathBuf {
+    match path.parent() {
+        Some(dir) => dir.join(".lock"),
+        None => PathBuf::from(".lock"),
     }
 }
 
@@ -771,5 +943,109 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert_eq!(entries.len(), 2);
+    }
+
+    // --- Cross-process / multi-handle write safety (T12) -------------
+    //
+    // The reported bug: two unsynchronized `barista pull` processes
+    // against the same cache raced on the journal's cached write offset
+    // and overwrote each other's records, leaving a tail that doesn't
+    // parse. These tests reproduce the same hazard *in-process* via two
+    // independent `Journal` handles on one path (each handle has its own
+    // fd + cached offset, exactly like two processes) and assert the
+    // cross-process lock + seek-to-EOF + single-`write_all` fix keeps
+    // every record intact. Without the fix they fail: the second
+    // appender writes over the first at a stale offset.
+
+    #[test]
+    fn second_handle_on_same_path_opens_without_deadlock() {
+        // Per-operation (not lifetime) locking must let one process hold
+        // two handles on the same journal at once — `Index` reopen paths
+        // and verification helpers rely on this.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("journal.log");
+        let _a = Journal::open(&path).unwrap();
+        let _b = Journal::open(&path).unwrap();
+    }
+
+    #[test]
+    fn two_handles_alternating_appends_do_not_corrupt_tail() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("journal.log");
+        let a = Journal::open(&path).unwrap();
+        let b = Journal::open(&path).unwrap();
+
+        // Alternate appends between the two handles. Each handle's cached
+        // offset goes stale the instant the *other* one appends; the fix
+        // re-seeks to true EOF under the lock so neither clobbers the
+        // other.
+        for i in 0..20u8 {
+            a.append(&JournalEntry::Put {
+                key: sample_key(&format!("a{i}")),
+                entry: sample_entry(i),
+            })
+            .unwrap();
+            b.append(&JournalEntry::Put {
+                key: sample_key(&format!("b{i}")),
+                entry: sample_entry(i),
+            })
+            .unwrap();
+        }
+        drop(a);
+        drop(b);
+
+        // Reopen and confirm all 40 records survived and parse cleanly —
+        // no `Truncated` / `BadChecksum` tail.
+        let j = Journal::open(&path).unwrap();
+        let entries: Vec<_> = j
+            .iter_entries()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("no torn or checksum-failed records");
+        assert_eq!(entries.len(), 40, "every alternating append must survive");
+    }
+
+    #[test]
+    fn concurrent_writers_from_separate_handles_keep_journal_parseable() {
+        use std::thread;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("journal.log");
+        // Initialize the header up front so neither thread sees an empty
+        // file (header init is itself locked, but this keeps the test
+        // focused on the append race).
+        drop(Journal::open(&path).unwrap());
+
+        const THREADS: u8 = 4;
+        const PER_THREAD: u8 = 25;
+        let mut handles = Vec::new();
+        for t in 0..THREADS {
+            let path = path.clone();
+            handles.push(thread::spawn(move || {
+                let j = Journal::open(&path).unwrap();
+                for i in 0..PER_THREAD {
+                    j.append(&JournalEntry::Put {
+                        key: sample_key(&format!("t{t}-{i}")),
+                        entry: sample_entry(i),
+                    })
+                    .unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let j = Journal::open(&path).unwrap();
+        let entries: Vec<_> = j
+            .iter_entries()
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("concurrent appends must not tear the journal");
+        assert_eq!(
+            entries.len(),
+            (THREADS as usize) * (PER_THREAD as usize),
+            "every concurrent append must be present exactly once"
+        );
     }
 }

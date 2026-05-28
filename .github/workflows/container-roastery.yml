@@ -30,9 +30,11 @@
 #
 #   - buildx emits an SPDX SBOM (`sbom: true`; BuildKit's syft scanner
 #     defaults to SPDX) and SLSA build provenance (`provenance: mode=max`),
-#     pushed to the registry attached to the image manifest. (A CycloneDX
-#     SBOM for the image is a planned addition so every artifact carries
-#     both formats.)
+#     pushed to the registry attached to the image manifest.
+#   - a CycloneDX SBOM is additionally generated (`syft scan` of the
+#     pushed image by digest) and attached as a cosign `--type cyclonedx`
+#     attestation, so the image — like the release archives — carries
+#     BOTH SBOM formats (C.4 T7).
 #   - the pushed image is signed by its immutable digest with Sigstore
 #     cosign, so `cosign verify` validates it against the GitHub Actions
 #     workflow identity.
@@ -211,3 +213,40 @@ jobs:
         run: |
           set -euo pipefail
           cosign sign --yes "ghcr.io/buildwithbarista/roastery@${DIGEST}"
+
+      # CycloneDX SBOM for the image (C.4 T7): buildx already attached an
+      # SPDX SBOM; this adds the second format. syft scans the pushed
+      # image by its immutable digest (using the GHCR login above for
+      # pull auth) and cosign attaches the result as a keyless CycloneDX
+      # attestation. Verify with:
+      #   cosign verify-attestation --type cyclonedx \
+      #     ghcr.io/buildwithbarista/roastery@<digest> \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     --certificate-identity-regexp '^https://github.com/buildwithbarista/barista/'
+      - name: Install syft (pinned release, sha256-verified)
+        if: github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista'
+        env:
+          SYFT_VERSION: '1.44.0'
+          SYFT_AMD64_SHA256: '0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a'
+        run: |
+          set -euo pipefail
+          mkdir -p "${HOME}/.local/bin"
+          TARBALL="syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          URL="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/${TARBALL}"
+          curl -fsSL "$URL" -o "/tmp/${TARBALL}"
+          echo "${SYFT_AMD64_SHA256}  /tmp/${TARBALL}" | sha256sum -c -
+          tar -xzf "/tmp/${TARBALL}" -C "${HOME}/.local/bin" syft
+          chmod 0755 "${HOME}/.local/bin/syft"
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Attest CycloneDX SBOM (keyless)
+        if: github.event_name != 'pull_request' && github.repository == 'buildwithbarista/barista'
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/buildwithbarista/roastery@${DIGEST}"
+          syft scan "registry:${IMAGE}" -o cyclonedx-json=roastery-sbom.cdx.json
+          cosign attest --yes --type cyclonedx \
+            --predicate roastery-sbom.cdx.json \
+            "${IMAGE}"
