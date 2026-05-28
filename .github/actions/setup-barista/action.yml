@@ -1,0 +1,44 @@
+name: Setup Barista
+description: Download, verify, and install the Barista CLI for use in a workflow.
+author: Barista
+branding:
+  icon: package
+  color: orange
+
+inputs:
+  version:
+    description: >-
+      Barista release version to install, without the leading v (e.g.
+      0.1.0-alpha.1). Use "latest" for the most recent release (prereleases
+      included).
+    required: false
+    default: latest
+  repository:
+    description: owner/repo to fetch Barista releases from.
+    required: false
+    default: buildwithbarista/barista
+  github-token:
+    description: >-
+      Token used for the releases API call (avoids unauthenticated rate
+      limits). Defaults to the workflow token.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The resolved Barista version that was installed.
+    value: ${{ steps.install.outputs.version }}
+  install-dir:
+    description: Directory Barista was installed into (contains bin/ and share/).
+    value: ${{ steps.install.outputs.install-dir }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: bash "${GITHUB_ACTION_PATH}/install.sh"

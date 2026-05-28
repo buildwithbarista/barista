@@ -1,0 +1,102 @@
+# End-to-end test + usage sample for the setup-barista composite action.
+#
+# Proves the action installs a published Barista release and that the installed
+# CLI runs a real build to completion: it uses the action to install Barista,
+# then runs `barista verify` against a minimal single-module Maven project
+# generated in the job. Runs on Linux and macOS.
+#
+# This doubles as the canonical usage example referenced by the action README.
+#
+# Every third-party action is pinned to a commit SHA with its tag in a comment
+# (repo convention); when bumping, update both the SHA and the comment.
+
+name: setup-barista E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/actions/setup-barista/**"
+      - ".github/workflows/setup-barista-test.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/actions/setup-barista/**"
+      - ".github/workflows/setup-barista-test.yml"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Barista version to install (without leading v), or "latest".
+        required: false
+        default: latest
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Barista runs builds on the JVM, so a JDK 17+ must be on the runner.
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - id: setup
+        uses: ./.github/actions/setup-barista
+        with:
+          version: ${{ github.event.inputs.version || 'latest' }}
+
+      - name: barista --version
+        run: |
+          barista --version
+          echo "installed ${{ steps.setup.outputs.version }} to ${{ steps.setup.outputs.install-dir }}"
+
+      - name: Generate a minimal Maven project
+        run: |
+          set -euo pipefail
+          # Maven 4 requires the project root to be identifiable: an empty
+          # .mvn/ directory marks it (the alternative is root="true" on the
+          # project model).
+          mkdir -p sample/.mvn sample/src/main/java/com/example
+          cat > sample/pom.xml <<'POM'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>com.example</groupId>
+            <artifactId>sample</artifactId>
+            <version>1.0.0</version>
+            <packaging>jar</packaging>
+            <properties>
+              <maven.compiler.release>17</maven.compiler.release>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+            </properties>
+          </project>
+          POM
+          cat > sample/src/main/java/com/example/App.java <<'JAVA'
+          package com.example;
+
+          public final class App {
+              public static void main(String[] args) {
+                  System.out.println("hello from barista");
+              }
+          }
+          JAVA
+
+      - name: barista pull (resolve dependencies + write barista.lock)
+        working-directory: sample
+        # verify requires a lockfile; pull resolves the dependency/plugin set
+        # and writes barista.lock first.
+        run: barista pull
+
+      - name: barista verify (end-to-end)
+        working-directory: sample
+        run: barista verify
