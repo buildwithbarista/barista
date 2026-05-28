@@ -61,7 +61,10 @@ jobs:
       - name: Generate a minimal Maven project
         run: |
           set -euo pipefail
-          mkdir -p sample/src/main/java/com/example
+          # Maven 4 requires the project root to be identifiable: an empty
+          # .mvn/ directory marks it (the alternative is root="true" on the
+          # project model).
+          mkdir -p sample/.mvn sample/src/main/java/com/example
           cat > sample/pom.xml <<'POM'
           <?xml version="1.0" encoding="UTF-8"?>
           <project xmlns="http://maven.apache.org/POM/4.0.0"
