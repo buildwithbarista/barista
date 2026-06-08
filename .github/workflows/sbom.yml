@@ -115,7 +115,7 @@ jobs:
       SYFT_AMD64_SHA256: '0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a'
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 

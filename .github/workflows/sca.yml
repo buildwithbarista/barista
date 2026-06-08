@@ -61,7 +61,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
       - name: Set up Python
@@ -77,7 +77,7 @@ jobs:
       - name: Run cargo-deny (gate)
         id: cargo-deny-gate
         continue-on-error: true
-        uses: EmbarkStudios/cargo-deny-action@a531616d8ce3b9177443e48a1159bc945a099823 # v2.0.19
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
           # Run all four checks; the default is `check` with no further args,
           # which expands to advisories + bans + licenses + sources.
@@ -100,7 +100,7 @@ jobs:
             < cargo-deny.json > cargo-deny.sarif
       - name: Upload cargo-deny SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: cargo-deny.sarif
           category: cargo-deny
@@ -172,7 +172,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
       - name: Run Trivy (filesystem scan, SARIF)
@@ -216,7 +216,7 @@ jobs:
         # Always upload, even when the scan step failed, so reviewers can
         # inspect the findings in the Security tab.
         if: always()
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs
