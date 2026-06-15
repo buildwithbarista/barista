@@ -37,7 +37,7 @@
           When updating, bump both this property and the regenerated
           `target/generated-sources/protobuf/**` (transient — see below).
         -->
-        <protobuf-java.version>4.35.0</protobuf-java.version>
+        <protobuf-java.version>4.35.1</protobuf-java.version>
         <!--
           ascopes/protobuf-maven-plugin: a scratch-built modern protoc
           plugin for Maven. Downloads protoc from Maven Central as a
@@ -64,7 +64,7 @@
             mvn -P sast verify
           The CI gate runs it on every PR.
         -->
-        <spotbugs-maven-plugin.version>4.9.8.3</spotbugs-maven-plugin.version>
+        <spotbugs-maven-plugin.version>4.10.2.0</spotbugs-maven-plugin.version>
         <findsecbugs-plugin.version>1.14.0</findsecbugs-plugin.version>
         <spotbugs.skip>true</spotbugs.skip>
         <!--
@@ -416,7 +416,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.5</version>
+                <version>3.5.6</version>
                 <configuration>
                     <!--
                       Pick up `*IT` integration tests alongside the
