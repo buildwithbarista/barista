@@ -37,7 +37,7 @@
           When updating, bump both this property and the regenerated
           `target/generated-sources/protobuf/**` (transient — see below).
         -->
-        <protobuf-java.version>4.35.0</protobuf-java.version>
+        <protobuf-java.version>4.35.1</protobuf-java.version>
         <!--
           ascopes/protobuf-maven-plugin: a scratch-built modern protoc
           plugin for Maven. Downloads protoc from Maven Central as a
@@ -45,7 +45,7 @@
           step, and supports Maven 3.9 + 4.x (matches the CI matrix).
           See https://github.com/ascopes/protobuf-maven-plugin.
         -->
-        <protobuf-maven-plugin.version>5.1.4</protobuf-maven-plugin.version>
+        <protobuf-maven-plugin.version>5.1.5</protobuf-maven-plugin.version>
         <!--
           OWASP Dependency-Check is wired up under the `dependency-check`
           profile below. Quick local builds (`mvn verify`) skip it by
@@ -64,7 +64,7 @@
             mvn -P sast verify
           The CI gate runs it on every PR.
         -->
-        <spotbugs-maven-plugin.version>4.9.8.3</spotbugs-maven-plugin.version>
+        <spotbugs-maven-plugin.version>4.10.2.0</spotbugs-maven-plugin.version>
         <findsecbugs-plugin.version>1.14.0</findsecbugs-plugin.version>
         <spotbugs.skip>true</spotbugs.skip>
         <!--
@@ -174,7 +174,7 @@
           `schemaVersion` is pinned explicitly below so a plugin bump
           can't silently change the emitted spec version.
         -->
-        <cyclonedx-maven-plugin.version>2.9.1</cyclonedx-maven-plugin.version>
+        <cyclonedx-maven-plugin.version>2.9.2</cyclonedx-maven-plugin.version>
         <!--
           SBOM generation is wired up under the `sbom` profile below.
           Same pattern as dependency-check / sast: skipped by default
@@ -416,7 +416,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.5.5</version>
+                <version>3.5.6</version>
                 <configuration>
                     <!--
                       Pick up `*IT` integration tests alongside the
