@@ -124,7 +124,7 @@ jobs:
             runner: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -134,7 +134,7 @@ jobs:
         # the matrix triple. Pinning the exact channel (not `stable`) is a
         # reproducibility requirement: the compiler identity is part of
         # the artifact's identity.
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-03-27
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-03-27
         with:
           toolchain: '1.88.0'
           targets: ${{ matrix.target }}
@@ -144,7 +144,7 @@ jobs:
         # SOURCE_DATE_EPOCH) and stages it into the artifact so the daemon
         # build path works from a binary install. `mvn` is preinstalled on
         # the GitHub-hosted runners; this provides the JDK it builds with.
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
         with:
           distribution: temurin
           java-version: '21'
@@ -314,12 +314,12 @@ jobs:
       BUILD_GIT_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Install Rust toolchain (pinned) + target
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master @ 2026-03-27
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master @ 2026-03-27
         with:
           toolchain: '1.88.0'
           targets: x86_64-unknown-linux-gnu
@@ -328,7 +328,7 @@ jobs:
         # The reproducibility check builds the archive twice; the bundled
         # barback-uber.jar is part of the archive, so this job needs the JDK
         # too. The jar is reproducible (outputTimestamp=SOURCE_DATE_EPOCH).
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
         with:
           distribution: temurin
           java-version: '21'
@@ -453,7 +453,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -547,7 +547,7 @@ jobs:
           echo "signed ${signed} artifact(s)"
 
       - name: Create GitHub release (pre-release for rc/alpha/beta tags)
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           # Attach every archive + the aggregate manifest. The per-target
           # fragment files are intentionally NOT attached — they are an

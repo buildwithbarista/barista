@@ -188,7 +188,7 @@ jobs:
       ISSUE_NUMBER: ${{ needs.filter.outputs.issue_number }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           # The agent needs full history so it can rebase / inspect the
           # commit graph when proposing a fix.
@@ -217,7 +217,7 @@ jobs:
         # v1.0.122 (latest at time of authoring). Bump SHA and tag
         # comment together. Action manifest:
         # https://github.com/anthropics/claude-code-action/releases/tag/v1.0.122
-        uses: anthropics/claude-code-action@787c5a0ce96a9a6cfb050ea0c8f4c05f2447c251 # v1.0.133
+        uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1.0.165
         with:
           # API key for the agent. The action also supports OAuth and
           # cloud-provider auth; we use direct API for now and revisit
