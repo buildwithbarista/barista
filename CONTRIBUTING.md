@@ -73,10 +73,15 @@ cheaper to run before you push.
 
 ### Install the tools
 
-- **gitleaks** — secret scanner.
+- **gitleaks** — secret scanner. **Requires gitleaks 8.25.0 or newer.** `.gitleaks.toml`
+  uses top-level `[[allowlists]]` blocks, which older binaries parse without error and
+  then silently ignore — you would see a wall of findings that CI does not report.
   - macOS: `brew install gitleaks`
-  - Linux: `apt install gitleaks` if your distro packages it, otherwise grab a release
-    binary from <https://github.com/gitleaks/gitleaks/releases> and put it on your `PATH`.
+  - Linux: grab a release binary from
+    <https://github.com/gitleaks/gitleaks/releases> and put it on your `PATH`. Do **not**
+    use `apt install gitleaks` — the Debian/Ubuntu archives still ship 8.16.0, which is
+    below the required floor.
+  - Verify with `gitleaks version`.
 - **semgrep** — SAST scanner. The pre-commit hook runs only the curated Barista rule pack
   under `.semgrep/` (kept fast on purpose); the heavier `r/rust` corp pack stays in CI.
   - macOS: `brew install semgrep`

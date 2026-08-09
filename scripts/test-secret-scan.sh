@@ -55,6 +55,24 @@ if ! command -v gitleaks >/dev/null 2>&1; then
     echo "FAIL: gitleaks is not on PATH. Install it (see CONTRIBUTING.md)." >&2
     exit 2
 fi
+
+# Version gate. `.gitleaks.toml` uses top-level [[allowlists]] blocks, which
+# only gitleaks >= 8.25.0 honors; older binaries ignore them silently. Without
+# this check an old binary fails much later with an unreadable traceback from
+# the JSON parsing below, which sends people hunting the wrong bug.
+GITLEAKS_MIN_VERSION="8.25.0"
+GITLEAKS_ACTUAL_VERSION="$(gitleaks version 2>/dev/null | tr -d 'v[:space:]')"
+if [[ -z "${GITLEAKS_ACTUAL_VERSION}" ]]; then
+    echo "FAIL: could not determine gitleaks version from 'gitleaks version'." >&2
+    exit 2
+fi
+if [[ "$(printf '%s\n%s\n' "${GITLEAKS_MIN_VERSION}" "${GITLEAKS_ACTUAL_VERSION}" \
+         | sort -V | head -n1)" != "${GITLEAKS_MIN_VERSION}" ]]; then
+    echo "FAIL: gitleaks ${GITLEAKS_ACTUAL_VERSION} is older than the required" >&2
+    echo "      ${GITLEAKS_MIN_VERSION}. It would ignore the [[allowlists]] blocks in" >&2
+    echo "      .gitleaks.toml without warning. See CONTRIBUTING.md." >&2
+    exit 2
+fi
 if ! command -v python3 >/dev/null 2>&1; then
     echo "FAIL: python3 is not on PATH (needed to parse the JSON report)." >&2
     exit 2
