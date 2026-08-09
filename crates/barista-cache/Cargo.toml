@@ -16,7 +16,7 @@ barista-pom = { path = "../barista-pom" }
 barista-resolver = { path = "../barista-resolver" }
 barista-roastery-client = { path = "../barista-roastery-client" }
 bincode = { version = "2", features = ["serde"] }
-quick-xml = "0.40"
+quick-xml = "0.41"
 bytes = "1"
 crc32fast = "1"
 fd-lock = "4"

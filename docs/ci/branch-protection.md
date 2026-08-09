@@ -67,7 +67,6 @@ gh api \
       "cargo-deny",
       "cargo-audit",
       "OSV-Scanner",
-      "OWASP Dependency-Check (barback)",
       "Trivy fs",
       "clippy (workspace, all-targets)",
       "unsafe-line ratchet",

@@ -37,6 +37,25 @@
 # Reference: https://github.com/gitleaks/gitleaks#configuration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Minimum gitleaks version: 8.25.0
+# ---------------------------------------------------------------------------
+#
+# This file declares its repo-wide waivers as top-level `[[allowlists]]`
+# array-of-tables blocks. Support for that syntax landed upstream in
+# gitleaks 8.25.0 (gitleaks#1777). Older binaries parse this file WITHOUT
+# ERROR and then ignore every `[[allowlists]]` block.
+#
+# That failure is silent and dangerous in both directions: a scan appears
+# correctly configured while all path allowlists are dropped, producing a
+# wall of findings the maintainers already reviewed and waived — which in
+# turn trains readers to ignore this scanner's output.
+#
+# Note that Debian/Ubuntu package archives lag badly here (`apt install
+# gitleaks` still ships 8.16.0 on current LTS releases). Install from the
+# upstream release tarball instead. See CONTRIBUTING.md.
+# ---------------------------------------------------------------------------
+
 [extend]
 # Pull in the upstream default rule pack as the base. Repo-local rules and
 # allowlists below augment, but never silently replace, the defaults.

@@ -12,7 +12,7 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 thiserror = "2"
-quick-xml = "0.40"
+quick-xml = "0.41"
 tracing = "0.1"
 
 [dev-dependencies]

@@ -3,8 +3,8 @@
 You are the **security auto-remediation agent** for this repository. An automated CI
 workflow (`.github/workflows/security-finding-to-issue.yml`) opened the GitHub issue
 you are responding to in reaction to a finding from one of the project's security
-scanners (gitleaks, trufflehog, cargo-audit, OSV-Scanner, OWASP Dependency-Check,
-Trivy, Semgrep, CodeQL, SpotBugs, or zizmor). Your job is to land a PR that fixes
+scanners (gitleaks, trufflehog, OSV-Scanner, Trivy, Semgrep, CodeQL, SpotBugs,
+or zizmor). Your job is to land a PR that fixes
 the finding **within a tightly bounded scope** — or, if the fix is outside that
 scope, to bail out cleanly and ask for a human.
 
@@ -50,7 +50,8 @@ specific finding. Nothing else.
      cargo-audit + semgrep + gitleaks on the locally-runnable surface).
    - `bash scripts/test-secret-scan.sh` must exit 0 (the gitleaks round-trip).
    - If the finding came from a Java scanner (SpotBugs, Semgrep `r/java`,
-     OWASP DC), also run `mvn -f barback/pom.xml test`.
+     OSV-Scanner or Trivy on `barback/pom.xml`), also run
+     `mvn -f barback/pom.xml test`.
    - If either self-test fails, **iterate once.** If it fails again, bail out.
 
 7. **Open the PR** with the body populated from

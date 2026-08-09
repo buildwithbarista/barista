@@ -61,6 +61,16 @@ from typing import Iterable
 SUMMARY_LABEL = "weekly-summary"
 SUMMARY_LABELS_ALWAYS = ["security", SUMMARY_LABEL]
 
+# Colour + description used when this script has to create a label itself.
+# `gh issue create --label X` hard-fails when X is not defined on the repo,
+# so a label that exists only in this file will take the whole run down.
+# Mirrors LABEL_SPECS in security_finding_to_issue.py.
+SUMMARY_LABEL_SPECS: dict[str, tuple[str, str]] = {
+    "security": ("d73a4a", "Security finding or fix"),
+    SUMMARY_LABEL: ("0e8a16", "Weekly security rollup issue"),
+}
+DEFAULT_LABEL_COLOR = "ededed"
+
 # Label applied to every finding-issue by `security_finding_to_issue.py`.
 FINDING_LABEL = "security-bot"
 
@@ -179,10 +189,56 @@ def list_bot_pull_requests(bot_login: str, since: datetime.datetime) -> list[Pul
     ]
 
 
+def existing_label_names() -> set[str]:
+    """Return the set of label names currently defined on the repo."""
+    out = gh(["label", "list", "--limit", "200", "--json", "name"], check=False)
+    if not out.strip():
+        return set()
+    try:
+        return {str(item.get("name", "")) for item in json.loads(out)}
+    except (ValueError, AttributeError, TypeError):
+        # A malformed response must not take the weekly run down; the
+        # create calls below tolerate an already-existing label anyway.
+        return set()
+
+
+def ensure_labels(labels: Iterable[str]) -> None:
+    """Create any of `labels` the repo doesn't define yet.
+
+    `gh issue create --label X` hard-fails when X is undefined, so every
+    label has to exist before the issue is filed. Only missing labels are
+    created, so hand-tuned colours and descriptions on existing labels are
+    preserved. `check=False` keeps a concurrent creator (or a race with
+    the labels-sync workflow) from aborting the run.
+    """
+    if os.environ.get("GH_DRY_RUN") == "1":
+        return
+    existing = existing_label_names()
+    for label in labels:
+        if not label or label in existing:
+            continue
+        color, description = SUMMARY_LABEL_SPECS.get(
+            label, (DEFAULT_LABEL_COLOR, "Applied by the weekly security summary")
+        )
+        gh(
+            [
+                "label", "create", label,
+                "--color", color,
+                "--description", description,
+            ],
+            check=False,
+        )
+        existing.add(label)
+
+
 def create_issue(title: str, body: str, labels: Iterable[str]) -> str:
     if os.environ.get("GH_DRY_RUN") == "1":
         sys.stdout.write(f"--- DRY RUN: would create issue ---\n{title}\n\n{body}\n")
         return "dry-run://0"
+    labels = list(labels)
+    # Self-heal before filing: this workflow has failed every week since it
+    # was introduced because `weekly-summary` was never created on the repo.
+    ensure_labels(labels)
     args = ["issue", "create", "--title", title, "--body-file", "-"]
     for lbl in labels:
         args.extend(["--label", lbl])
