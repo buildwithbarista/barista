@@ -11,7 +11,7 @@ publish = false
 [dependencies]
 async-trait = "0.1"
 thiserror = "2.0"
-quick-xml = "0.40"
+quick-xml = "0.41"
 serde = { version = "1", features = ["derive"] }
 pubgrub = "0.3"
 tokio = { version = "1", features = ["rt"] }
