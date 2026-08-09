@@ -34,11 +34,27 @@ on:
     paths:
       - '.github/**'
       - 'tests/fixtures/workflow-lint/**'
+      # The security-agent-config job shellchecks scripts that live outside
+      # .github/, so editing one of those must trigger its own gate. Without
+      # these entries scripts/lib/maven-bundle.sh, scripts/check-dco.sh,
+      # scripts/compare-perf-results.sh and parity-check.sh were ungated.
+      - 'scripts/**'
+      - 'roastery/tests/e2e/**'
+      - 'roastery/deploy/helm/**'
+      - 'crates/barista-test-fixtures/scripts/**'
   push:
     branches: [main]
     paths:
       - '.github/**'
       - 'tests/fixtures/workflow-lint/**'
+      # The security-agent-config job shellchecks scripts that live outside
+      # .github/, so editing one of those must trigger its own gate. Without
+      # these entries scripts/lib/maven-bundle.sh, scripts/check-dco.sh,
+      # scripts/compare-perf-results.sh and parity-check.sh were ungated.
+      - 'scripts/**'
+      - 'roastery/tests/e2e/**'
+      - 'roastery/deploy/helm/**'
+      - 'crates/barista-test-fixtures/scripts/**'
 
 # Default-deny at the workflow level; each job opts in explicitly.
 permissions: {}
@@ -200,6 +216,12 @@ jobs:
       - name: Run actionlint
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2
         with:
+          # Pin the actionlint *binary* too. The action defaults to
+          # `version: latest`, which silently drifted ahead of the
+          # ACTIONLINT_VERSION pinned for the script validators in
+          # workflow-lint.yml — two versions linting the same files, one of
+          # them on a required check. Keep the two in sync when bumping.
+          version: '1.7.12'
           files: '.github/workflows/*.yml'
 
   # ---------------------------------------------------------------------------
@@ -280,7 +302,7 @@ jobs:
         # the matching baseline") is mechanically gated on every PR.
         run: bash scripts/test-parity-check.sh
 
-      - name: Install actionlint + zizmor (for container + helm workflow validation)
+      - name: Install actionlint + zizmor + shellcheck (for container + helm workflow validation)
         shell: bash
         # The container-workflow and helm-chart validators below run
         # `actionlint` and `zizmor` against the M5.1 T8 / T9 workflow
@@ -294,7 +316,9 @@ jobs:
           set -euo pipefail
           mkdir -p "${HOME}/.local/bin"
           # actionlint: prebuilt binary release.
-          ACTIONLINT_VERSION="1.7.7"
+          # Keep in sync with the `version:` pinned on the raven-actions/actionlint
+          # steps in this file and in ci.yml.
+          ACTIONLINT_VERSION="1.7.12"
           TMP="$(mktemp -d)"
           curl -fsSL \
             "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
@@ -304,6 +328,29 @@ jobs:
           rm -rf "${TMP}"
           # zizmor: PyPI wheel ships the binary.
           python3 -m pip install --user "zizmor==1.24.1"
+          # Install shellcheck. The test-*-workflow.sh validators soft-skip
+          # their entire shellcheck stage with a ::warning:: when it is not on
+          # PATH, on the assumption that "CI will run it". This is the job
+          # that runs them, and it never installed shellcheck — the stage
+          # passed only because the runner image happens to ship it, which
+          # would stop being true without warning. The same scripts
+          # soft-skip actionlint and zizmor, both of which this step
+          # explicitly installs; shellcheck was the oversight.
+          #
+          # Guarded by `command -v` so this is a no-op on images that
+          # already provide it, and pinned like every other tool here.
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            SHELLCHECK_VERSION="0.10.0"
+            TMP_SC="$(mktemp -d)"
+            curl -fsSL \
+              "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+              -o "${TMP_SC}/shellcheck.tar.xz"
+            tar -xJf "${TMP_SC}/shellcheck.tar.xz" -C "${TMP_SC}" \
+              "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+            install -m 0755 "${TMP_SC}/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" \
+              "${HOME}/.local/bin/shellcheck"
+            rm -rf "${TMP_SC}"
+          fi
           USER_BASE="$(python3 -m site --user-base)"
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
           echo "${USER_BASE}/bin" >> "$GITHUB_PATH"
