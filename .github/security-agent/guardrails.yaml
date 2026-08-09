@@ -168,7 +168,6 @@ pull_request:
     - "cargo-deny"
     - "cargo-audit"
     - "OSV-Scanner"
-    - "OWASP Dependency-Check (barback)"
     - "Trivy fs"
     # SAST suite (C.3).
     - "clippy (workspace, all-targets)"

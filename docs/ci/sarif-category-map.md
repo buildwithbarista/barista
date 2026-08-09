@@ -27,7 +27,7 @@ output and uploads it via `github/codeql-action/upload-sarif`.
 | trufflehog| `secret-scan.yml`                     | `trufflehog`          | `trufflehog.sarif` (action output)   |
 | trivy-fs  | `sca.yml`, `sca-nightly.yml`          | `trivy-fs`            | `trivy-results.sarif`                |
 | osv-scanner| `sca.yml`, `sca-nightly.yml`         | (action default)      | reusable workflow handles upload     |
-| owasp-dc  | `sca.yml`, `sca-nightly.yml`          | `owasp-dc`            | `barback/target/dependency-check-report.sarif` |
+| owasp-dc  | _(retired — see sca-nightly.yml)_     | `owasp-dc`            | `barback/target/dependency-check-report.sarif` |
 | semgrep   | `sast.yml`                            | `semgrep`             | `semgrep.sarif`                      |
 | codeql    | `codeql.yml`                          | `/language:rust`, `/language:java` | action-native (analyze step) |
 | zizmor    | `workflow-lint.yml`                   | `zizmor`              | action-native (`advanced-security: true`) |

@@ -1,11 +1,11 @@
 # Nightly SCA — fresh-DB dependency scan.
 #
-# Re-runs the SCA suite (cargo-deny, OSV-Scanner, OWASP Dependency-Check,
-# Trivy) every night against `main` with a *fresh*
+# Re-runs the SCA suite (cargo-deny, OSV-Scanner, Trivy) every night
+# against `main` with a *fresh*
 # advisory database for each scanner. The PR-time `sca.yml` workflow
 # may legitimately hit cached DB state (the maven cache restored by
 # `actions/cache`, the OSV-Scanner
-# action's in-image dataset, the OWASP NVD-data cache); this workflow
+# action's in-image dataset); this workflow
 # burns those caches by design so a newly-published CVE that lands
 # between PRs surfaces within ~24 hours.
 #
@@ -177,64 +177,36 @@ jobs:
         ./
 
   # ---------------------------------------------------------------------------
-  # OWASP Dependency-Check — Maven-side scan. The plugin downloads
-  # the NVD vulnerability database on each run; this job intentionally
-  # does NOT restore the `actions/cache` of NVD data so a newly-published
-  # CVE is picked up immediately rather than waiting on the cache to
-  # expire. The trade-off is a slower run (~5 min of NVD download
-  # vs ~30s warm), which is fine on a nightly cadence.
+  # OWASP Dependency-Check was REMOVED from this workflow. Read this before
+  # re-adding it — the reason is upstream and structural, not a broken key.
+  #
+  # Dependency-Check matches our dependencies to advisories through **CPE**
+  # (Common Platform Enumeration) identifiers attached to each CVE. In April
+  # 2026 NIST abandoned universal CVE enrichment at the NVD: only CVEs in
+  # CISA's KEV catalog, those affecting federal systems, and EO 14028
+  # "critical software" are now enriched. Everything else is listed but left
+  # unenriched, and NIST no longer issues its own severity score for CVEs the
+  # CNA already scored. CPE assignment is precisely the enrichment that
+  # stopped, so this scanner's matching mechanism is degrading at the source.
+  #
+  # It had also been dead for weeks before anyone noticed — the NVD_API_KEY
+  # secret is stale/revoked, so every run aborted with `Invalid API Key`
+  # before writing a report. Being soft-gated, it never reddened the run.
+  #
+  # Java coverage is unaffected: `barback/pom.xml` is scanned by OSV-Scanner
+  # and by Trivy, both hard gates in this workflow, and both keyed on package
+  # coordinates (PURL) rather than CPE — so neither depends on the enrichment
+  # pipeline that degraded. `sca.yml`'s header already records dropping
+  # Dependency-Check as a PR gate for redundancy; this finishes that decision.
+  #
+  # The opt-in `dependency-check` Maven profile in barback/pom.xml is
+  # deliberately KEPT as the local/re-enable path (`mvn -f barback/pom.xml
+  # -P dependency-check verify`); it is skipped by default.
+  #
+  # If a third independent opinion on the Java surface is wanted later,
+  # prefer Sonatype OSS Index / Sonatype Guide (Dependency-Check supports it
+  # natively and it is PURL-based) over re-plumbing NVD.
   # ---------------------------------------------------------------------------
-  barback-owasp-dc:
-    name: OWASP Dependency-Check (barback, fresh NVD)
-    runs-on: ubuntu-latest
-    # Soft gate (matches sca.yml): OWASP DC is redundant with the hard
-    # advisory gates (OSV-Scanner + cargo-deny + Trivy), so NVD-side
-    # problems must not fail the nightly run.
-    #
-    # This job is currently producing NO findings. The failure is *not* the
-    # "flaky NVD feed" this comment used to blame — it is deterministic:
-    # `NVD_API_KEY` is stale/revoked, so the Maven build aborts with
-    # `Invalid API Key` before it writes any report, identically on every
-    # run. Rotating the secret is the actual fix and cannot be done from a
-    # workflow file. The steps below make that state loud instead of silent.
-    continue-on-error: true
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-      # NOTE: deliberately no `actions/cache` step for the OWASP NVD
-      # data directory here. `sca.yml` caches it for PR latency; the
-      # nightly workflow burns the cache so a same-day CVE shows up.
-      - name: Run dependency-check (verify phase, opt-in profile)
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          mvn -f barback/pom.xml -B -P dependency-check verify
-      # Surface a dead scanner in the run summary. Without this, a job that
-      # produced nothing at all looks the same as a job that found nothing.
-      - name: Warn if no OWASP DC report was produced
-        if: always() && hashFiles('barback/target/dependency-check-report.sarif') == ''
-        run: |
-          echo "::warning::OWASP Dependency-Check produced no SARIF report — the scan did not run to completion, so the Java dependency surface was NOT scanned tonight. Most likely cause: an expired or revoked NVD_API_KEY repository secret."
-      - name: Upload OWASP DC SARIF
-        # Guard on the report existing. With a bare `always()` this step
-        # errors with "Path does not exist" whenever the scan aborted,
-        # turning one root-cause failure into a second, misleading one.
-        if: always() && hashFiles('barback/target/dependency-check-report.sarif') != ''
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
-        with:
-          sarif_file: barback/target/dependency-check-report.sarif
-          category: owasp-dc
 
   # ---------------------------------------------------------------------------
   # Trivy `fs` scan — cross-ecosystem catch-all. The aquasecurity

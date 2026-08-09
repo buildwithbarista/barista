@@ -11,11 +11,23 @@
 #   Java   — OSV-Scanner, Trivy
 #   Other  — Trivy (lockfile types neither cargo-* nor OSV covers)
 #
-# cargo-audit and OWASP Dependency-Check were removed as PR gates: both
+# cargo-audit and OWASP Dependency-Check are no longer run anywhere — not
+# here, and (as of the same change) not in `sca-nightly.yml` either. Both
 # were redundant with the scanners above (same advisory surface) and both
-# fail on upstream issues outside our control — cargo-audit on a malformed
-# RustSec advisory-db file, OWASP DC on flaky NVD-feed updates — so they
-# produced only red noise. Re-add them once those upstreams are fixed.
+# broke on upstream issues outside our control:
+#
+#   - cargo-audit: the `rustsec/audit-check` action builds without
+#     `--locked` and exceeds this repo's MSRV, and the pinned CLI cannot
+#     parse CVSS-4.0 advisories.
+#   - OWASP Dependency-Check: it matches dependencies via CPE identifiers,
+#     and in April 2026 NIST stopped enriching most CVEs with them, so its
+#     matching degrades at the source. (Earlier revisions of this comment
+#     blamed a "flaky NVD feed" — that was wrong, and the misattribution
+#     cost weeks of misdiagnosis. See sca-nightly.yml for the full note.)
+#
+# Rust advisories are covered by cargo-deny + OSV-Scanner; the Java surface
+# by OSV-Scanner + Trivy. Both pairs are hard gates and both are keyed on
+# package coordinates rather than CPE.
 #
 # Every action is pinned to a commit SHA (not a floating tag). The
 # human-readable tag is recorded next to the SHA so future readers can audit
