@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert `cargo deny check --format json` output to SARIF 2.1.0.
+"""Convert `cargo deny --format json check` output to SARIF 2.1.0.
 
 cargo-deny does not natively emit SARIF as of v0.16. This adapter reads
 the JSON diagnostic stream on stdin and emits a SARIF 2.1.0 document
@@ -8,11 +8,11 @@ under `category: cargo-deny`.
 
 Usage (from .github/workflows/sca.yml):
 
-    cargo deny check --format json 2> deny.json || true
+    cargo deny --format json check 2> deny.json || true
     python3 .github/scripts/cargo-deny-to-sarif.py < deny.json > cargo-deny.sarif
 
 Notes:
-- `cargo deny check --format json` emits one JSON object per line on
+- `cargo deny --format json check` emits one JSON object per line on
   stderr (NDJSON), one record per advisory / ban / license / source
   finding. The non-finding "summary" record at the end is also a JSON
   object but uses a `type` discriminator we filter on.

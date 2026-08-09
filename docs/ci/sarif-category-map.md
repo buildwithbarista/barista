@@ -41,7 +41,7 @@ These tools do not emit SARIF natively. A small adapter under
 | Scanner    | Workflow                              | Category      | Adapter                                       |
 |------------|---------------------------------------|---------------|-----------------------------------------------|
 | cargo-deny | `sca.yml`, `sca-nightly.yml`          | `cargo-deny`  | `.github/scripts/cargo-deny-to-sarif.py`      |
-| cargo-audit| `sca.yml`, `sca-nightly.yml`          | `cargo-audit` | `.github/scripts/cargo-audit-to-sarif.py`     |
+| cargo-audit| _(not wired to any workflow)_         | `cargo-audit` | `.github/scripts/cargo-audit-to-sarif.py`     |
 | spotbugs   | `sast.yml`                            | `spotbugs`    | `barback/pom.xml` (`<sarifOutput>true</sarifOutput>` on `spotbugs-maven-plugin`) — emits `target/spotbugsSarif.json` natively when toggled; no Python adapter needed |
 
 The SpotBugs entry sits in this section because the plugin's SARIF

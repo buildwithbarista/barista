@@ -1,10 +1,10 @@
 # Nightly SCA — fresh-DB dependency scan.
 #
-# Re-runs the SCA suite (cargo-deny, cargo-audit, OSV-Scanner, OWASP
-# Dependency-Check, Trivy) every night against `main` with a *fresh*
+# Re-runs the SCA suite (cargo-deny, OSV-Scanner, OWASP Dependency-Check,
+# Trivy) every night against `main` with a *fresh*
 # advisory database for each scanner. The PR-time `sca.yml` workflow
-# may legitimately hit cached DB state (cargo-audit's local advisory
-# cache, the maven cache restored by `actions/cache`, the OSV-Scanner
+# may legitimately hit cached DB state (the maven cache restored by
+# `actions/cache`, the OSV-Scanner
 # action's in-image dataset, the OWASP NVD-data cache); this workflow
 # burns those caches by design so a newly-published CVE that lands
 # between PRs surfaces within ~24 hours.
@@ -92,16 +92,40 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          cargo install cargo-deny --locked --version 0.18.4
+          # Keep in sync with sca.yml. 0.18.4 bundles rustsec 0.30.4 /
+          # cvss 2.1.0, which aborts with "unsupported CVSS version: 4.0"
+          # against the current advisory DB — producing an empty report.
+          cargo install cargo-deny --locked --version 0.19.6
       - name: Emit cargo-deny SARIF
+        id: cargo-deny-sarif
         if: always()
         run: |
           set -euo pipefail
-          cargo deny check --format json --all-features 2> cargo-deny.json || true
+          # `--format` and `--all-features` are top-level cargo-deny options
+          # and MUST precede the `check` subcommand. Placing them after it is
+          # a clap usage error, which the trailing `|| true` would quietly
+          # turn into an empty-but-valid SARIF — publishing "no findings" to
+          # code scanning for a scan that never ran.
+          #
+          # The non-zero tolerance is still wanted (violations are expected
+          # here; enforcement is the separate gate step below), so instead of
+          # trusting the exit code we verify the report itself: every line
+          # must parse as JSON and cargo-deny must have emitted its terminal
+          # `summary` record. That distinguishes a real scan from a crashed
+          # one and from an empty file, neither of which may be uploaded.
+          cargo deny --format json --all-features check 2> cargo-deny.json || true
+          if python3 -c 'import json,sys; sys.exit(0 if any(json.loads(l).get("type") == "summary" for l in sys.stdin if l.strip()) else 1)' < cargo-deny.json 2>/dev/null; then
+            echo "usable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "usable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::cargo-deny did not produce a complete report; skipping SARIF upload so an empty result cannot be published as a clean scan."
+            head -c 2000 cargo-deny.json || true
+            exit 0
+          fi
           python3 .github/scripts/cargo-deny-to-sarif.py \
             < cargo-deny.json > cargo-deny.sarif
       - name: Upload cargo-deny SARIF
-        if: always()
+        if: always() && steps.cargo-deny-sarif.outputs.usable == 'true'
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: cargo-deny.sarif
@@ -113,64 +137,25 @@ jobs:
           exit 1
 
   # ---------------------------------------------------------------------------
-  # cargo-audit — RustSec advisory scan against Cargo.lock. The
-  # `rustsec/audit-check` action fetches the advisory DB on every
-  # invocation, so the nightly run picks up advisories published in
-  # the last 24 hours without needing a cache-busting step.
+  # cargo-audit was REMOVED from this workflow. Do not re-add it without
+  # fixing the two upstream problems below first.
   #
-  # continue-on-error: true — soft gate matching sca.yml. The advisory-DB
-  # TOML parser (RUSTSEC-2026-0076.md) and the rustsec/audit-check action
-  # itself have suffered upstream breakage outside our control. cargo-deny
-  # and OSV-Scanner (both hard gates in this workflow) are the authoritative
-  # advisory checks; cargo-audit failures here should not abort the nightly
-  # run or suppress SARIF uploads from other scanners.
+  # It had been failing on every run, in both halves, while soft-gated —
+  # so it burned ~3 minutes a night to upload a zero-result SARIF under
+  # `category: cargo-audit`, which reads as a *clean scan* rather than as a
+  # broken one. A scanner that cannot fail loudly is worse than no scanner.
+  #
+  #   1. `rustsec/audit-check` builds cargo-audit without `--locked`, so it
+  #      resolves transitive deps that exceed this repo's 1.88.0 MSRV.
+  #   2. The pinned 0.21.2 CLI cannot parse CVSS-4.0 advisories, which the
+  #      current RustSec DB contains.
+  #
+  # Coverage is unaffected: cargo-deny reads the same RustSec database and
+  # OSV-Scanner imports RUSTSEC, and both are hard gates in this workflow.
+  # `sca.yml`'s header already records dropping cargo-audit as a PR gate for
+  # the same reason. `.github/scripts/cargo-audit-to-sarif.py` is kept — it
+  # is the re-enable path, and CONTRIBUTING.md documents local `cargo audit`.
   # ---------------------------------------------------------------------------
-  cargo-audit-check:
-    name: cargo-audit (fresh DB)
-    runs-on: ubuntu-latest
-    continue-on-error: true  # soft gate — upstream DB/action breakage; cargo-deny + OSV are the hard gates
-    permissions:
-      contents: read
-      issues: write
-      security-events: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
-        with:
-          python-version: '3.12'
-      - name: Run cargo-audit (gate)
-        id: cargo-audit-gate
-        continue-on-error: true
-        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install cargo-audit CLI (for SARIF emit)
-        if: always()
-        run: |
-          set -euo pipefail
-          cargo install cargo-audit --locked --version 0.21.2
-      - name: Emit cargo-audit SARIF
-        if: always()
-        run: |
-          set -euo pipefail
-          cargo audit --json > cargo-audit.json || true
-          python3 .github/scripts/cargo-audit-to-sarif.py \
-            < cargo-audit.json > cargo-audit.sarif
-      - name: Upload cargo-audit SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
-        with:
-          sarif_file: cargo-audit.sarif
-          category: cargo-audit
-      - name: Fail if cargo-audit gate failed
-        if: steps.cargo-audit-gate.outcome == 'failure'
-        run: |
-          echo "::error::cargo-audit reported advisories; see SARIF upload + step log."
-          exit 1
 
   # ---------------------------------------------------------------------------
   # OSV-Scanner — runs the reusable workflow exactly as `sca.yml`
@@ -202,10 +187,16 @@ jobs:
   barback-owasp-dc:
     name: OWASP Dependency-Check (barback, fresh NVD)
     runs-on: ubuntu-latest
-    # Soft gate (matches sca.yml): the fresh-NVD update flakes (HTTP/feed
-    # errors) even with an NVD_API_KEY, and OWASP DC is redundant with the
-    # hard advisory gates (OSV-Scanner + cargo-deny + Trivy). SARIF still
-    # uploads; NVD-side flakiness must not fail the nightly run.
+    # Soft gate (matches sca.yml): OWASP DC is redundant with the hard
+    # advisory gates (OSV-Scanner + cargo-deny + Trivy), so NVD-side
+    # problems must not fail the nightly run.
+    #
+    # This job is currently producing NO findings. The failure is *not* the
+    # "flaky NVD feed" this comment used to blame — it is deterministic:
+    # `NVD_API_KEY` is stale/revoked, so the Maven build aborts with
+    # `Invalid API Key` before it writes any report, identically on every
+    # run. Rotating the secret is the actual fix and cannot be done from a
+    # workflow file. The steps below make that state loud instead of silent.
     continue-on-error: true
     permissions:
       contents: read
@@ -229,8 +220,17 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           mvn -f barback/pom.xml -B -P dependency-check verify
+      # Surface a dead scanner in the run summary. Without this, a job that
+      # produced nothing at all looks the same as a job that found nothing.
+      - name: Warn if no OWASP DC report was produced
+        if: always() && hashFiles('barback/target/dependency-check-report.sarif') == ''
+        run: |
+          echo "::warning::OWASP Dependency-Check produced no SARIF report — the scan did not run to completion, so the Java dependency surface was NOT scanned tonight. Most likely cause: an expired or revoked NVD_API_KEY repository secret."
       - name: Upload OWASP DC SARIF
-        if: always()
+        # Guard on the report existing. With a bare `always()` this step
+        # errors with "Path does not exist" whenever the scan aborted,
+        # turning one root-cause failure into a second, misleading one.
+        if: always() && hashFiles('barback/target/dependency-check-report.sarif') != ''
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: barback/target/dependency-check-report.sarif

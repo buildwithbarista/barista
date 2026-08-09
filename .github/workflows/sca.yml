@@ -87,19 +87,40 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          cargo install cargo-deny --locked --version 0.18.4
+          # Keep in sync with sca-nightly.yml. 0.18.4 bundles rustsec 0.30.4 /
+          # cvss 2.1.0, which aborts with "unsupported CVSS version: 4.0"
+          # against the current advisory DB — producing an empty report.
+          cargo install cargo-deny --locked --version 0.19.6
       - name: Emit cargo-deny SARIF
+        id: cargo-deny-sarif
         if: always()
         run: |
           set -euo pipefail
-          # `--format json` lands on stderr; tolerate non-zero exit so
-          # SARIF generation never masks a finding. The adapter handles
-          # an empty/partial stream gracefully.
-          cargo deny check --format json --all-features 2> cargo-deny.json || true
+          # `--format` and `--all-features` are top-level cargo-deny options
+          # and MUST precede the `check` subcommand. Placing them after it is
+          # a clap usage error, which the trailing `|| true` would quietly
+          # turn into an empty-but-valid SARIF — publishing "no findings" to
+          # code scanning for a scan that never ran.
+          #
+          # The non-zero tolerance is still wanted (violations are expected
+          # here; enforcement is the separate gate step below), so instead of
+          # trusting the exit code we verify the report itself: every line
+          # must parse as JSON and cargo-deny must have emitted its terminal
+          # `summary` record. That distinguishes a real scan from a crashed
+          # one and from an empty file, neither of which may be uploaded.
+          cargo deny --format json --all-features check 2> cargo-deny.json || true
+          if python3 -c 'import json,sys; sys.exit(0 if any(json.loads(l).get("type") == "summary" for l in sys.stdin if l.strip()) else 1)' < cargo-deny.json 2>/dev/null; then
+            echo "usable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "usable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::cargo-deny did not produce a complete report; skipping SARIF upload so an empty result cannot be published as a clean scan."
+            head -c 2000 cargo-deny.json || true
+            exit 0
+          fi
           python3 .github/scripts/cargo-deny-to-sarif.py \
             < cargo-deny.json > cargo-deny.sarif
       - name: Upload cargo-deny SARIF
-        if: always()
+        if: always() && steps.cargo-deny-sarif.outputs.usable == 'true'
         uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4.36.0
         with:
           sarif_file: cargo-deny.sarif
