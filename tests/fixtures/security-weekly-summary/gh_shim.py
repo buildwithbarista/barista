@@ -26,6 +26,15 @@ Supported invocations:
   gh issue close <N>
       → appends a `close` record.
 
+  gh label list --limit <N> --json name
+      → prints the JSON-array contents of $GH_SHIM_LABELS (a list of
+        {"name": ...} objects). Empty when unset, which models a repo
+        that defines none of the labels the summariser needs.
+
+  gh label create <NAME> --color <C> --description <D>
+      → appends a `label-create` record, so a test can assert the
+        summariser materializes a missing label before filing.
+
 Anything else exits non-zero so a regression that adds an unknown
 gh call fails loudly.
 """
@@ -165,6 +174,43 @@ def cmd_pr(args: list[str]) -> int:
     return die(f"unhandled `gh pr {sub}` call")
 
 
+def cmd_label(args: list[str]) -> int:
+    if not args:
+        return die("`gh label` with no subcommand")
+    sub, rest = args[0], args[1:]
+    if sub == "list":
+        sys.stdout.write(json.dumps(load_json_array("GH_SHIM_LABELS")))
+        return 0
+    if sub == "create":
+        name = ""
+        color = ""
+        description = ""
+        i = 0
+        while i < len(rest):
+            a = rest[i]
+            if a == "--color" and i + 1 < len(rest):
+                color = rest[i + 1]
+                i += 2
+            elif a == "--description" and i + 1 < len(rest):
+                description = rest[i + 1]
+                i += 2
+            elif a == "--":
+                i += 1
+            elif not a.startswith("-") and not name:
+                name = a
+                i += 1
+            else:
+                i += 1
+        append_record({
+            "action": "label-create",
+            "name": name,
+            "color": color,
+            "description": description,
+        })
+        return 0
+    return die(f"unhandled `gh label {sub}` call")
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         return die("expected subcommand")
@@ -177,6 +223,8 @@ def main(argv: list[str]) -> int:
         return cmd_issue(rest)
     if sub == "pr":
         return cmd_pr(rest)
+    if sub == "label":
+        return cmd_label(rest)
     return die(f"unhandled gh subcommand: {sub}")
 
 
